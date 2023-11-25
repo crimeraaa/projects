@@ -93,6 +93,7 @@ Tetris::Tetris(int scr_width, int scr_height, int pf_width, int pf_height)
 void Tetris::game_loop() {
     bool is_gameover = false;
 
+    // TODO: Refactor player state and keyboard inputs.
     int player_piece = 0;
     int player_rotation = 0;
     int player_x = m_pf_width / 2; // starts at the middle
@@ -108,6 +109,7 @@ void Tetris::game_loop() {
         
         /*************************** GAME INPUT ******************************/
         // "Listen" for input via the Windows virtual key codes.
+        // TODO: Refactor player state and keyboard inputs.
         for (int i = 0; i < KEYS_COUNT; i++) {                  //R   L   D Z
             SHORT key_state = GetAsyncKeyState((unsigned char)("\x27\x25\x28Z"[i]));
             keys_pressed.at(i) = (key_state & 0x8000) != 0;
@@ -137,10 +139,11 @@ void Tetris::game_loop() {
         draw_field();
 
         // Current piece isn't yet part of the field, so draw it separately.
+        // TODO: Refactor player state and keyboard inputs.
         for (int piece_x = 0; piece_x < PIECE_WIDTH; piece_x++) {
             for (int piece_y = 0; piece_y < PIECE_HEIGHT; piece_y++) {
-                // lol
-                auto letter = m_tetrominos.at(player_piece).at(rotate(piece_x, piece_y, player_rotation));
+                int piece_index = rotate(piece_x, piece_y, player_rotation);
+                auto letter = m_tetrominos.at(player_piece).at(piece_index);
 
                 // Don't write parts of the tetromino reference that aren't occupied
                 if (letter != L'X') {
@@ -156,7 +159,6 @@ void Tetris::game_loop() {
                 m_display.set_screen_at(screen_index, player_piece + 'A');
             }
         }
-
         // Actually write the display frame to the console output.
         m_display.render();
     }
@@ -171,7 +173,7 @@ void Tetris::draw_field() {
 
             // What character the field has at this spot,
             // to be used as an index into the literal `" ABCDEFG=#"`.
-            int tile = m_pfield.get_field_at((y * m_pf_width) + x);
+            auto tile = m_pfield.get_field_at((y * m_pf_width) + x);
 
             /**
              * Update the main display output
@@ -196,22 +198,24 @@ bool Tetris::piece_fits(int tetromino_id, int rotation, int field_x, int field_y
             int field_index = (field_y + piece_y) * m_pf_width + (field_x + piece_x);
 
             // If out of bounds, ignore. Else, still need to check collisions.
-            if (m_pfield.is_in_bounds(field_x + piece_x, field_y + piece_y)) {
-                // @note Reference tetrominos are mode of `L'X'` and `L'.'` only.
-                auto piece_cell = m_tetrominos.at(tetromino_id).at(piece_index);
-                /** 
-                 * Recall what characters the playing field is made of:
-                 * ```cpp
-                 * L" ABCDEFG=#"[0] = L' ' 
-                 * ```
-                */
-                auto field_cell = m_pfield.get_field_at(field_index);
+            if (!m_pfield.is_in_bounds(field_x + piece_x, field_y + piece_y)) {
+                continue;
+            }
 
-                // 0 indicates an empty space in the field. 
-                if (piece_cell != L'.' && field_cell != 0) {
-                    // Collided with/hit something! We can't fit here.
-                    return false;
-                }
+            // @note Reference tetrominos are mode of `L'X'` and `L'.'` only.
+            auto piece_cell = m_tetrominos.at(tetromino_id).at(piece_index);
+            /** 
+             * Recall what characters the playing field is made of:
+             * ```cpp
+             * L" ABCDEFG=#"[0] = L' ';
+             * ```
+            */
+            auto field_cell = m_pfield.get_field_at(field_index);
+
+            // 0 indicates an empty space in the field. 
+            if (piece_cell != L'.' && field_cell != 0) {
+                // Collided with/hit something! We can't fit here.
+                return false;
             }
         }
     }
