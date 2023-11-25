@@ -1,7 +1,12 @@
-#ifndef OLC_CONSOLE_TETRIS_PLAYINGFIELD_HPP
-#define OLC_CONSOLE_TETRIS_PLAYINGFIELD_HPP
+#pragma once
 #include "common.hpp"
 
+/**
+ * Playing field is an array of indexes into the literal `L" ABCDEFG=#"`.
+ * So think in terms of that!
+ * 
+ * @note `m_field` buffer determines which character to use in `Display` buffer.
+ */
 class PlayingField {
 private:
     unsigned char *m_field; // Array of indexes into the literal `L" ABCDEFG=#"`.
@@ -32,17 +37,6 @@ public:
 
     // Deletes `m_field`.
     ~PlayingField() {
-        std::cout << "deleting (PlayingField) this->m_field\n";
         delete[] m_field;
     }
-
-    std::string get_data() {
-        std::stringstream data_stream; 
-        data_stream << "width =  " << m_width << "\n" 
-                    << "height = " << m_height << "\n"
-                    << "area =   " << m_area << "\n";
-        return data_stream.str();
-    }
 };
-
-#endif // OLC_CONSOLE_TETRIS_PLAYINGFIELD_HPP

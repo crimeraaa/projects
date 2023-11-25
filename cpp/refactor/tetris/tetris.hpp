@@ -1,5 +1,4 @@
-#ifndef OLC_CONSOLE_TETRIS_HPP
-#define OLC_CONSOLE_TETRIS_HPP
+#pragma once
 #include "include/common.hpp"
 
 #include <vector>
@@ -7,8 +6,12 @@
 #include "include/display.hpp"
 #include "include/playingfield.hpp"
 
+// For setup functions: think in terms of `WIDTH` times `HEIGHT`.
 class Tetris {
 private:
+    static constexpr int PIECE_WIDTH = 4;
+    static constexpr int PIECE_HEIGHT = 4;
+    static constexpr int PIECE_AREA = PIECE_WIDTH * PIECE_HEIGHT;
     // List of valid tetris pieces. Each tetronimo is a 4x4 block.
     const std::vector<std::wstring> m_tetrominos = {
         // [0] 4x1: vertical line
@@ -48,43 +51,39 @@ private:
          "...."
     };
 
-    PlayingField *m_pfield; // Can only use a pointer with this declaration.
-    Display *m_display; // Can only use a pointer with this declaration.
+    PlayingField *m_pfield; 
+    Display *m_display; 
 
     /**
      * Get the correct index into a piece based on its rotation.
-     * @param piece_x `px`, piece's x-axis cell, from the caller loop.
-     * @param piece_y `py`, piece's y-axis cell, from the caller loop.
+     * @param target_x `px`, desired piece's x-axis cell, from the caller loop.
+     * @param target_y `py`, desired piece's y-axis cell, from the caller loop.
      * @param rotation Value of rotation. We modulo by 4 internally.
      */
-    int rotate(int piece_x, int piece_y, int rotation) {
-        int piece_index = 0;
+    int rotate(int target_x, int target_y, int rotation) {
         switch (rotation % 4) {
             /** 0 DEGREES:       0  1  2  3
                                  4  5  6  7
                                  8  9 10 11 
                                 12 13 14 15 */
-            case 0: piece_index = (piece_y * 4) + piece_x; break;
-            
+            case 0: return (target_y * PIECE_HEIGHT) + target_x;
             /** 90 DEGREES:     12  8  4  0
                                 13  9  5  1
                                 14 10  6  2 
                                 15 11  7  3 */
-            case 1: piece_index = 12 + piece_y - (piece_x * 4); break;
-
+            case 1: return (PIECE_AREA - PIECE_WIDTH) + target_y - (target_x * PIECE_WIDTH);
             /** 180 DEGREES:    15 14 13 12
                                 11 10  9  8
                                  7  6  5  4
                                  3  2  1  0 */
-            case 2: piece_index = 15 - (piece_y * 4) - piece_x; break;
-
+            case 2: return (PIECE_AREA - 1) - (target_y * PIECE_WIDTH) - target_x;
             /** 270 DEGREES:    3  7 11 15
                                 2  6 10 14
                                 1  5  9 13
                                 0  4  8 12 */
-            case 3: piece_index = 3 - piece_y + (piece_x * 4); break;
+            case 3: return (PIECE_WIDTH - 1) - target_y + (target_x * PIECE_WIDTH);
         }
-        return piece_index;
+        return 0;
     }
 
     /**
@@ -105,18 +104,19 @@ private:
         return false;
     }
 public:
-    Tetris(int field_width, int field_height, int screen_width, int screen_height) {
-        m_pfield = new PlayingField(field_width, field_height);
+    Tetris &setup_screen(int screen_width, int screen_height) {
         m_display = new Display(screen_width, screen_height);
-        std::cout << "m_pfield: " << m_pfield << "\n" << m_pfield->get_data() << "\n";
-        std::cout << "m_display: " << m_display << "\n" << m_display->get_data() << "\n";
+        return *this;
     }
 
-    // Also calls the `pfield`'s destructor, very neat!
+    Tetris &setup_field(int field_width, int field_height) {
+        m_pfield = new PlayingField(field_width, field_height);
+        return *this;
+    }
+
+    // `delete` calls a Class's appropriate destructor, very neat!
     ~Tetris() {
-        std::cout << "deleting (Tetris) this->m_pfield\n";
         delete m_pfield;
-        std::cout << "deleting (Tetris) this->m_display\n";
         delete m_display;
     }
 
@@ -135,5 +135,3 @@ public:
         }
     }
 };
-
-#endif // OLC_CONSOLE_TETRIS_HPP

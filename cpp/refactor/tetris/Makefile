@@ -4,8 +4,15 @@ OBJ = $(SRC:.cpp=.o)
 PCH = ./include/common.hpp.gch
 PCH_SRC = $(PCH:.hpp.gch=.hpp)
 
-# Don't use PCH by default
-all: $(EXE)
+# Don't use PCH by default and compile with debug information
+all: CXXFLAGS := $(DEBUG_CXXFLAGS) $(CXXFLAGS)
+all: build
+
+debug: all
+
+release: build
+
+build: $(EXE)
 
 use_pch: $(PCH) all
 
@@ -25,7 +32,7 @@ $(EXE): $(OBJ)
 # the -include flag instructs the compiler to act as if lib.hpp
 # were the first header in every source file
 # Source: https://stackoverflow.com/a/53970380
-%.o: %.cpp
+%.o: %.cpp *.hpp ./include/*.hpp
 	$(CXX) $(CXXFLAGS) -Winvalid-pch -c -o $@ $<
 
 # Detect changes in all project headers for now?
@@ -34,4 +41,4 @@ $(EXE): $(OBJ)
 clean:
 	$(RM) $(EXE) $(OBJ) $(PCH)
 
-.PHONY: all clean use_pch
+.PHONY: all build clean debug release use_pch

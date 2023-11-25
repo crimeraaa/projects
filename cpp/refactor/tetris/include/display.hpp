@@ -1,11 +1,15 @@
-#ifndef OLC_CONSOLE_TETRIS_DISPLAY_HPP
-#define OLC_CONSOLE_TETRIS_DISPLAY_HPP
+#pragma once
 #include "common.hpp"
 
 // Windows API 
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 
+/**
+ * The full console window and buffer. Relies on Windows API.
+ * @note The `m_screen` buffer is different from the `PlayingField` buffer!
+ * @note We just display output here. `PlayingField` keeps track of game state.
+ */
 class Display {
 private:
     const int m_width; // Console screen size (x-axis: columns)
@@ -37,16 +41,14 @@ public:
         SetConsoleActiveScreenBuffer(m_console);
     }
     ~Display() {
-        // delete m_bytes;
-        std::cout << "deleting (Display) this->m_screen\n";
         delete[] m_screen;
-        // ? Need to close handle before printing game over message.
-        std::cout << "closing (Display) this->m_console\n";
+        // ? Need to close handle before printing game over message,
+        // so maybe don't use this destructor.
         CloseHandle(m_console);
     }
 
     /**
-     * Draw the buffer via a call to the Windows API (writes console output).
+     * Draw the buffer via a call to the Windows API.
      * This is wrapper around `WriteConsoleOutputCharacterW`.
      */
     void render() {
@@ -58,14 +60,4 @@ public:
             &m_bytes // address to store #bytes written in
         );
     }
-
-    std::string get_data() {
-        std::stringstream data_stream; 
-        data_stream << "width =  " << m_width << "\n" 
-                    << "height = " << m_height << "\n"
-                    << "area =   " << m_area << "\n";
-        return data_stream.str();
-    }
 };
-
-#endif // OLC_CONSOLE_TETRIS_DISPLAY_HPP

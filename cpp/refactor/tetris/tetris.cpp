@@ -5,7 +5,8 @@
 using namespace std;
 
 int main() {
-    Tetris tetris = Tetris(12, 18, 80, 30);
+    Tetris tetris;
+    tetris.setup_screen(80, 30).setup_field(12, 18);
     tetris.dump_pieces();
     return 0;
 }
