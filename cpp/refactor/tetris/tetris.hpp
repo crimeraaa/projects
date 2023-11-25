@@ -12,6 +12,10 @@ private:
     static constexpr int PIECE_WIDTH = 4;
     static constexpr int PIECE_HEIGHT = 4;
     static constexpr int PIECE_AREA = PIECE_WIDTH * PIECE_HEIGHT;
+
+    Display m_display; // initialize this one first
+    PlayingField m_pfield; // initialize after `m_display`
+    
     // List of valid tetris pieces. Each tetronimo is a 4x4 block.
     const std::vector<std::wstring> m_tetrominos = {
         // [0] 4x1: vertical line
@@ -51,40 +55,13 @@ private:
          "...."
     };
 
-    PlayingField *m_pfield; 
-    Display *m_display; 
-
     /**
      * Get the correct index into a piece based on its rotation.
      * @param target_x `px`, desired piece's x-axis cell, from the caller loop.
      * @param target_y `py`, desired piece's y-axis cell, from the caller loop.
      * @param rotation Value of rotation. We modulo by 4 internally.
      */
-    int rotate(int target_x, int target_y, int rotation) {
-        switch (rotation % 4) {
-            /** 0 DEGREES:       0  1  2  3
-                                 4  5  6  7
-                                 8  9 10 11 
-                                12 13 14 15 */
-            case 0: return (target_y * PIECE_HEIGHT) + target_x;
-            /** 90 DEGREES:     12  8  4  0
-                                13  9  5  1
-                                14 10  6  2 
-                                15 11  7  3 */
-            case 1: return (PIECE_AREA - PIECE_WIDTH) + target_y - (target_x * PIECE_WIDTH);
-            /** 180 DEGREES:    15 14 13 12
-                                11 10  9  8
-                                 7  6  5  4
-                                 3  2  1  0 */
-            case 2: return (PIECE_AREA - 1) - (target_y * PIECE_WIDTH) - target_x;
-            /** 270 DEGREES:    3  7 11 15
-                                2  6 10 14
-                                1  5  9 13
-                                0  4  8 12 */
-            case 3: return (PIECE_WIDTH - 1) - target_y + (target_x * PIECE_WIDTH);
-        }
-        return 0;
-    }
+    int rotate(int target_x, int target_y, int rotation);
 
     /**
      * @param tetromino_id ID to be used as index into global `tetromino` array.
@@ -104,21 +81,15 @@ private:
         return false;
     }
 public:
-    Tetris &setup_screen(int screen_width, int screen_height) {
-        m_display = new Display(screen_width, screen_height);
-        return *this;
-    }
-
-    Tetris &setup_field(int field_width, int field_height) {
-        m_pfield = new PlayingField(field_width, field_height);
-        return *this;
-    }
-
-    // `delete` calls a Class's appropriate destructor, very neat!
-    ~Tetris() {
-        delete m_pfield;
-        delete m_display;
-    }
+    /**
+     * @warning Please pass 0 arguments or all 4, nothing in between,
+     * unless you know what you are doing.
+     * Dire things may happen if you pass some but others use the defaults.
+     * @note `scr` short for `display screen`.
+     * @note `pf` short for `playing field`.
+     * @note Default values should be left at declaration.
+     */
+    Tetris(int scr_width = 80, int scr_height = 30, int pf_width = 12, int pf_height = 18);
 
     // testing function
     void dump_pieces() {
@@ -135,3 +106,41 @@ public:
         }
     }
 };
+
+/*******************************************************************************
+******************************** IMPLEMENTATION ********************************
+*******************************************************************************/
+
+
+Tetris::Tetris(int scr_width, int scr_height, int pf_width, int pf_height) 
+:   m_display(scr_width, scr_height), 
+    m_pfield(pf_width, pf_height) {
+    // no code here, unless you want to do something important
+}
+
+
+int Tetris::rotate(int target_x, int target_y, int rotation) {
+    switch (rotation % 4) {
+        /** 0 DEGREES:       0  1  2  3
+                             4  5  6  7
+                                8  9 10 11 
+                            12 13 14 15 */
+        case 0: return (target_y * PIECE_HEIGHT) + target_x;
+        /** 90 DEGREES:     12  8  4  0
+                            13  9  5  1
+                            14 10  6  2 
+                            15 11  7  3 */
+        case 1: return (PIECE_AREA - PIECE_WIDTH) + target_y - (target_x * PIECE_WIDTH);
+        /** 180 DEGREES:    15 14 13 12
+                            11 10  9  8
+                                7  6  5  4
+                                3  2  1  0 */
+        case 2: return (PIECE_AREA - 1) - (target_y * PIECE_WIDTH) - target_x;
+        /** 270 DEGREES:    3  7 11 15
+                            2  6 10 14
+                            1  5  9 13
+                            0  4  8 12 */
+        case 3: return (PIECE_WIDTH - 1) - target_y + (target_x * PIECE_WIDTH);
+    }
+    return 0;
+}
