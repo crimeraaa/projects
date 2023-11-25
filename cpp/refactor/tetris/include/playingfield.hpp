@@ -14,6 +14,7 @@ private:
     const int m_area; // Playing field's total elements in the buffer.
     unsigned char *m_field; // Array of indexes into the literal `L" ABCDEFG=#"`.
 public:
+
     /**
      * @warning Please ensure correct dimensions between this and `Display`!
      * Otherwise, who knows what will happen...
@@ -24,10 +25,25 @@ public:
     PlayingField(int field_width, int field_height);
 
     /**
+     * Wrapper because `m_field` is private.
+     * @param index Desired index into `m_field`.
+     * @note Remember this is an index into the wchar literal `L" ABCDEFG=#"`.
+     * @warning Has no error handling whatsoever!
+     */
+    wchar_t get_field_at(int index);
+
+    bool is_in_bounds(int test_x, int test_y) {
+        return (test_x >= 0 && test_x < m_width) 
+            && (test_y >= 0 && test_y < m_height);
+    }
+
+    /**
      * Deletes `m_field`.
      * @note So far, `m_field` is the only dynamically allocated member.
+     * @warning This messes up the VSCode C/C++ Extension doxygen thingy!
      */
     ~PlayingField();
+
 };
 
 /*******************************************************************************
@@ -40,8 +56,7 @@ PlayingField::PlayingField(int field_width, int field_height)
     m_area(field_width * field_height),
     m_field(new unsigned char[m_area]) 
 {
-    // m_field = new unsigned char[m_area];
-    // Start the board as blank with walls
+    // Start the playing field buffer (our board) as blank with walls
     for (int x = 0; x < field_width; x++) {
         for (int y = 0; y < field_height; y++) {
             // Check if on board boundary (side or bottom of array).
@@ -58,4 +73,8 @@ PlayingField::PlayingField(int field_width, int field_height)
 
 PlayingField::~PlayingField() {
     delete[] m_field;
+}
+
+wchar_t PlayingField::get_field_at(int index) {
+    return m_field[index];
 }

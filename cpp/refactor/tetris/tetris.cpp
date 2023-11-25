@@ -6,6 +6,6 @@ using namespace std;
 
 int main() {
     Tetris tetris;
-    tetris.dump_pieces();
+    tetris.game_loop();
     return 0;
 }

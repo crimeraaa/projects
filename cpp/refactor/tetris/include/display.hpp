@@ -44,6 +44,12 @@ public:
      * Pretty much all of the parameters passed are `private` members.
      */
     void render();
+
+    /**
+     * Wrapper because because `m_screen` is private.
+     * @warning Has no error handling whatsoever!
+     */
+    void set_screen_at(int index, wchar_t value);
 };
 
 /*******************************************************************************
@@ -57,8 +63,7 @@ Display::Display(int screen_width, int screen_height)
     m_bytes(0),
     m_screen(new wchar_t[m_area])
 {
-    // m_screen = new wchar_t[m_area];
-    // Start the screen off as completely blank.
+    // Start the display screen buffer off as completely blank.
     for (int i = 0; i < m_area; i++) {
         m_screen[i] = L' ';
     }
@@ -70,7 +75,8 @@ Display::Display(int screen_width, int screen_height)
         NULL // screen buffer data
     );
     // Need this else we don't see anything! Windows API needs to know.
-    // SetConsoleActiveScreenBuffer(m_console);
+    // Note that when this called, `cout` won't be seen when written to.
+    SetConsoleActiveScreenBuffer(m_console);
 }
 
 void Display::render() {
@@ -88,4 +94,8 @@ Display::~Display() {
     // ? Need to close handle before printing game over message,
     // so maybe don't use this destructor.
     CloseHandle(m_console);
+}
+
+void Display::set_screen_at(int index, wchar_t value) {
+    m_screen[index] = value;
 }
