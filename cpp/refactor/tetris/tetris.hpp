@@ -4,68 +4,40 @@
 #include "include/playingfield.hpp"
 #include "include/player.hpp"
 
-#include <array>
-#include <thread>
 
 class Tetris {
 private: // COMPILE-TIME CONSTANTS
-
-    // We should have exactly 7 tetrominos and 4 possible keys to press.
-    static constexpr int PIECE_COUNT = 7, KEYS_COUNT = 4;
-
-    // `pc` is short for `piece`, as in Tetromino piece.
-    // Although the arrays are 1D, we treat them as if they were squares.
-    static constexpr int PIECE_WIDTH = 4, PIECE_HEIGHT = 4;
-
-    // Needed for the 90 degree and 180 degree rotation calculations.
-    static constexpr int PIECE_AREA = PIECE_WIDTH * PIECE_HEIGHT;
+    // Compile-time information about tetrominos
+    enum TetrominoInformatino {
+        PIECE_COUNT = 7,
+        PIECE_WIDTH = 4,
+        PIECE_HEIGHT = 4,
+        PIECE_AREA = PIECE_WIDTH * PIECE_HEIGHT
+    };
 
 private: // MEMBER VARIABLES
-    /** 
-     * Direct instance (i.e, not a pointer!).
-     * Use this to handle writing to the console screen buffer.
-     * 
-     * @note Goes first in the initializer list, before `this->m_pfield`. 
-    */
-    Display m_display; 
-
-    /**
-     * Direct instance (i.e, not a pointer!). Used as a sort of game world buffer.
-     * 
-     * @note Goes second in the initializer list, after `this->m_display`. 
-    */
-    PlayingField m_pfield; 
-    
-    /**
-     * Direct instance (i.e, not a pointer!). Used as a sort of game world buffer.
-     * 
-     * @note Goes third in the initializer list, after `this->m_pfield`,
-     * especially since it relies on playing field width.
-    */
-    TetrisPlayer m_player;
+    Display m_display; // @note 1st in initializer list, before `this->m_pfield`. 
+    PlayingField m_pfield; // @note 2nd in initializer list, after `this->m_display`. 
+    TetrisPlayer m_player; // @note 3rd in initializer list, after `this->m_pfield`,
 
     // List of valid tetris pieces, from indexes 0-6. 
     // Each tetronimo is a 4x4 block but stored as a 1D array of `wchar_t`.
     const std::array<std::wstring, PIECE_COUNT> m_tetrominos = {
-        L"..X...X...X...X.", // [0] 4x1: vertical line
-        L"..X..XX...X.....", // [1] 3+1: T shape
-        L".....XX..XX.....", // [2] 2x2: square
-        L"..X..XX..X......", // [3] 2+2: Z shape
-        L".X...XX...X.....", // [4] 2+2: S shape
-        L".X...X...XX.....", // [5] 3+1: L shape
-        L"..X...X..XX....."  // [6] 3+1: Mirror L
+        L"..X...X...X...X.", // 4x1: vertical line
+        L"..X..XX...X.....", // 3+1: T shape
+        L".....XX..XX.....", // 2x2: square
+        L"..X..XX..X......", // 2+2: Z shape
+        L".X...XX...X.....", // 2+2: S shape
+        L".X...X...XX.....", // 3+1: L shape
+        L"..X...X..XX....."  // 3+1: Mirror L
     };
 
 public: // CONSTRUCTOR
     /**
-     * Instantiates the members `m_display (Display)` and `m_pfield (PlayingField)`.
-     * 
      * @warning Please pass 0 arguments or all 4, nothing in between,
      * unless you know what you are doing.
      * Dire things may happen if you pass some but others use the defaults.
      * 
-     * @note `scr` short for `display screen`.
-     * @note `pf` short for `playing field`.
      * @note Default values should be left at declaration.
      */
     Tetris(int scr_width = 80, int scr_height = 30, int pf_width = 12, int pf_height = 18);
@@ -74,20 +46,11 @@ public: // METHODS
     // Just to get a feel for the variables before I refactor things.
     void game_loop();
 
-    /**
-     * "Listens" for input via the Windows virtual key codes, and handles
-     * successive calls to `m_player.is_pressing` and `piece_fits`.
-     * 
-     * @note This updates the player's tetromino position on the playing field.
-     */
+    // "Listens" for input via the Windows virtual key codes.
     void input();
 
-    /**
-     * Updates console screen buffer and playing field buffer,
-     * then writes the output to the active console window.
-     * 
-     * @note Calls the private member functions `draw_field` and `draw_piece`.
-     */
+    // Updates console screen buffer and playing field buffer then writes
+    // to the active console window.
     void render();
 
 private: // GENERAL TETRIS HELPER METHODS
@@ -103,7 +66,7 @@ private: // GENERAL TETRIS HELPER METHODS
 
     /**
      * "Transform" a tetromino array to be used in the field array.
-     * We Check each cell of the reference tetromino piece (based on given ID).
+     * We check each cell of the reference tetromino piece (based on given ID).
      * 
      * @param offset_x Offset into the player's target x-axis index (column#)
      * @param offset_y Offset into the player's target y-axis index (row#)
@@ -114,18 +77,10 @@ private: // GENERAL TETRIS HELPER METHODS
     bool piece_fits(int offset_x = 0, int offset_y = 0, int offset_rotation = 0);
 
 private: // RENDER OUTPUT HELPER METHODS
-    /**
-     * Draw the current state of the playing field, and just the field.
-     * 
-     * @note Pokes at `m_pfield` and `m_display`, so need in the `Tetris` scope.
-     */ 
+    // Draw the current state of the playing field.
     void draw_field();
 
-    /**
-     * Current piece is separate from the field, so draw it separately. 
-     * 
-     * @note Pokes at `m_player` and `m_display`, so need in the `Tetris` scope.
-     */
+    // Current piece is separate from the field so draw it separately. 
     void draw_piece();
 };
 
@@ -159,7 +114,7 @@ void Tetris::game_loop() {
         // between calls.
         if (m_player.is_pressing(m_player.KEY_Z)) {
             // true = 1, false = 0, so we can use them as integers too
-            m_player.rotation() += hold_rotate && piece_fits(0, 0, 1);
+            m_player.rotation += hold_rotate && piece_fits(0, 0, 1);
             hold_rotate = false;
         }
         else {
@@ -181,18 +136,26 @@ void Tetris::game_loop() {
 
 void Tetris::input() {
     // Asynchronously updates the list of pressed keys.
-    m_player.input();
+    for (int i = 0; i < m_player.KEYS_COUNT; i++) {
+        m_player.controls[i].update();
+    }
 
     // ? Use booleans to our advantage: true = 1, false = 0, so we can use that!
     // `offset_x = 1`: Only check the cell to our right.
-    m_player.px() += m_player.is_pressing(m_player.KEY_RIGHT) && piece_fits(1);
+    if (m_player.is_pressing(m_player.KEY_RIGHT) && piece_fits(1)) {
+        m_player.position.x++;
+    }
 
     // `offset_x = -1`: Only check the cell to our left.
-    m_player.px() -= m_player.is_pressing(m_player.KEY_LEFT) && piece_fits(-1);
+    if (m_player.is_pressing(m_player.KEY_LEFT) && piece_fits(-1)) {
+        m_player.position.x--;
+    }
 
     // `offset_x = 0, offset_y = 1`: Only check the cells below us.
-    // Use use positive 1 since topleft is 0,0, meaning y-axis grows down.
-    m_player.py() += m_player.is_pressing(m_player.KEY_DOWN) && piece_fits(0, 1);
+    if (m_player.is_pressing(m_player.KEY_DOWN) && piece_fits(0, 1)) {
+        // Use use positive 1 since topleft is 0,0, meaning y-axis grows down.
+        m_player.position.y++;
+    }
 }
 
 /*******************************************************************************
@@ -211,20 +174,16 @@ void Tetris::render() {
 }
 
 void Tetris::draw_field() {
-    // `pf` is short for Playing Field.
+    // Playing field dimensions.
     const int pf_width = m_pfield.get_width(), pf_height = m_pfield.get_height();
-
-    // `scr` is short for Display Screen.
-    const int scr_width = m_display.get_width();
 
     // Loop through each cell in our playing field.
     for (int fx = 0; fx < pf_width; fx++) {
         for (int fy = 0; fy < pf_height; fy++) {
             // Index into the display screen to be updated.
-            int screen_index = (fy + 2) * scr_width + (fx + 2);
+            int screen_index = (fy + 2) * m_display.width + (fx + 2);
 
-            // What number the field has at this spot,
-            // to be used as an index into the literal `" ABCDEFG=#"`
+            // Value received is an index into `" ABCDEFG=#"`, which is used
             // when we update the screen buffer.
             auto tile = m_pfield[(fy * pf_width) + fx];
 
@@ -241,34 +200,23 @@ void Tetris::draw_field() {
 }
 
 void Tetris::draw_piece() {
-    // 
-    const int &rotation = m_player.rotation(), &piece_id = m_player.piece_id();
+    // Effectively our field indexes. Still need to get the correct offsets.
+    const int fx = m_player.position.x, fy = m_player.position.y;
 
-    // Effectively our field indexes, but still need to get the correct offsets.
-    const int &fx = m_player.px(), &fy = m_player.py();
+    const int piece_id = m_player.piece_id; // index into tetromino array
 
-    // Screen width as we call it multiple times.
-    const int &screen_width = m_display.get_width();
-
-    // 4x4 tetromino grid in question.
     const auto &tetromino = m_tetrominos[piece_id];
 
     for (int px = 0; px < PIECE_WIDTH; px++) {
         for (int py = 0; py < PIECE_HEIGHT; py++) {
-            int cell = rotate(px, py, rotation);
-            auto letter = tetromino[cell];
-
-            // Don't write parts of the tetromino reference that aren't occupied
-            if (letter != L'X') {
+            int cell = rotate(px, py, m_player.rotation);
+            // We only wanna update the display screen with tetris pieces
+            if (tetromino[cell] != L'X') {
                 continue;
             }
-
-            // Offset by current position and 2.
-            int scr_index = (fy + py + 2) * screen_width + (fx + px + 2);
-
-            // Update our output console buffer.
-            // player_piece + 'A' just gets the capital letter representation,
-            // since each tetromino is represented by one particular letter.
+            // offset by 2 so we don't end up writing to the corners
+            int scr_index = (fy + py + 2) * m_display.width + (fx + px + 2);
+            // player_piece + 'A' just gets the capital letter representation.
             m_display[scr_index] = piece_id + 'A';
         }
     }
@@ -279,9 +227,12 @@ void Tetris::draw_piece() {
 *******************************************************************************/
 
 bool Tetris::piece_fits(int offset_x, int offset_y, int offset_rotation) {
-    const int fx = offset_x + m_player.px(), fy = offset_y + m_player.py();
-    const auto &piece = m_tetrominos[m_player.piece_id()];
-    const int &rotation = offset_rotation + m_player.rotation();
+    // playing field indexes
+    const int fx = offset_x + m_player.position.x, fy = offset_y + m_player.position.y;
+
+    // reference tetromino
+    const auto &piece = m_tetrominos[m_player.piece_id];
+    const int &rotation = offset_rotation + m_player.rotation;
 
     int pf_width = m_pfield.get_width();
     for (int px = 0; px < PIECE_WIDTH; px++) {
@@ -296,21 +247,8 @@ bool Tetris::piece_fits(int offset_x, int offset_y, int offset_rotation) {
             if (!m_pfield.is_in_bounds(fx + px, fy + py)) {
                 continue;
             }
-
-            /** 
-             * Accounting for rotation, check if this index is filled in.
-             * This represents the part of the Tetromino piece.
-             * 
-             * @note Reference tetrominos are made of `L'X'` and `L'.'` only.
-            */
+            // we consider 'X' as part of the piece in the tetromino grid
             bool is_piece = (piece[piece_index] != L'.');
-
-            /** 
-             * Checks if this field tile is being occupied.
-             * 
-             * @note Refer to: `L" ABCDEFG=#"[0] = L' ';`
-             * @note Meaning 0 is our empty space for the field.
-            */
             bool is_occupied = (m_pfield[field_index] != 0);
 
             // We're on a part of the piece and it collided with something!
