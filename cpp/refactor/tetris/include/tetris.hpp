@@ -61,7 +61,11 @@ public: // CONSTRUCTORS
         size_t screen_height, 
         size_t pfield_width, 
         size_t pfield_height
-    );
+    ) 
+    :   m_display(screen_width, screen_height),
+        m_pfield(pfield_width, pfield_height),
+        m_player(pfield_width)
+    { /* no code here, just need initializer list */  }
 
     /**
      * Constructor delegation is a C++11/C++0x thing. Very nice!
@@ -71,7 +75,12 @@ public: // CONSTRUCTORS
      * this->m_pfield.width = 12, this->m_pfield.height = 18;
      * ```
      */
-    Tetris();
+    Tetris() : Tetris(
+        DEFAULT_SCREEN_WIDTH, 
+        DEFAULT_SCREEN_HEIGHT, 
+        DEFAULT_PFIELD_WIDTH, 
+        DEFAULT_PFIELD_HEIGHT
+    ) { /* no code here, just need initializer list */ }
 
 public: // METHODS
     // "Listens" for input via the Windows virtual key codes. See MSDN.

@@ -1,24 +1,6 @@
 // Pass `-I.` to compiler so that Makefile sees this
 #include "include/tetris.hpp"
 
-Tetris::Tetris(
-    size_t screen_width, 
-    size_t screen_height, 
-    size_t pfield_width, 
-    size_t pfield_height
-) 
-:   m_display(screen_width, screen_height),
-    m_pfield(pfield_width, pfield_height),
-    m_player(pfield_width)
-{ /* no code here, just need initializer list */  }
-
-Tetris::Tetris() : Tetris(
-    DEFAULT_SCREEN_WIDTH, 
-    DEFAULT_SCREEN_HEIGHT, 
-    DEFAULT_PFIELD_WIDTH, 
-    DEFAULT_PFIELD_HEIGHT
-) { /* no code here, just need initializer list */ }
-
 /*******************************************************************************
 ***************************** GAME INPUT AND LOGIC *****************************
 *******************************************************************************/
