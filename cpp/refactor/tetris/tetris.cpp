@@ -24,7 +24,7 @@ void Tetris::input() {
     }
 }
 
-inline bool Tetris::key_is_held(enum Player::Keys vkey_id, enum Offsets code) {
+bool Tetris::key_is_held(enum Player::Keys vkey_id, enum Offsets code) {
     // Determine which offset to use based on `code`.
     int offset_x = 0, offset_y = 0, offset_rotation = 0;
     switch (code) {
@@ -47,7 +47,7 @@ inline bool Tetris::key_is_held(enum Player::Keys vkey_id, enum Offsets code) {
     );
 }
 
-inline bool Tetris::piece_fits(size_t id, int rotation, size_t fx, size_t fy) {
+bool Tetris::piece_fits(size_t id, int rotation, size_t fx, size_t fy) {
     // reference tetromino
     const auto &piece = m_tetrominos[id];
 
@@ -78,7 +78,7 @@ inline bool Tetris::piece_fits(size_t id, int rotation, size_t fx, size_t fy) {
     return true;
 }
 
-inline size_t Tetris::rotate(size_t tx, size_t ty, int rotation) {
+size_t Tetris::rotate(size_t tx, size_t ty, int rotation) {
     switch (rotation % 4) {
         /** 0 DEGREES:       0  1  2  3
                              4  5  6  7
@@ -122,7 +122,7 @@ void Tetris::render() {
     m_display.render();
 }
 
-inline void Tetris::draw_field() {
+void Tetris::draw_field() {
     // Loop through each cell in our playing field.
     for (size_t fx = 0; fx < m_pfield.width; fx++) {
         for (size_t fy = 0; fy < m_pfield.height; fy++) {
@@ -145,7 +145,7 @@ inline void Tetris::draw_field() {
     }
 }
 
-inline void Tetris::draw_piece() {
+void Tetris::draw_piece() {
     // Should we use locals to access member variables when in a `for` loop? 
     // See: https://stackoverflow.com/a/238568
 

@@ -24,11 +24,11 @@ using namespace std;
  * @note See here for how to inline member functions separately:
  * https://stackoverflow.com/a/9370630
  * 
- * @note Basically declare function definitions outside of class declaration
- * as `inline`.
- * 
- * @warning Publicly exposed functions defined in a separate translation unit
- * must not be inlined it seems. E.g. `Tetris::input` and `Tetris::render`.
+ * @note See here for help with separating class definitions:
+ * https://stackoverflow.com/a/68056649
+ * https://stackoverflow.com/a/34239993
+ * https://stackoverflow.com/q/28939623
+ * https://stackoverflow.com/a/58734437
  */
 int main() {
     Tetris tetris = Tetris(); 
