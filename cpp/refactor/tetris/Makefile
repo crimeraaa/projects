@@ -1,12 +1,15 @@
-EXE = tetris
-SRC = $(addsuffix .cpp, $(EXE))
-OBJ = $(SRC:.cpp=.o)
+EXE := main
+# Spaghetti but shut up
+SRC := display player playingfield tetris
+SRC := $(addprefix src/, $(SRC))
+SRC := $(addsuffix .cpp, $(EXE) $(SRC))
+OBJ := $(SRC:.cpp=.o)
 # For MSVC, would need to use .pch extension
-PCH = ./include/common.hpp.gch
-PCH_SRC = $(PCH:.hpp.gch=.hpp)
+PCH := ./include/common.hpp.gch
+PCH_SRC := $(PCH:.hpp.gch=.hpp)
 
 # Use PCH by default and compile with debug information
-all: CXXFLAGS := $(DEBUG_CXXFLAGS) $(CXXFLAGS)
+all: CXXFLAGS := $(DEBUG_CXXFLAGS) $(CXXFLAGS) -I.
 all: build
 
 build: $(PCH) $(EXE)
@@ -29,11 +32,9 @@ $(EXE): $(OBJ)
 # -H is used to check the include paths, especially for PCH's.
 # if you get "! <name>.gch" and a rather short output it's working!
 # Source: https://stackoverflow.com/a/2935536
+# Detect changes in all project headers for now?
 %.o: %.cpp *.hpp ./include/*.hpp
 	$(CXX) $(CXXFLAGS) -Winvalid-pch -H -c -o $@ $<
-
-# Detect changes in all project headers for now?
-%.cpp: *.hpp ./include/*.hpp
 
 # Remove compilation files
 clean:

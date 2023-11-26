@@ -1,3 +1,4 @@
+// Not really base classes, but how else to describe it? Common classes?
 #pragma once
 #include "common.hpp"
 
@@ -5,9 +6,11 @@
 struct Position {
     size_t x = 0;
     size_t y = 0;
-    Position(size_t fx, size_t fy) : x(fx), y(fy) { 
-        // no code here, just need the initializer list
-    }
+    // Pass in playing field x-axis and y-axis values.
+    Position(size_t fx, size_t fy) 
+    :   x(fx), 
+        y(fy)
+    { /* no code here, just need initializer list */ }
 };
 
 // Windows Virtual key codes
@@ -16,10 +19,11 @@ struct VKey {
     bool down; // Maintain state
 
     // Please pass a `VK_` macro for the correct Windows virtual key code,
-    // else you can just pass a `char` literal.
-    VKey(unsigned char vkeycode) : code(vkeycode), down(false) { 
-        // no code here, just need the initializer list
-    }
+    // else you can just pass a `char` literal like `Z`.
+    VKey(unsigned char vkeycode) 
+    :   code(vkeycode), 
+        down(false) 
+    { /* no code here, just need initializer list */ }
 
     /**
      * @note `0x8000` means get the most significant bit of a 16 bit number.
@@ -28,6 +32,7 @@ struct VKey {
      * @note Meaning, if that bit is 1, key is being pressed down. 
      */
     void update() {
-        down = (GetAsyncKeyState(code) & 0x8000);
+        this->down = (GetAsyncKeyState(this->code) & 0x8000);
     }
+
 }; 

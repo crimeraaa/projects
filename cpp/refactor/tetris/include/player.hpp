@@ -44,15 +44,10 @@ public: // METHODS
      * Calls `VKey::update()`, which asynchronously listens for key presses
      * via the Windows API call `GetAsyncKeyState`.
      * 
-     * @note This updates the `this->controls[i]` array.
+     * @note Updates the `this->controls[i]` array.
      */
-    void input() {
-        for (int i = 0; i < KEYS_COUNT; i++) {
-            controls[i].update();
-        }
-    }
+    void input();
 
-    bool is_pressing(enum Keys k) {
-        return controls[k].down;
-    }
+    // returns `this->controls[i].pressed`.
+    bool is_pressing(enum Keys k);
 };
