@@ -2,9 +2,10 @@
 #include "common.hpp"
 #include "base.hpp"
 
-class TetrisPlayer {
+class Player {
 public: // SYMBOLIC CONSTANTS
-     // Symbolic constants for indexes into the `controls` array.
+    // Need a name for this enum to refer to.
+    // Symbolic constants for indexes into the `controls` array.
     enum Keys {
         KEY_RIGHT = 0,
         KEY_LEFT,
@@ -18,6 +19,7 @@ public: // EXPOSED MEMBERS
     int piece_id; // index into tetromino array
     int rotation; // current rotation to be modulo by 4
     Position position; // 2D coordinates (is index into playing field buffer)
+    bool hold; // Stagger to avoid super fast repeating rotations.
 
     // List of valid keys that we listen for.
     // @warning Please keep this in the same order as `enum Keys`!
@@ -30,13 +32,12 @@ public: // EXPOSED MEMBERS
 
 public: // CONSTRUCTOR
 
-    TetrisPlayer(int fwidth) 
+    Player(size_t fwidth) 
     :   piece_id(0),
         rotation(0),
-        position(fwidth / 2, 0)
-    {
-        // no code here, just need the initializer list
-    }
+        position(fwidth / 2, 0),
+        hold(false)
+    { /* no code here, just need the initializer list */ }
     
 public: // METHODS
     /**

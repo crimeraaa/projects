@@ -9,9 +9,9 @@
 class Display {
 public: // EXPOSED MEMBER VARIABLES
 
-    const int width; // #columns
-    const int height; // #rows
-    const int area; // width * height, e.g. 1920x1080
+    const size_t width; // buffer x-axis size, or #columns
+    const size_t height; // buffer y-axis size, or #rows
+    const size_t area; // `width * height` = total elements in buffer
 
 private: // INTERNAL MEMBER VARIABLES
 
@@ -21,16 +21,18 @@ private: // INTERNAL MEMBER VARIABLES
 
 public: // CONSTRUCTOR AND DESTRUCTOR
     /**
-     * Using `stdout` or `std::cout` is so inefficient, we use the OS's API.
+     * Using `stdout` or `std::cout` is inefficient, use OS's API instead.
      * 
      * @warning Please ensure correct dimensions between this and `PlayingField`!
      * Otherwise, who knows what will happen...
+     * 
+     * @todo Make cross-compatible? This is currently Windows-specific.
      */
-    Display(int screen_width, int screen_height);
+    Display(size_t screen_width, size_t screen_height);
 
     /**
      * @warning If printing the gameover screen, close the console handle beforehand!
-     * Comment out the `CloseHandle` call inside of this else we crash horribly.
+     * @warning Comment out the call to `CloseHandle` else we crash horribly.
      */
     ~Display();
 
@@ -39,15 +41,15 @@ public: // METHODS
     void render();
 
 public: // OVERLOADS
-    // Access an element from the screen buffer (`this->m_screen`).
-    wchar_t &operator[](int index);
+    // Read an/write to element from the screen buffer. (`this->m_screen`)
+    wchar_t &operator[](size_t index);
 };
 
 /*******************************************************************************
 ******************************** IMPLEMENTATION ********************************
 *******************************************************************************/
 
-Display::Display(int screen_width, int screen_height)
+Display::Display(size_t screen_width, size_t screen_height)
 :   width(screen_width),
     height(screen_height),
     area(screen_width * screen_height),
@@ -55,7 +57,7 @@ Display::Display(int screen_width, int screen_height)
     m_screen(new wchar_t[area])
 {
     // Start the display screen buffer off as completely blank.
-    for (int i = 0; i < area; i++) {
+    for (size_t i = 0; i < area; i++) {
         m_screen[i] = L' ';
     }
     m_console = CreateConsoleScreenBuffer(
@@ -87,6 +89,6 @@ Display::~Display() {
     CloseHandle(m_console);
 }
 
-wchar_t &Display::operator[](int index) {
+wchar_t &Display::operator[](size_t index) {
     return m_screen[index];
 }

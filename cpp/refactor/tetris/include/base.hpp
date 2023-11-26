@@ -1,10 +1,11 @@
 #pragma once
 #include "common.hpp"
+
 // 2D coordinates
 struct Position {
-    int x = 0;
-    int y = 0;
-    Position(int fx, int fy) : x(fx), y(fy) { 
+    size_t x = 0;
+    size_t y = 0;
+    Position(size_t fx, size_t fy) : x(fx), y(fy) { 
         // no code here, just need the initializer list
     }
 };
@@ -20,9 +21,12 @@ struct VKey {
         // no code here, just need the initializer list
     }
 
-    // 0x8000 means get the most significant bit of a 16 bit number,
-    // the Windows API defines that as the key being pressed.
-    // So if MSB of 16 bits is 1, it's being pressed down. 
+    /**
+     * @note `0x8000` means get the most significant bit of a 16 bit number.
+     * Windows API defines that as the key being pressed.
+     * 
+     * @note Meaning, if that bit is 1, key is being pressed down. 
+     */
     void update() {
         down = (GetAsyncKeyState(code) & 0x8000);
     }

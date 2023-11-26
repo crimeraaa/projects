@@ -5,7 +5,7 @@
 using namespace std;
 
 int main() {
-    Tetris tetris;
+    Tetris tetris = Tetris();
     tetris.game_loop();
     return 0;
 }
