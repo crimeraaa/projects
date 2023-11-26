@@ -1,5 +1,5 @@
-EXE = tetris
-SRC = $(addsuffix .cpp, $(EXE))
+EXE = main
+SRC = $(addsuffix .cpp, $(EXE) tetris)
 OBJ = $(SRC:.cpp=.o)
 # For MSVC, would need to use .pch extension
 PCH = ./include/common.hpp.gch
@@ -33,7 +33,7 @@ $(EXE): $(OBJ)
 	$(CXX) $(CXXFLAGS) -Winvalid-pch -H -c -o $@ $<
 
 # Detect changes in all project headers for now?
-%.cpp: *.hpp ./include/*.hpp
+# %.cpp: *.hpp ./include/*.hpp
 
 # Remove compilation files
 clean:

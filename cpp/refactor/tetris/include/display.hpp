@@ -49,7 +49,7 @@ public: // OVERLOADS
 ******************************** IMPLEMENTATION ********************************
 *******************************************************************************/
 
-Display::Display(size_t screen_width, size_t screen_height)
+inline Display::Display(size_t screen_width, size_t screen_height)
 :   width(screen_width),
     height(screen_height),
     area(screen_width * screen_height),
@@ -72,7 +72,7 @@ Display::Display(size_t screen_width, size_t screen_height)
     SetConsoleActiveScreenBuffer(m_console);
 }
 
-void Display::render() {
+inline void Display::render() {
     WriteConsoleOutputCharacterW(
         m_console, // console handle, windows API
         m_screen, // wide character buffer
@@ -82,13 +82,13 @@ void Display::render() {
     );
 }
 
-Display::~Display() {
+inline Display::~Display() {
     delete[] m_screen;
     // ? Need to close handle before printing game over message,
     // ? so maybe don't use this destructor for the `this->m_console`.
     CloseHandle(m_console);
 }
 
-wchar_t &Display::operator[](size_t index) {
+inline wchar_t &Display::operator[](size_t index) {
     return m_screen[index];
 }

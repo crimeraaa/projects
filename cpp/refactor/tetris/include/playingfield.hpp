@@ -58,7 +58,7 @@ public: // OVERLOADS
 ******************************** IMPLEMENTATION ********************************
 *******************************************************************************/
 
-PlayingField::PlayingField(size_t fwidth, size_t fheight)
+inline PlayingField::PlayingField(size_t fwidth, size_t fheight)
 :   width(fwidth), 
     height(fheight), 
     area(fwidth * fheight),
@@ -79,18 +79,18 @@ PlayingField::PlayingField(size_t fwidth, size_t fheight)
     }   
 }
 
-PlayingField::~PlayingField() {
+inline PlayingField::~PlayingField() {
     delete[] m_field;
 }
 
-bool PlayingField::is_in_bounds(size_t test_x, size_t test_y) {
+inline bool PlayingField::is_in_bounds(size_t test_x, size_t test_y) {
     return (test_x < width) && (test_y < height);
 }
 
-bool PlayingField::is_in_bounds(size_t index) {
+inline bool PlayingField::is_in_bounds(size_t index) {
     return index < area;
 }
 
-unsigned char &PlayingField::operator[](size_t index) {
+inline unsigned char &PlayingField::operator[](size_t index) {
     return m_field[index];
 }
