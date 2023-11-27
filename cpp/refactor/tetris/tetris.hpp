@@ -34,11 +34,13 @@ public: // COMPILE-TIME CONSTANTS
     };
 
 private: // MEMBER VARIABLES
-    Display m_display; // @note 1st in initializer list, before `this->m_pfield`. 
-    PlayingField m_pfield; // @note 2nd in initializer list, after `this->m_display`. 
+    Display
+        m_display; // @note 1st in initializer list, before `this->m_pfield`.
+    PlayingField
+        m_pfield; // @note 2nd in initializer list, after `this->m_display`.
     Player m_player; // @note 3rd in initializer list, after `this->m_pfield`,
 
-    // List of valid tetris pieces, from indexes 0-6. 
+    // List of valid tetris pieces, from indexes 0-6.
     // Each tetronimo is a 4x4 block but stored as a 1D array of `wchar_t`.
     const std::array<std::wstring, PIECE_COUNT> m_tetrominos = {
         L"..X...X...X...X.", // 4x1: vertical line
@@ -47,23 +49,21 @@ private: // MEMBER VARIABLES
         L"..X..XX..X......", // 2+2: Z shape
         L".X...XX...X.....", // 2+2: S shape
         L".X...X...XX.....", // 3+1: L shape
-        L"..X...X..XX....."  // 3+1: Mirror L
+        L"..X...X..XX....." // 3+1: Mirror L
     };
 
-// If have default values, leave them at declaration.
+    // If have default values, leave them at declaration.
 public: // CONSTRUCTORS
-
     // @warning Be sure you have your dimensions right! Has no error handling.
-    Tetris(
-        size_t screen_width, 
-        size_t screen_height, 
-        size_t pfield_width, 
-        size_t pfield_height
-    ) 
-    :   m_display(screen_width, screen_height),
-        m_pfield(pfield_width, pfield_height),
-        m_player(pfield_width)
-    { /* no code here, unless you want to do something important */ }
+    Tetris(size_t screen_width,
+           size_t screen_height,
+           size_t pfield_width,
+           size_t pfield_height)
+        : m_display(screen_width, screen_height)
+        , m_pfield(pfield_width, pfield_height)
+        , m_player(pfield_width) { /* no code here, unless you want to do
+                                      something important */
+    }
 
     /**
      * Constructor delegation is a C++11/C++0x thing. Very nice!
@@ -73,12 +73,12 @@ public: // CONSTRUCTORS
      * this->m_pfield.width = 12,  this->m_pfield.height = 18;
      * ```
      */
-    Tetris() : Tetris(
-        DEFAULT_SCREEN_WIDTH, 
-        DEFAULT_SCREEN_HEIGHT, 
-        DEFAULT_PFIELD_WIDTH, 
-        DEFAULT_PFIELD_HEIGHT
-    ) { /* so far nothing to write here lol */ }
+    Tetris()
+        : Tetris(DEFAULT_SCREEN_WIDTH,
+                 DEFAULT_SCREEN_HEIGHT,
+                 DEFAULT_PFIELD_WIDTH,
+                 DEFAULT_PFIELD_HEIGHT) { /* so far nothing to write here lol */
+    }
 
 public: // METHODS
     // "Listens" for input via the Windows virtual key codes. See MSDN.
@@ -91,17 +91,17 @@ public: // METHODS
 private: // INPUT HELPERS
     /**
      * @brief Get the correct index into a piece based on its rotation.
-     * 
+     *
      * @param tx Target piece's x-axis cell, usually called `px` in caller loop.
      * @param ty Target piece's y-axis cell, usually called `py` in caller loop.
-     * 
+     *
      * @param rotation Value of rotation. We modulo by 4 internally.
      */
     size_t rotate(size_t tx, size_t ty, int rotation);
 
     /**
      * "Transform" a tetromino array to be used in the field array.
-     * 
+     *
      * @note Checks each cell of tetromino piece, based on given id.
      */
     bool piece_fits(size_t id, int rotation, size_t fx, size_t fy);
@@ -116,7 +116,6 @@ private: // RENDER OUTPUT HELPERS
     // Draw the current state of the playing field.
     void draw_field();
 
-    // Current piece is separate from the field so draw it separately. 
+    // Current piece is separate from the field so draw it separately.
     void draw_piece();
-
 };

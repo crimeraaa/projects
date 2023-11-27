@@ -15,7 +15,6 @@ public: // SYMBOLIC CONSTANTS
     };
 
 public: // EXPOSED MEMBERS
-
     int piece_id; // index into tetromino array
     int rotation; // current rotation to be modulo by 4
     Position position; // 2D coordinates (is index into playing field buffer)
@@ -24,26 +23,21 @@ public: // EXPOSED MEMBERS
     // List of valid keys that we listen for.
     // @warning Please keep this in the same order as `enum Keys`!
     std::array<VKey, KEYS_COUNT> controls = {
-        VKey(VK_RIGHT), 
-        VKey(VK_LEFT), 
-        VKey(VK_DOWN), 
-        VKey('Z')
-    }; 
+        VKey(VK_RIGHT), VKey(VK_LEFT), VKey(VK_DOWN), VKey('Z')};
 
 public: // CONSTRUCTOR
+    Player(size_t fwidth)
+        : piece_id(0)
+        , rotation(0)
+        , position(fwidth / 2, 0)
+        , hold(false) { /* no code here, just need the initializer list */
+    }
 
-    Player(size_t fwidth) 
-    :   piece_id(0),
-        rotation(0),
-        position(fwidth / 2, 0),
-        hold(false)
-    { /* no code here, just need the initializer list */ }
-    
 public: // METHODS
     /**
      * Calls `VKey::update()`, which asynchronously listens for key presses
      * via the Windows API call `GetAsyncKeyState`.
-     * 
+     *
      * @note This updates the `this->controls[i]` array.
      */
     void input() {

@@ -4,19 +4,18 @@
 /**
  * Playing field is an array of indexes into the literal `L" ABCDEFG=#"`.
  * So think in terms of that!
- * 
+ *
  * @note `m_field` buffer determines which character to use in `Display` buffer.
  */
 class PlayingField {
 public: // EXPOSED MEMBER VARIABLES
-
     const size_t width; // buffer x-axis size, or #columns
     const size_t height; // buffer y-axis size, or #rows
     const size_t area; // `width * height` = total elements in buffer
 
 private: // INTERNAL MEMBER VARIABLES
-
-    unsigned char *m_field; // Array of indexes into the literal `L" ABCDEFG=#"`.
+    unsigned char
+        *m_field; // Array of indexes into the literal `L" ABCDEFG=#"`.
 
 public: // CONSTRUCTOR & DESTRUCTOR
     /**
@@ -35,14 +34,18 @@ public: // METHODS
      * return (tx < this->m_width) && (ty < this->m_height);
      * ```
      */
-    bool is_in_bounds(size_t tx, size_t ty);
+    bool is_in_bounds(size_t tx, size_t ty) {
+        return (tx < width) && (ty < height);
+    }
 
     /**
      * ```cpp
      * return index < this->m_area;
      * ```
      */
-    bool is_in_bounds(size_t index);
+    bool is_in_bounds(size_t index) {
+        return index < area;
+    }
 
 public: // OVERLOADS
     /**
@@ -51,7 +54,9 @@ public: // OVERLOADS
      * return this->m_field[index];
      * ```
      */
-    unsigned char &operator[](size_t index);
+    unsigned char &operator[](size_t index) {
+        return m_field[index];
+    }
 };
 
 /*******************************************************************************
@@ -59,11 +64,10 @@ public: // OVERLOADS
 *******************************************************************************/
 
 inline PlayingField::PlayingField(size_t fwidth, size_t fheight)
-:   width(fwidth), 
-    height(fheight), 
-    area(fwidth * fheight),
-    m_field(new unsigned char[area]) 
-{
+    : width(fwidth)
+    , height(fheight)
+    , area(fwidth * fheight)
+    , m_field(new unsigned char[area]) {
     // Start the playing field buffer (our board) as blank with walls
     for (size_t fx = 0; fx < fwidth; fx++) {
         for (size_t fy = 0; fy < fheight; fy++) {
@@ -76,21 +80,9 @@ inline PlayingField::PlayingField(size_t fwidth, size_t fheight)
                 m_field[index] = 0; // tile space, from L" ACBDEFG=#"[0] = L' '
             }
         }
-    }   
+    }
 }
 
 inline PlayingField::~PlayingField() {
     delete[] m_field;
-}
-
-inline bool PlayingField::is_in_bounds(size_t test_x, size_t test_y) {
-    return (test_x < width) && (test_y < height);
-}
-
-inline bool PlayingField::is_in_bounds(size_t index) {
-    return index < area;
-}
-
-inline unsigned char &PlayingField::operator[](size_t index) {
-    return m_field[index];
 }

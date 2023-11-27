@@ -8,13 +8,11 @@
  */
 class Display {
 public: // EXPOSED MEMBER VARIABLES
-
     const size_t width; // buffer x-axis size, or #columns
     const size_t height; // buffer y-axis size, or #rows
     const size_t area; // `width * height` = total elements in buffer
 
 private: // INTERNAL MEMBER VARIABLES
-
     DWORD m_bytes; // #bytes written, useless but needed for Windows API.
     wchar_t *m_screen; // Console screen buffer, needed for Windows API.
     HANDLE m_console; // console buffer handle, needed for Windows API.
@@ -22,16 +20,17 @@ private: // INTERNAL MEMBER VARIABLES
 public: // CONSTRUCTOR AND DESTRUCTOR
     /**
      * Using `stdout` or `std::cout` is inefficient, use OS's API instead.
-     * 
-     * @warning Please ensure correct dimensions between this and `PlayingField`!
-     * Otherwise, who knows what will happen...
-     * 
+     *
+     * @warning Please ensure correct dimensions between this and
+     * `PlayingField`! Otherwise, who knows what will happen...
+     *
      * @todo Make cross-compatible? This is currently Windows-specific.
      */
     Display(size_t screen_width, size_t screen_height);
 
     /**
-     * @warning If printing the gameover screen, close the console handle beforehand!
+     * @warning If printing the gameover screen, close the console handle
+     * beforehand!
      * @warning Comment out the call to `CloseHandle` else we crash horribly.
      */
     ~Display();
@@ -42,7 +41,9 @@ public: // METHODS
 
 public: // OVERLOADS
     // Read an/write to element from the screen buffer. (`this->m_screen`)
-    wchar_t &operator[](size_t index);
+    wchar_t &operator[](size_t index) {
+        return this->m_screen[index];
+    }
 };
 
 /*******************************************************************************
@@ -50,12 +51,11 @@ public: // OVERLOADS
 *******************************************************************************/
 
 inline Display::Display(size_t screen_width, size_t screen_height)
-:   width(screen_width),
-    height(screen_height),
-    area(screen_width * screen_height),
-    m_bytes(0),
-    m_screen(new wchar_t[area])
-{
+    : width(screen_width)
+    , height(screen_height)
+    , area(screen_width * screen_height)
+    , m_bytes(0)
+    , m_screen(new wchar_t[area]) {
     // Start the display screen buffer off as completely blank.
     for (size_t i = 0; i < area; i++) {
         m_screen[i] = L' ';
@@ -77,7 +77,7 @@ inline void Display::render() {
         m_console, // console handle, windows API
         m_screen, // wide character buffer
         area, // number of elements in buffer
-        {0,0}, // coordinates: write to topleft (x=0, y=0).
+        {0, 0}, // coordinates: write to topleft (x=0, y=0).
         &m_bytes // address to store #bytes written in
     );
 }
@@ -87,8 +87,4 @@ inline Display::~Display() {
     // ? Need to close handle before printing game over message,
     // ? so maybe don't use this destructor for the `this->m_console`.
     CloseHandle(m_console);
-}
-
-inline wchar_t &Display::operator[](size_t index) {
-    return m_screen[index];
 }

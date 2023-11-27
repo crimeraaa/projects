@@ -31,20 +31,19 @@ bool Tetris::key_is_held(enum Player::Keys vkey_id, enum Offsets code) {
         // Y-axis grows downwards, to go up we need to offset by -1.
         // case OFFSET_UP:     offset_y = -1; break;
         // Likewise, to go down we need to offset by 1.
-        case OFFSET_DOWN:   offset_y = 1; break;
-        case OFFSET_LEFT:   offset_x = -1; break;
-        case OFFSET_RIGHT:  offset_x = 1; break;
+        case OFFSET_DOWN: offset_y = 1; break;
+        case OFFSET_LEFT: offset_x = -1; break;
+        case OFFSET_RIGHT: offset_x = 1; break;
         // In tetris you can only rotate in 1 direction.
         case OFFSET_ROTATE: offset_rotation = 1; break;
         default: break;
     }
 
-    return m_player.is_pressing(vkey_id) && piece_fits(
-        m_player.piece_id,
-        m_player.rotation + offset_rotation,
-        m_player.position.x + offset_x,
-        m_player.position.y + offset_y
-    );
+    return m_player.is_pressing(vkey_id) &&
+           piece_fits(m_player.piece_id,
+                      m_player.rotation + offset_rotation,
+                      m_player.position.x + offset_x,
+                      m_player.position.y + offset_y);
 }
 
 bool Tetris::piece_fits(size_t id, int rotation, size_t fx, size_t fy) {
@@ -59,7 +58,8 @@ bool Tetris::piece_fits(size_t id, int rotation, size_t fx, size_t fy) {
             // Spot in playing field where we want to check for collisions.
             size_t field_index = (fy + py) * m_pfield.width + (fx + px);
 
-            // If test is out of bounds, ignore. Else, still need to check collisions.
+            // If test is out of bounds, ignore. Else, still need to check
+            // collisions.
             if (!m_pfield.is_in_bounds(fx + px, fy + py)) {
                 continue;
             }
@@ -82,13 +82,13 @@ size_t Tetris::rotate(size_t tx, size_t ty, int rotation) {
     switch (rotation % 4) {
         /** 0 DEGREES:       0  1  2  3
                              4  5  6  7
-                             8  9 10 11 
+                             8  9 10 11
                             12 13 14 15 */
         case 0: return (ty * PIECE_WIDTH) + tx;
 
         /** 90 DEGREES:     12  8  4  0
                             13  9  5  1
-                            14 10  6  2 
+                            14 10  6  2
                             15 11  7  3 */
         case 1: return (PIECE_AREA - PIECE_WIDTH) + ty - (tx * PIECE_WIDTH);
 
@@ -97,7 +97,7 @@ size_t Tetris::rotate(size_t tx, size_t ty, int rotation) {
                             7  6  5  4
                             3  2  1  0 */
         case 2: return (PIECE_AREA - 1) - (ty * PIECE_WIDTH) - tx;
-        
+
         /** 270 DEGREES:    3  7 11 15
                             2  6 10 14
                             1  5  9 13
@@ -112,7 +112,7 @@ size_t Tetris::rotate(size_t tx, size_t ty, int rotation) {
 *******************************************************************************/
 
 void Tetris::render() {
-    // Update the `m_display` buffer. based on our `m_pfield` buffer, 
+    // Update the `m_display` buffer. based on our `m_pfield` buffer,
     draw_field();
 
     // Update the `m_pfield` buffer with the player's current tetromino.
@@ -135,7 +135,7 @@ void Tetris::draw_field() {
 
             /**
              * Update the main display output
-             * [0]      = L' ':         empty space, 
+             * [0]      = L' ':         empty space,
              * [1...7]: = L"ABCDEFG":   each letter represents a tetris piece.
              * [8]      = L'=':         completed lines/tetris.
              * [9]:     = L'#':         border/wall.
@@ -146,7 +146,7 @@ void Tetris::draw_field() {
 }
 
 void Tetris::draw_piece() {
-    // Should we use locals to access member variables when in a `for` loop? 
+    // Should we use locals to access member variables when in a `for` loop?
     // See: https://stackoverflow.com/a/238568
 
     // Local so I can work with shorter names.
@@ -163,11 +163,11 @@ void Tetris::draw_piece() {
                 continue;
             }
             // offset by 2 so we don't end up writing to the corners
-            size_t screen_index = (fy + py + 2) * m_display.width + (fx + px + 2);
+            size_t screen_index =
+                (fy + py + 2) * m_display.width + (fx + px + 2);
 
             // piece_id + 'A' gets a capital letter, should be from 'A' to 'G'.
             m_display[screen_index] = m_player.piece_id + 'A';
         }
     }
 }
-
