@@ -8,16 +8,15 @@
  * @note `m_field` buffer determines which character to use in `Display` buffer.
  */
 class PlayingField {
-public: // EXPOSED MEMBER VARIABLES
-    const size_t width; // buffer x-axis size, or #columns
-    const size_t height; // buffer y-axis size, or #rows
+    public: // EXPOSED MEMBER VARIABLES
+    const size_t width; // buffer x-axis size, or `#columns`
+    const size_t height; // buffer y-axis size, or `#rows`
     const size_t area; // `width * height` = total elements in buffer
 
-private: // INTERNAL MEMBER VARIABLES
-    unsigned char
-        *m_field; // Array of indexes into the literal `L" ABCDEFG=#"`.
+    private: // INTERNAL MEMBER VARIABLES
+    unsigned char *m_field; // Array of indexes into the literal `L" ABCDEFG=#"`.
 
-public: // CONSTRUCTOR & DESTRUCTOR
+    public: // CONSTRUCTOR & DESTRUCTOR
     /**
      * @warning Please ensure correct dimensions between this and `Display`!
      * Otherwise, who knows what will happen...
@@ -27,33 +26,19 @@ public: // CONSTRUCTOR & DESTRUCTOR
     // Deletes `this->m_field`. That's it.
     ~PlayingField();
 
-public: // METHODS
-    /**
-     * Test an x-y coordinate pair.
-     * ```cpp
-     * return (tx < this->m_width) && (ty < this->m_height);
-     * ```
-     */
+    public: // METHODS
+    // Test an x-y pair (2D coordinates) to turn them into a 1D index.
     bool is_in_bounds(size_t tx, size_t ty) {
         return (tx < width) && (ty < height);
     }
 
-    /**
-     * ```cpp
-     * return index < this->m_area;
-     * ```
-     */
+    public: // OVERLOADS
+    // Overload for a lone 1D index.
     bool is_in_bounds(size_t index) {
         return index < area;
     }
 
-public: // OVERLOADS
-    /**
-     * Read an/write to an element from the buffer. No bounds checking.
-     * ```cpp
-     * return this->m_field[index];
-     * ```
-     */
+    // Read an/write to an element from the buffer. No bounds checking.
     unsigned char &operator[](size_t index) {
         return m_field[index];
     }
@@ -75,8 +60,7 @@ inline PlayingField::PlayingField(size_t fwidth, size_t fheight)
             size_t index = (fy * fwidth) + fx;
             if (fx == 0 || fx == fwidth - 1 || fy == fheight - 1) {
                 m_field[index] = 9; // wall: hash, from L" ACBDEFG=#"[9] = L'#'
-            }
-            else {
+            } else {
                 m_field[index] = 0; // tile space, from L" ACBDEFG=#"[0] = L' '
             }
         }

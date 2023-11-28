@@ -7,17 +7,17 @@
  * @note We just display output here. `PlayingField` keeps track of game state.
  */
 class Display {
-public: // EXPOSED MEMBER VARIABLES
-    const size_t width; // buffer x-axis size, or #columns
-    const size_t height; // buffer y-axis size, or #rows
-    const size_t area; // `width * height` = total elements in buffer
+    public: // EXPOSED MEMBER VARIABLES
+    const size_t width; // buffer x-axis size (`#columns`)
+    const size_t height; // buffer y-axis size (`#rows`)
+    const size_t area; // `width * height` = `#elements` in buffer
 
-private: // INTERNAL MEMBER VARIABLES
-    DWORD m_bytes; // #bytes written, useless but needed for Windows API.
+    private: // INTERNAL MEMBER VARIABLES
+    DWORD m_bytes; // `#bytes` written, useless but needed for Windows API.
     wchar_t *m_screen; // Console screen buffer, needed for Windows API.
-    HANDLE m_console; // console buffer handle, needed for Windows API.
+    HANDLE m_console; // Console buffer handle, needed for Windows API.
 
-public: // CONSTRUCTOR AND DESTRUCTOR
+    public: // CONSTRUCTOR AND DESTRUCTOR
     /**
      * Using `stdout` or `std::cout` is inefficient, use OS's API instead.
      *
@@ -35,11 +35,11 @@ public: // CONSTRUCTOR AND DESTRUCTOR
      */
     ~Display();
 
-public: // METHODS
+    public: // METHODS
     // Draw the buffer via a call to the Windows API.
     void render();
 
-public: // OVERLOADS
+    public: // OVERLOADS
     // Read an/write to element from the screen buffer. (`this->m_screen`)
     wchar_t &operator[](size_t index) {
         return this->m_screen[index];
@@ -78,7 +78,7 @@ inline void Display::render() {
         m_screen, // wide character buffer
         area, // number of elements in buffer
         {0, 0}, // coordinates: write to topleft (x=0, y=0).
-        &m_bytes // address to store #bytes written in
+        &m_bytes // address to store `#bytes` written in
     );
 }
 

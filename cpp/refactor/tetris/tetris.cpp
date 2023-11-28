@@ -17,15 +17,14 @@ void Tetris::input() {
     if (key_is_held(Player::KEY_Z, OFFSET_ROTATE)) {
         m_player.rotation += m_player.hold;
         m_player.hold = false;
-    }
-    else {
+    } else {
         // Reset the moment we detect 'Player::KEY_Z' has been let go.
         m_player.hold = true;
     }
 }
 
 bool Tetris::key_is_held(enum Player::Keys vkey_id, enum Offsets code) {
-    // Determine which offset to use based on `code`.
+    // Determine which offset to use based on offset `code`.
     int offset_x = 0, offset_y = 0, offset_rotation = 0;
     switch (code) {
         // Y-axis grows downwards, to go up we need to offset by -1.
@@ -36,14 +35,16 @@ bool Tetris::key_is_held(enum Player::Keys vkey_id, enum Offsets code) {
         case OFFSET_RIGHT: offset_x = 1; break;
         // In tetris you can only rotate in 1 direction.
         case OFFSET_ROTATE: offset_rotation = 1; break;
-        default: break;
+        default: break; // No offset given, test current location as is.
     }
 
-    return m_player.is_pressing(vkey_id) &&
-           piece_fits(m_player.piece_id,
-                      m_player.rotation + offset_rotation,
-                      m_player.position.x + offset_x,
-                      m_player.position.y + offset_y);
+    return m_player.controls[vkey_id].down &&
+           piece_fits(
+               m_player.piece_id,
+               m_player.rotation + offset_rotation,
+               m_player.position.x + offset_x,
+               m_player.position.y + offset_y
+           );
 }
 
 bool Tetris::piece_fits(size_t id, int rotation, size_t fx, size_t fy) {
@@ -58,8 +59,7 @@ bool Tetris::piece_fits(size_t id, int rotation, size_t fx, size_t fy) {
             // Spot in playing field where we want to check for collisions.
             size_t field_index = (fy + py) * m_pfield.width + (fx + px);
 
-            // If test is out of bounds, ignore. Else, still need to check
-            // collisions.
+            // Remember the screen buffer is much larger than the playing field.
             if (!m_pfield.is_in_bounds(fx + px, fy + py)) {
                 continue;
             }
@@ -163,9 +163,8 @@ void Tetris::draw_piece() {
                 continue;
             }
             // offset by 2 so we don't end up writing to the corners
-            size_t screen_index =
-                (fy + py + 2) * m_display.width + (fx + px + 2);
-
+            size_t screen_index = (fy + py + 2) * m_display.width +
+                                  (fx + px + 2);
             // piece_id + 'A' gets a capital letter, should be from 'A' to 'G'.
             m_display[screen_index] = m_player.piece_id + 'A';
         }

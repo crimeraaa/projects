@@ -30,6 +30,7 @@
  * https://stackoverflow.com/a/58734437
  */
 int main() {
+    // Setup display screen buffer and in-game playing field states.
     Tetris tetris = Tetris();
     bool is_gameover = false;
 
@@ -39,7 +40,7 @@ int main() {
         // milliseconds suffix for literals only available with C++14 and above.
         std::this_thread::sleep_for(std::chrono::milliseconds(50));
 
-        /*************************** GAME INPUT ******************************/
+        /*************************** GAME INPUT *******************************/
         tetris.input();
 
         /*************************** GAME LOGIC *******************************/
