@@ -10,7 +10,7 @@ struct Position {
 };
 
 // Windows Virtual key codes
-struct VKey {
+struct Controls {
     unsigned char code; // Virtual key code---use a `VK_` prefixed macro.
     bool down; // Maintain state between player's input calls.
 
@@ -18,7 +18,7 @@ struct VKey {
      * @note Please pass a `VK_` macro for the correct Windows virtual key code,
      * else you can just pass a `char` literal.
      */
-    VKey(unsigned char vkeycode) : code(vkeycode), down(false) {}
+    Controls(unsigned char vkeycode) : code(vkeycode), down(false) {}
 
     /**
      * Using bitwise `&`, we determine if the bit is 1.
@@ -33,7 +33,8 @@ struct VKey {
 };
 
 class Player {
-    public: // SYMBOLIC CONSTANTS
+// SYMBOLIC CONSTANTS
+public: 
     // Symbolic constants for indexes into the `controls` array.
     // @note Need a name for this enum to refer to.
     enum Keys {
@@ -44,7 +45,8 @@ class Player {
         KEYS_COUNT
     };
 
-    public: // EXPOSED MEMBERS
+// EXPOSED MEMBERS
+public: 
     int piece_id; // Index into tetromino array.
     int rotation; // Current rotation to be modulo by 4. Used for calculating true index.
     Position position; // Indexes into playing field buffer.
@@ -52,16 +54,16 @@ class Player {
 
     // List of valid keys that we listen for.
     // @warning Please keep this in the same order as `enum Keys`!
-    std::array<VKey, KEYS_COUNT> controls = {
-        VKey(VK_RIGHT), VKey(VK_LEFT), VKey(VK_DOWN), VKey('Z')
+    std::array<Controls, KEYS_COUNT> controls = {
+        Controls(VK_RIGHT), Controls(VK_LEFT), Controls(VK_DOWN), Controls('Z')
     };
 
-    public: // CONSTRUCTOR
+// CONSTRUCTOR
+public: 
     // Need playing field width so we can start the player off in the middle.
-    Player(size_t fwidth)
-        : piece_id(0)
-        , rotation(0)
-        , position(fwidth / 2, 0)
-        , hold(false) { /* no code here, just need the initializer list */
-    }
+    Player(size_t fwidth = 0)
+    : piece_id(0)
+    , rotation(0)
+    , position(fwidth / 2, 0)
+    , hold(false) {}
 };

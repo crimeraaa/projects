@@ -55,10 +55,12 @@
 #include <iostream>
 #include <thread>
 #include <vector>
-using namespace std;
 
 #include <stdio.h>
 #include <Windows.h>
+
+// put after include Windows.h to avoid ambiguity with type `byte`.
+using namespace std;
 
 int nScreenWidth = 80;			// Console Screen Size X (columns)
 int nScreenHeight = 30;			// Console Screen Size Y (rows)

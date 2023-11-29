@@ -1,11 +1,12 @@
 #pragma once
 #include "include/common.hpp"
-#include "include/display.hpp"
+#include "include/consolewindow.hpp"
 #include "include/playingfield.hpp"
 #include "include/player.hpp"
 
 class Tetris {
-    public: // COMPILE-TIME CONSTANTS
+// COMPILE-TIME CONSTANTS
+public: 
     // Compile-time information about tetrominos.
     enum PieceInfo {
         PIECE_COUNT = 7,
@@ -33,8 +34,9 @@ class Tetris {
         OFFSET_COUNT
     };
 
-    private: // MEMBER VARIABLES
-    Display m_display; // @note 1st in initializer list, before `this->m_pfield`.
+// MEMBER VARIABLES
+private: 
+    ConsoleWindow m_display; // @note 1st in initializer list, before `this->m_pfield`.
     PlayingField m_pfield; // @note 2nd in initializer list, after `this->m_display`.
     Player m_player; // @note 3rd in initializer list, after `this->m_pfield`,
 
@@ -50,8 +52,14 @@ class Tetris {
         L"..X...X..XX....." // 3+1: Mirror L
     };
 
-    // If have default values, leave them at declaration.
-    public: // CONSTRUCTORS
+    bool m_gameover;
+    int m_speed; // slowly decreases; interval between ticks gets faster!
+    int m_speedcount;
+    bool m_forcedown; // when `m_speedcount == m_speed`, put pressure on the player.
+
+// CONSTRUCTORS
+// If have default values, leave them at declaration.
+public: 
     // @warning Be sure you have your dimensions right! Has no error handling.
     Tetris(
         size_t screen_width,
@@ -61,7 +69,12 @@ class Tetris {
     )
         : m_display(screen_width, screen_height)
         , m_pfield(pfield_width, pfield_height)
-        , m_player(pfield_width) {}
+        , m_player(pfield_width)
+        , m_gameover(false)
+        , m_speed(20)
+        , m_speedcount(0)
+        , m_forcedown(false) {}
+    // clang-format off
     /**
      * Constructor delegation is a C++11/C++0x thing. Very nice!
      * This constructor results in:
@@ -70,44 +83,59 @@ class Tetris {
      * this->m_pfield.width = 12,  this->m_pfield.height = 18;
      * ```
      */
-    Tetris()
-        : Tetris(
-              DEFAULT_SCREEN_WIDTH,
-              DEFAULT_SCREEN_HEIGHT,
-              DEFAULT_PFIELD_WIDTH,
-              DEFAULT_PFIELD_HEIGHT
-          ) {}
+    Tetris() : Tetris(
+        DEFAULT_SCREEN_WIDTH,
+        DEFAULT_SCREEN_HEIGHT,
+        DEFAULT_PFIELD_WIDTH,
+        DEFAULT_PFIELD_HEIGHT
+    ) {}
+    // clang-format on
 
-    public: // METHODS
+// METHODS
+public: 
     // "Listens" for input via the Windows virtual key codes. See MSDN.
     void input();
+
+    // Forces your piece down and makes the game faster over time.
+    void update();
 
     // Updates console screen buffer and playing field buffer,
     // then writes to the active console window.
     void render();
 
-    private: // INPUT HELPERS
+    // Getter of `this->m_gameover` so user can't mess around with it.
+    bool is_gameover() {
+        return m_gameover;
+    }
+
+// INPUT HELPERS
+private: 
     /**
      * @brief Get the correct index into a piece based on its rotation.
      *
      * @param tx Target piece's x-axis cell, usually called `px` in caller loop.
      * @param ty Target piece's y-axis cell, usually called `py` in caller loop.
-     *
      * @param rotation Value of rotation. We modulo by 4 internally.
      */
     size_t rotate(size_t tx, size_t ty, int rotation);
 
-    /**
-     * "Transform" a tetromino array to be used in the field array.
-     *
-     * @note Checks each cell of tetromino piece, based on given id.
-     */
+    // javidx9's original implementation.
+    // "Transforms" a tetromino array to be used in the field array.
     bool piece_fits(size_t id, int rotation, size_t fx, size_t fy);
 
-    // Tests given key is currently held down and fits in the given offset area.
-    bool key_is_held(enum Player::Keys vkey_id, enum Offsets code);
+    // Overload to be called to just check the current piece based on a given offset.
+    // @note After offsets are determined, just calls the above `piece_fits`.
+    bool piece_fits(enum Offsets code);
 
-    private: // RENDER OUTPUT HELPERS
+    // Tests given key is currently held down and current piece fits
+    // in the given offset area.
+    bool validate_key(enum Player::Keys vkey_id, enum Offsets code);
+
+    // Takes the player's current piece and turns it into an obstacle.
+    void lock_piece();
+
+// RENDER OUTPUT HELPERS
+private: 
     // Draw the current state of the playing field.
     void draw_field();
 

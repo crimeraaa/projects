@@ -19,6 +19,9 @@
 #include "include/common.hpp"
 #include "tetris.hpp"
 
+// I hate it here
+using std::literals::chrono_literals::operator"" ms;
+
 /**
  * @note See here for how to inline member functions separately:
  * https://stackoverflow.com/a/9370630
@@ -32,19 +35,20 @@
 int main() {
     // Setup display screen buffer and in-game playing field states.
     Tetris tetris = Tetris();
-    bool is_gameover = false;
 
     // The 4 stages of most game loops
-    while (!is_gameover) {
+    while (!tetris.is_gameover()) {
         /*************************** GAME TIMING ******************************/
         // milliseconds suffix for literals only available with C++14 and above.
-        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+        // If you insist on earlier versions, use `std::chrono::milliseconds`.
+        std::this_thread::sleep_for(50ms);
 
         /*************************** GAME INPUT *******************************/
         tetris.input();
 
         /*************************** GAME LOGIC *******************************/
         // TODO: Shapes falling collision detection and scoring
+        tetris.update();
 
         /************************** RENDER OUTPUT *****************************/
         tetris.render();

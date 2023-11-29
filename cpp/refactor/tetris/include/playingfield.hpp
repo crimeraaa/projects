@@ -1,46 +1,40 @@
 #pragma once
 #include "common.hpp"
+#include "fieldbuffer.hpp"
 
 /**
  * Playing field is an array of indexes into the literal `L" ABCDEFG=#"`.
  * So think in terms of that!
  *
- * @note `m_field` buffer determines which character to use in `Display` buffer.
+ * @note `m_buffer` buffer determines which character to write to `ConsoleWindow`.
+ * It's based on the literal `L" ABCDEFG=#"`.
  */
-class PlayingField {
-    public: // EXPOSED MEMBER VARIABLES
-    const size_t width; // buffer x-axis size, or `#columns`
-    const size_t height; // buffer y-axis size, or `#rows`
-    const size_t area; // `width * height` = total elements in buffer
-
-    private: // INTERNAL MEMBER VARIABLES
-    unsigned char *m_field; // Array of indexes into the literal `L" ABCDEFG=#"`.
-
-    public: // CONSTRUCTOR & DESTRUCTOR
+class PlayingField : public FieldBuffer<unsigned char> {
+// CONSTRUCTOR & DESTRUCTOR
+public: 
     /**
-     * @warning Please ensure correct dimensions between this and `Display`!
+     * @warning Please ensure correct dimensions between this and `ConsoleWindow`!
      * Otherwise, who knows what will happen...
      */
-    PlayingField(size_t fwidth, size_t fheight);
+    PlayingField(size_t fwidth, size_t field_height);
 
-    // Deletes `this->m_field`. That's it.
-    ~PlayingField();
-
-    public: // METHODS
+// METHODS
+public: 
     // Test an x-y pair (2D coordinates) to turn them into a 1D index.
     bool is_in_bounds(size_t tx, size_t ty) {
         return (tx < width) && (ty < height);
     }
 
-    public: // OVERLOADS
+// OVERLOADS
+public: 
     // Overload for a lone 1D index.
     bool is_in_bounds(size_t index) {
         return index < area;
     }
 
-    // Read an/write to an element from the buffer. No bounds checking.
+    // Read an/write to an element from the buffer. No bounds checking!
     unsigned char &operator[](size_t index) {
-        return m_field[index];
+        return m_buffer[index];
     }
 };
 
@@ -48,25 +42,18 @@ class PlayingField {
 ******************************** IMPLEMENTATION ********************************
 *******************************************************************************/
 
-inline PlayingField::PlayingField(size_t fwidth, size_t fheight)
-    : width(fwidth)
-    , height(fheight)
-    , area(fwidth * fheight)
-    , m_field(new unsigned char[area]) {
+inline PlayingField::PlayingField(size_t field_width, size_t field_height)
+    : FieldBuffer(field_width, field_height) {
     // Start the playing field buffer (our board) as blank with walls
-    for (size_t fx = 0; fx < fwidth; fx++) {
-        for (size_t fy = 0; fy < fheight; fy++) {
+    for (size_t fx = 0; fx < field_width; fx++) {
+        for (size_t fy = 0; fy < field_height; fy++) {
             // Check if on board boundary (side or bottom of array).
-            size_t index = (fy * fwidth) + fx;
-            if (fx == 0 || fx == fwidth - 1 || fy == fheight - 1) {
-                m_field[index] = 9; // wall: hash, from L" ACBDEFG=#"[9] = L'#'
+            size_t index = (fy * field_width) + fx;
+            if (fx == 0 || fx == field_width - 1 || fy == field_height - 1) {
+                m_buffer[index] = 9; // wall: hash, (L" ACBDEFG=#"[9] = L'#')
             } else {
-                m_field[index] = 0; // tile space, from L" ACBDEFG=#"[0] = L' '
+                m_buffer[index] = 0; // tile space, (L" ACBDEFG=#"[0] = L' ')
             }
         }
     }
-}
-
-inline PlayingField::~PlayingField() {
-    delete[] m_field;
 }
