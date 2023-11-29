@@ -6,7 +6,9 @@
 struct Position {
     size_t x = 0; // Index into width (`column#`).
     size_t y = 0; // Index into height (`row#`).
-    Position(size_t fx, size_t fy) : x(fx), y(fy) {}
+    Position(size_t fx, size_t fy) 
+    : x(fx)
+    , y(fy) {}
 };
 
 // Windows Virtual key codes
@@ -18,7 +20,9 @@ struct Controls {
      * @note Please pass a `VK_` macro for the correct Windows virtual key code,
      * else you can just pass a `char` literal.
      */
-    Controls(unsigned char vkeycode) : code(vkeycode), down(false) {}
+    Controls(unsigned char vkeycode) 
+    : code(vkeycode)
+    , down(false) {}
 
     /**
      * Using bitwise `&`, we determine if the bit is 1.
@@ -55,7 +59,10 @@ public:
     // List of valid keys that we listen for.
     // @warning Please keep this in the same order as `enum Keys`!
     std::array<Controls, KEYS_COUNT> controls = {
-        Controls(VK_RIGHT), Controls(VK_LEFT), Controls(VK_DOWN), Controls('Z')
+        Controls(VK_RIGHT), 
+        Controls(VK_LEFT), 
+        Controls(VK_DOWN), 
+        Controls('Z')
     };
 
 // CONSTRUCTOR

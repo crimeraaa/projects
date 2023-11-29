@@ -3,6 +3,7 @@
 #include "include/consolewindow.hpp"
 #include "include/playingfield.hpp"
 #include "include/player.hpp"
+#include "include/gamestate.hpp"
 
 class Tetris {
 // COMPILE-TIME CONSTANTS
@@ -20,7 +21,8 @@ public:
         DEFAULT_SCREEN_WIDTH = 80,
         DEFAULT_SCREEN_HEIGHT = 30,
         DEFAULT_PFIELD_WIDTH = 12,
-        DEFAULT_PFIELD_HEIGHT = 18
+        DEFAULT_PFIELD_HEIGHT = 18,
+        DEFAULT_STARTING_SPEED = 20
     };
 
     // Offsets for use in the `key_held` functions.
@@ -34,11 +36,12 @@ public:
         OFFSET_COUNT
     };
 
-// MEMBER VARIABLES
+// INTERNAL MEMBER VARIABLES
 private: 
-    ConsoleWindow m_display; // @note 1st in initializer list, before `this->m_pfield`.
-    PlayingField m_pfield; // @note 2nd in initializer list, after `this->m_display`.
-    Player m_player; // @note 3rd in initializer list, after `this->m_pfield`,
+    ConsoleWindow m_display; // Holds our display output, not playing status/world.
+    PlayingField m_pfield; // Holds what pieces populate the game world.
+    Player m_player; // Player controls and status.
+    GameState m_gamestate; // Game over, speed and force piece down statuses.
 
     // List of valid tetris pieces, from indexes 0-6.
     // Each tetronimo is a 4x4 block but stored as a 1D array of `wchar_t`.
@@ -52,11 +55,6 @@ private:
         L"..X...X..XX....." // 3+1: Mirror L
     };
 
-    bool m_gameover;
-    int m_speed; // slowly decreases; interval between ticks gets faster!
-    int m_speedcount;
-    bool m_forcedown; // when `m_speedcount == m_speed`, put pressure on the player.
-
 // CONSTRUCTORS
 // If have default values, leave them at declaration.
 public: 
@@ -65,15 +63,17 @@ public:
         size_t screen_width,
         size_t screen_height,
         size_t pfield_width,
-        size_t pfield_height
+        size_t pfield_height,
+        size_t starting_speed
     )
-        : m_display(screen_width, screen_height)
-        , m_pfield(pfield_width, pfield_height)
-        , m_player(pfield_width)
-        , m_gameover(false)
-        , m_speed(20)
-        , m_speedcount(0)
-        , m_forcedown(false) {}
+    : m_display{screen_width, screen_height}
+    , m_pfield{pfield_width, pfield_height}
+    , m_player{pfield_width}
+    , m_gamestate{starting_speed} {
+        struct timespec sometime;
+        clock_gettime(CLOCK_MONOTONIC, &sometime);
+        std::srand(sometime.tv_nsec);
+    }
     // clang-format off
     /**
      * Constructor delegation is a C++11/C++0x thing. Very nice!
@@ -81,13 +81,15 @@ public:
      * ```cpp
      * this->m_display.width = 80, this->m_display.height = 30;
      * this->m_pfield.width = 12,  this->m_pfield.height = 18;
+     * this->m_gamestate.current_speed = 20;
      * ```
      */
     Tetris() : Tetris(
         DEFAULT_SCREEN_WIDTH,
         DEFAULT_SCREEN_HEIGHT,
         DEFAULT_PFIELD_WIDTH,
-        DEFAULT_PFIELD_HEIGHT
+        DEFAULT_PFIELD_HEIGHT,
+        DEFAULT_STARTING_SPEED
     ) {}
     // clang-format on
 
@@ -104,8 +106,8 @@ public:
     void render();
 
     // Getter of `this->m_gameover` so user can't mess around with it.
-    bool is_gameover() {
-        return m_gameover;
+    const bool &is_gameover() {
+        return m_gamestate.game_over;
     }
 
 // INPUT HELPERS
@@ -131,8 +133,23 @@ private:
     // in the given offset area.
     bool validate_key(enum Player::Keys vkey_id, enum Offsets code);
 
+// UPDATE HELPERS
+private:
     // Takes the player's current piece and turns it into an obstacle.
     void lock_piece();
+
+    /**
+     * Checks for the completion of full horizontal lines.
+     * We can afford to check the last tetromino piece, 
+     * it's unnecessary to check the whole field due to Tetris's nature!
+     */
+    void check_for_lines();
+
+    /**
+     * Remove completed lines from the playing field and display screen,
+     * then move non-completed lines 1 tile down.
+     */
+    void try_clear_lines();
 
 // RENDER OUTPUT HELPERS
 private: 

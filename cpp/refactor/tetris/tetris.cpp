@@ -2,8 +2,7 @@
 #include "tetris.hpp"
 
 void Tetris::input() {
-    m_speedcount++;
-    m_forcedown = (m_speedcount == m_speed);
+    m_gamestate.update();
 
     // Asynchronously updates the list of pressed keys.
     for (size_t i = 0; i < Player::KEYS_COUNT; i++) {
@@ -117,27 +116,30 @@ size_t Tetris::rotate(size_t tx, size_t ty, int rotation) {
 *******************************************************************************/
 
 void Tetris::update() {
-    if (m_forcedown) {
-        if (piece_fits(OFFSET_DOWN)) {
-            m_player.position.y++;
-        } else {
-            // Lock the current piece into the field, becoming an obstacle.
-            lock_piece();
-
-            // Check for the completion of full horizontal lines.
-
-            // Choose next piece.
-            m_player.position.x = m_pfield.width / 2;
-            m_player.position.y = 0;
-            m_player.rotation = 0;
-            m_player.piece_id = std::rand() % 7;
-
-            // If piece doesn't fit in the current location, you lose!
-            m_gameover = !piece_fits(OFFSET_NONE);
-        }
-        // reset so we can increment and change against `m_speed` again
-        m_speedcount = 0;
+    if (!m_gamestate.force_down) {
+        return;
     }
+    // Implied else, do force down: can go down or gotta lock
+    if (piece_fits(OFFSET_DOWN)) {
+        m_player.position.y++;
+    } else {
+        // Lock the current piece into the field, becoming an obstacle.
+        lock_piece();
+
+        // Check if we have a full horizontal line and clear it if needed
+        check_for_lines();
+
+        // Choose next piece.
+        m_player.position.x = m_pfield.width / 2;
+        m_player.position.y = 0;
+        m_player.rotation = 0;
+        m_player.piece_id = std::rand() % 7;
+
+        // If piece doesn't fit in the current location, you lose!
+        m_gamestate.game_over = !piece_fits(OFFSET_NONE);
+    }
+    // reset so we can increment and change against `m_speed` again
+    m_gamestate.speed_counter = 0;
 }
 
 void Tetris::lock_piece() {
@@ -159,6 +161,61 @@ void Tetris::lock_piece() {
     }
 }
 
+void Tetris::check_for_lines() {
+    // We'll check where the last tetromino piece existed.
+    for (size_t py = 0; py < PIECE_HEIGHT; py++) {
+        size_t fy = m_player.position.y + py;
+        // The 4 rows this piece occupies are the only ones we check,
+        // We can't create lines outside the bound of the tetromino.
+        if (!(fy < m_pfield.height - 1)) {
+            continue;
+        }
+        // Start off true so the bitwise AND can succeed
+        bool is_line = true;
+        for (size_t px = 1; px < m_pfield.width - 1; px++) {
+            size_t field_index = (fy * m_pfield.width) + px;
+            is_line &= m_pfield[field_index] != 0;
+        }
+        // If got any whitespace, the compouned bitwise AND will end up
+        // always returning false due to the nature of boolean algebra.
+        if (!is_line) {
+            continue;
+        }
+        // Remove this row and set it to `=` chars
+        for (size_t px = 1; px < m_pfield.width - 1; px++) {
+            size_t field_index = (fy * m_pfield.width) + px;
+            m_pfield[field_index] = 8; // L" ABCDEFG=#"[8] = '='
+        }
+        // Set this row up to be cleared later on
+        m_pfield.lines_cleared.push_back(fy);
+    }
+}
+
+void Tetris::try_clear_lines() {
+    using std::chrono_literals::operator""ms;
+    if (m_pfield.lines_cleared.empty()) {
+        return;
+    }
+    m_display.render(); // Display Frame (cheekily draw lines)
+    std::this_thread::sleep_for(400ms); // delay a lil bit, approx half sec.
+    // Remove the row and move all the pieces down the line
+    for (auto &row : m_pfield.lines_cleared) {
+        // Iteratoe column by column across the row to move the pieces down
+        for (size_t px = 1; px < m_pfield.width - 1; px++) { 
+            for (size_t py = row; py > 0; py--) {
+                // Index to write to
+                size_t index_new = (py * m_pfield.width) + px;
+                // Old index to be overwritten/taken from
+                size_t index_old = ((py - 1) * m_pfield.width) + px;
+                m_pfield[index_new] = m_pfield[index_old];
+            }
+            // Clear the top row
+            m_pfield[px] = 0;
+        }
+    }
+    m_pfield.lines_cleared.clear();
+}
+
 /*******************************************************************************
 ******************************** RENDER OUTPUT *********************************
 *******************************************************************************/
@@ -170,8 +227,12 @@ void Tetris::render() {
     // Update the `m_pfield` buffer with the player's current tetromino.
     draw_piece();
 
+    // Clear fully completed horizontal lines, if any
+    try_clear_lines();
+
     // Actually write the display frame to the console output.
     m_display.render();
+
 }
 
 void Tetris::draw_field() {
@@ -204,9 +265,7 @@ void Tetris::draw_piece() {
     // Local so I can work with shorter names.
     // Effectively our field indexes. Still need to get appropriate offsets.
     const size_t fx = m_player.position.x, fy = m_player.position.y;
-
     const auto &tetromino = m_tetrominos[m_player.piece_id];
-
     for (size_t px = 0; px < PIECE_WIDTH; px++) {
         for (size_t py = 0; py < PIECE_HEIGHT; py++) {
             // Don't update the display screen with `'.'` characters.

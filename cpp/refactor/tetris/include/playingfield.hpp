@@ -12,6 +12,7 @@
 class PlayingField : public FieldBuffer<unsigned char> {
 // CONSTRUCTOR & DESTRUCTOR
 public: 
+    std::vector<int> lines_cleared; // Keep track so we can clear all at once
     /**
      * @warning Please ensure correct dimensions between this and `ConsoleWindow`!
      * Otherwise, who knows what will happen...
@@ -43,7 +44,7 @@ public:
 *******************************************************************************/
 
 inline PlayingField::PlayingField(size_t field_width, size_t field_height)
-    : FieldBuffer(field_width, field_height) {
+: FieldBuffer(field_width, field_height) {
     // Start the playing field buffer (our board) as blank with walls
     for (size_t fx = 0; fx < field_width; fx++) {
         for (size_t fy = 0; fy < field_height; fy++) {
@@ -56,4 +57,5 @@ inline PlayingField::PlayingField(size_t field_width, size_t field_height)
             }
         }
     }
+    lines_cleared.reserve(field_height);
 }

@@ -10,11 +10,16 @@
 
 #include <array>
 #include <iostream>
+#include <random>
 #include <string>
 #include <thread>
+#include <vector>
 
 // Windows API 
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
+
+// Hate this so use it already
+using std::size_t;
 
 #endif // OLC_REFACTOR_TETRIS_COMMON_PCH

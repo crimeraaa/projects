@@ -38,19 +38,13 @@ int main() {
 
     // The 4 stages of most game loops
     while (!tetris.is_gameover()) {
-        /*************************** GAME TIMING ******************************/
         // milliseconds suffix for literals only available with C++14 and above.
         // If you insist on earlier versions, use `std::chrono::milliseconds`.
         std::this_thread::sleep_for(50ms);
-
-        /*************************** GAME INPUT *******************************/
         tetris.input();
 
-        /*************************** GAME LOGIC *******************************/
         // TODO: Shapes falling collision detection and scoring
         tetris.update();
-
-        /************************** RENDER OUTPUT *****************************/
         tetris.render();
     }
     return 0;
