@@ -6,13 +6,10 @@
 // and: https://devblogs.microsoft.com/oldnewthing/20040212-00/?p=40643
 
 #include <windows.h> 
+#include <stdio.h>
 
-/**
- * Formatted error print. Writes to `stderr`.
- * @param file Pass the __FILE__ macro.
- * @param line Pass the __LINE__ macro.
- */
-static inline int eprintf(const char *file, int line, const char *fmt, ...);
+#define eprintf(msg) \
+fprintf(stderr, __FILE__ ":%i: " msg ". Error: %ld\n", __LINE__, GetLastError());
 
 /**
  * Initialize some basic console window data and creates the child process.

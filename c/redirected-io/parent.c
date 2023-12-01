@@ -18,16 +18,16 @@ HANDLE child_stdin_wr = NULL, child_stdout_wr = NULL;
 HANDLE input_file = NULL;
 
 // Poke at previously created pipes for STDIN and STDOUT.
-void create_child_process(void);
+void create_child_process(HANDLE child_stdin_read, HANDLE child_stdout_write);
 
 // Read from a file and write contents to the pipe for child STDIN.
 // Stop when there is no more data.
-void write_to_pipe(void);
+void write_to_pipe(HANDLE child_stdin_write);
 
 // Read output from child process pipe for STDOUT
 // then write to parent process pipe for STDOUT.
 // Stop when no more data.
-void read_from_pipe(void);
+void read_from_pipe(HANDLE child_stdout_write);
 
 // Format a readable error message and display a message box, then exit application.
 void error_exit(wchar_t *logmessage);
@@ -74,7 +74,7 @@ int main() {
         error_exit(L"Stdin SetHandleInformation");
     }
     // Poke at our globals to create the child process.
-    create_child_process();
+    create_child_process(child_stdin_rd, child_stdout_wr);
 
     input_file = CreateFile(
         argv[1],
@@ -91,21 +91,22 @@ int main() {
     // Write to the pipe that is the standard input for a child process.
     // Data is written to pipe's buffers, not necessary to wait
     // until the child process is running before writing data.
-    write_to_pipe();
+    write_to_pipe(child_stdin_wr);
     printf("\n->Contents of %ls written to child stdin pipe.\n", argv[1]);
 
     // Read from pipe that is the stdout for child process.
     printf("\n->Contents of child process STDOUT:\n\n");
-    read_from_pipe();
+    read_from_pipe(child_stdout_rd);
     printf("\n->End of parent execution.\n");
     // The remaining open handles are cleaned up when this process terminates.
     // To avoid resource leaks in larger application, close handles explicitly!
-
+    CloseHandle(child_stdin_wr);
+    CloseHandle(child_stdout_rd);
     LocalFree(argv); // Was allocated by GetCommandLineToArgvW
     return 0;
 }
 
-void create_child_process(void) {
+void create_child_process(HANDLE child_stdin_read, HANDLE child_stdout_write) {
     wchar_t cmdline[] = L"child"; // executable name is literally child.exe
     PROCESS_INFORMATION pi;
     STARTUPINFO si;
@@ -116,9 +117,9 @@ void create_child_process(void) {
     // It contains the STDIN and STDOUT handles for redirection.
     ZeroMemory(&si, sizeof(STARTUPINFO));
     si.cb = sizeof(STARTUPINFO);
-    si.hStdError = child_stdout_wr;
-    si.hStdOutput = child_stdout_wr;
-    si.hStdInput = child_stdin_rd;
+    si.hStdError = child_stdout_write;
+    si.hStdOutput = child_stdout_write;
+    si.hStdInput = child_stdin_read;
     si.dwFlags |= STARTF_USESTDHANDLES;
 
     // Create the child process.
@@ -145,11 +146,11 @@ void create_child_process(void) {
     CloseHandle(pi.hThread);
     // Close handles to the stdin and stdout pipes no longer needed by child.
     // If not explicitly closed, no way to recognize child process has ended!
-    CloseHandle(child_stdout_wr);
-    CloseHandle(child_stdin_rd);
+    CloseHandle(child_stdin_read);
+    CloseHandle(child_stdout_write);
 }
 
-void write_to_pipe(void) {
+void write_to_pipe(HANDLE child_stdin_write) {
     DWORD read, written;
     wchar_t buffer[BUFFERSIZE];
     BOOL success = FALSE;
@@ -159,25 +160,25 @@ void write_to_pipe(void) {
         if (!success || read == 0) {
             break;
         }
-        success = WriteFile(child_stdin_wr, buffer, read, &written, NULL);
+        success = WriteFile(child_stdin_write, buffer, read, &written, NULL);
         if (!success) {
             break;
         }
     }
     // Close pipe handle so child process stops reading.
-    if (!CloseHandle(child_stdin_wr)) {
+    if (!CloseHandle(child_stdin_write)) {
         error_exit(L"StdinWr CloseHandle");
     }
 }
 
-void read_from_pipe(void) {
+void read_from_pipe(HANDLE child_stdout_read) {
     DWORD read, written;
     wchar_t buffer[BUFFERSIZE];
     BOOL success = FALSE;
     HANDLE parent_stdout = GetStdHandle(STD_OUTPUT_HANDLE);
     // Invokes an infinite loop.
     for (;;) {
-        success = ReadFile(child_stdout_rd, buffer, BUFFERSIZE, &read, NULL);
+        success = ReadFile(child_stdout_read, buffer, BUFFERSIZE, &read, NULL);
         if (!success || read == 0) {
             break;
         }
@@ -189,8 +190,8 @@ void read_from_pipe(void) {
 }
 
 void error_exit(wchar_t *logmessage) {
-    wchar_t *message_buffer;
-    wchar_t *display_buffer;
+    wchar_t *message_buffer = NULL;
+    wchar_t *display_buffer = NULL;
     DWORD lasterror = GetLastError();
     // Goodness those attributes
     FormatMessage(
@@ -198,7 +199,7 @@ void error_exit(wchar_t *logmessage) {
         NULL,
         lasterror,
         MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT),
-        (wchar_t*)&message_buffer,
+        message_buffer,
         0,
         NULL
     );

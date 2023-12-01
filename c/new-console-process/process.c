@@ -29,7 +29,7 @@ int main(void) {
      */
     const wchar_t *progname = L"C:\\WINDOWS\\system32\\" EXE;
     if (!child_init(&si, &pi, progname)) {
-        printf("Could not create process. Error: %ld\n", GetLastError());
+        eprintf("Could not create process.");
     }
     // Implicit else: we were successful! Can safely dereference `pi` (probably).
     printf(
@@ -54,18 +54,10 @@ int main(void) {
     printf("Waiting for process to exit...\n");
     WaitForSingleObject(pi.hProcess, INFINITE);
     if (!child_clean(&pi, progname)) {
-        printf("Could not close handle/s. Error: %ld\n", GetLastError());
+        eprintf("Could not close handle/s.");
         return 1;
     }
     return 0;
-}
-
-static inline int eprintf(const char *file, int line, const char *fmt, ...) {
-    int written = 0;
-    va_list argp; va_start(argp, fmt);
-    written = fprintf(stderr, "%s:%i: ", file, line) + vfprintf(stderr, fmt, argp);
-    va_end(argp);
-    return written;
 }
 
 WINBOOL child_init(STARTUPINFO *si, PROCESS_INFORMATION *pi, const wchar_t *progname) {
