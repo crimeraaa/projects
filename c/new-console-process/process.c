@@ -1,41 +1,101 @@
+#include <stdarg.h>
+#include <stdio.h>
+#include <wchar.h> // Let's not use TCHAR, just assume UNICODE
+#include <string.h>
+
+#define UNICODE // Used by Windows Headers, is compiler-agnostic
+#define _UNICODE // Compiler vendors, C-runtime/MFC Headers
 #define WIN32_LEAN_AND_MEAN
-#include <windows.h>
+#include <windows.h> // Is affected by UNICODE and _UNICODE
+#include "process.h"
 
-// Test cmd.exe and notepad.exe
-#define PROGRAM_NAME L"cmd.exe"
+// Name of executable we want to create a child process out of.
+#define EXE "cmd.exe"
 
-HANDLE console_handle;
-STARTUPINFOW startup_info;
-PROCESS_INFORMATION process_info;
-
+// Adapted from:
+// https://learn.microsoft.com/en-us/windows/win32/procthread/creating-processes
 int main(void) {
-    console_handle = CreateConsoleScreenBuffer(
-        GENERIC_READ | GENERIC_WRITE,   // DWORD    dwDesiredAccess
-        0,                              // DWORD    dwShareMode
-        NULL,   // const SECURITY_ATTRIBUES *       lpSecurityAttributes
-        CONSOLE_TEXTMODE_BUFFER,        // DWORD    dwFlags
-        NULL                            // LPVOID   lpScreenBufferData
+    // typedef'd to `STARTUPINFOW` when `UNICODE` defined.
+    STARTUPINFO si;
+
+    // Holds our process and thread IDs + handles. Very important to keep around!
+    PROCESS_INFORMATION pi;
+
+    /**
+     * Would use `LPCTSTR` but jesus christ just no...
+     * "Long pointer to constant null-terminated `TCHAR` string"
+     * 
+     * @note Automatically "concatenated" (not really, is a preprocessor thing!)
+     */
+    const wchar_t *progname = L"C:\\WINDOWS\\system32\\" EXE;
+    if (!child_init(&si, &pi, progname)) {
+        printf("Could not create process. Error: %ld\n", GetLastError());
+    }
+    // Implicit else: we were successful! Can safely dereference `pi` (probably).
+    printf(
+        "Created %ls with process ID %ld and thread ID %ld.\n", 
+        progname,
+        pi.dwProcessId,
+        pi.dwThreadId
     );
-    ZeroMemory(&startup_info, sizeof(startup_info));
-    startup_info.cb = sizeof(startup_info);
-    ZeroMemory(&process_info, sizeof(process_info));
-    // Automatically "concatenated" (not really, is a preprocessor thing!)
-    LPCWSTR program_name = L"C:\\WINDOWS\\system32\\" PROGRAM_NAME;
-    // Expands to CreateProcessW so view the docs for that.
-    // For dwCreation Flags, try 0, CREATE_NEW_CONSOLE, or DETACHED_PROCESS
-    //  See: stackoverflow.com/a/68914196
-    CreateProcessW(         // (Type)                   (Parameter Name)
-        program_name,       // LPCWSTR                  lpApplicationName
-        NULL,               // LPWSTR                   lpCommandLine
-        NULL,               // LPSECURITY_ATTRIBUES     lpProcessAttributes
-        NULL,               // LPSECURITY_ATTRIBUES     lpThreadAttributes
-        TRUE,               // WINBOOL                  bInheritHandles
-        CREATE_NEW_CONSOLE, // DWORD                    dwCreationFlags
-        NULL,               // LPVOID                   lpEnvironment
-        NULL,               // LPCWSTR                  lpCurrentDirectory
-        &startup_info,      // LPSTARTUPINFOW           lpStartupInfo 
-        &process_info       // LPPROCESS_INFORMATION    lpProcessInformation
+
+    const wchar_t *message = L"Hi mom!";
+    DWORD length = wcslen(message);
+    DWORD written = 0;
+    WriteConsoleOutputCharacter(
+        pi.hProcess, 
+        message, 
+        length,
+        (COORD){0,9}, // Yes we need cast in C
+        &written
     );
-    ExitProcess(0);
+
+    // Wait until child process exits
+    printf("Waiting for process to exit...\n");
+    WaitForSingleObject(pi.hProcess, INFINITE);
+    if (!child_clean(&pi, progname)) {
+        printf("Could not close handle/s. Error: %ld\n", GetLastError());
+        return 1;
+    }
     return 0;
+}
+
+static inline int eprintf(const char *file, int line, const char *fmt, ...) {
+    int written = 0;
+    va_list argp; va_start(argp, fmt);
+    written = fprintf(stderr, "%s:%i: ", file, line) + vfprintf(stderr, fmt, argp);
+    va_end(argp);
+    return written;
+}
+
+WINBOOL child_init(STARTUPINFO *si, PROCESS_INFORMATION *pi, const wchar_t *progname) {
+    ZeroMemory(si, sizeof(*si)); // Do as the romans do ig
+    ZeroMemory(pi, sizeof(*pi));
+    si->cb = sizeof(*si);
+    si->lpTitle = L"Hi mom!";
+    // When UNICODE defined, expands to CreateProcessW (Wide/Unicode chars).
+    // Otherwise, expands to else CreateProcessA (ANSI).
+    // See: stackoverflow.com/a/68914196
+    return CreateProcess(
+        progname, // module name, if NULL use command line
+        NULL, // command line arguments, if any
+        NULL, // process handle is inheritable? NULL = no
+        NULL, // thread handle is inhertiable? NULL = no
+        TRUE, // set handle inheritance
+        CREATE_NEW_CONSOLE, // creation flags: 0, CREATE_NEW_CONSOLE, DETACHED_PROCESS
+        NULL, // NULL = use parent's environment block
+        NULL, // NULL = use parent's starting directory
+        si, // pass address to populate our startup info struct
+        pi // pass address to populate our process info struct
+    );
+}
+
+WINBOOL child_clean(PROCESS_INFORMATION *pi, const wchar_t *progname) {
+    printf(
+        "Closing %ls process %ld and thread %ld...\n",
+        progname,
+        pi->dwProcessId, 
+        pi->dwThreadId
+    );
+    return CloseHandle(pi->hProcess) && CloseHandle(pi->hThread);
 }
