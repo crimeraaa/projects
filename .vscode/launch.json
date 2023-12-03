@@ -1,9 +1,19 @@
 {
-    // Use IntelliSense to learn about possible attributes.
-    // Hover to view descriptions of existing attributes.
-    // For more information, visit: https://go.microsoft.com/fwlink/?linkid=830387
     "version": "0.2.0",
+    // See: https://code.visualstudio.com/docs/editor/variables-reference
     "configurations": [
+        {
+            "name": ".NET Core Launch (console)",
+            "type": "coreclr",
+            "request": "launch",
+            "preLaunchTask": "build",
+            // Don't use ${fileBasenameNoExtension}.dll as we may have Program.cs!
+            "program": "${fileDirname}/bin/Debug/net7.0/${fileDirnameBasename}.dll",
+            "args": [],
+            "cwd": "${workspaceFolder}",
+            "stopAtEntry": false,
+            "console": "internalConsole"
+        },
         {
             "name": "(gdb) Attach",
             "type": "cppdbg",

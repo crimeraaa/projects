@@ -78,7 +78,8 @@
 			"variant": "cpp",
 			"codecvt": "cpp",
 			"fstream": "cpp"
-		}
+		},
+		"dotnet.defaultSolution": "walkthrough.sln"
 	},
 	"launch": {
 		"version": "0.2.0",

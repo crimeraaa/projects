@@ -1,0 +1,5 @@
+# Microsoft Visual C/C++ or C# debug symbols
+*.pdb
+# .NET generated files for C# project solutions.
+bin/
+obj/
