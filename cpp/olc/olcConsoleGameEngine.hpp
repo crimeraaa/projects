@@ -121,8 +121,21 @@ http://www.twitch.tv/javidx9
 */
 
 #pragma once
+
+// Microsoft Visual C/C++ Compiler is working on this file
+#if defined(_WIN32) && defined(_MSC_VER) 
+// ? Added by me, needed for GetAsyncKeyState
+// The Visual Studio IDE automatically links to various Windows SDKs,
+// but not the CLI build tools!
+#pragma comment(lib, "user32.lib") 
 #pragma comment(lib, "winmm.lib")
 
+#endif // _WIN32 && _MSC_VER
+
+// Defined this on the command line with the /D flag.
+// 
+// SAMPLE COMPILATION:
+// 		cl.exe /EHsc /std:c++17 /I.. /DUNICODE game.cpp /link user32.lib winmm.lib
 #ifndef UNICODE
 #error Please enable UNICODE for your compiler! VS: Project Properties -> General -> \
 Character Set -> Use Unicode. Thanks! - Javidx9
@@ -130,6 +143,8 @@ Character Set -> Use Unicode. Thanks! - Javidx9
 
 #include <windows.h>
 
+#include <cstring> // ? Added by me, need for std::memset
+#include <cmath> // ? Added by me, need for sinf and cosf
 #include <iostream>
 #include <chrono>
 #include <vector>
@@ -319,7 +334,7 @@ public:
 class olcConsoleGameEngine
 {
 public:
-	olcConsoleGameEngine()
+	olcConsoleGameEngine() 
 	{
 		m_nScreenWidth = 80;
 		m_nScreenHeight = 30;
@@ -345,8 +360,9 @@ public:
 
 	int ConstructConsole(int width, int height, int fontw, int fonth)
 	{
-		if (m_hConsole == INVALID_HANDLE_VALUE)
+		if (m_hConsole == INVALID_HANDLE_VALUE) {
 			return Error(L"Bad Handle");
+		}
 
 		m_nScreenWidth = width;
 		m_nScreenHeight = height;
@@ -365,17 +381,19 @@ public:
 
 		// Change console visual size to a minimum so ScreenBuffer can shrink
 		// below the actual visual size
-		m_rectWindow = { 0, 0, 1, 1 };
+		m_rectWindow = {0, 0, 1, 1};
 		SetConsoleWindowInfo(m_hConsole, TRUE, &m_rectWindow);
 
 		// Set the size of the screen buffer
+		// ? Must come before SetConsoleWindowInfo?
 		COORD coord = { (short)m_nScreenWidth, (short)m_nScreenHeight };
-		if (!SetConsoleScreenBufferSize(m_hConsole, coord))
+		if (!SetConsoleScreenBufferSize(m_hConsole, coord)) {
 			Error(L"SetConsoleScreenBufferSize");
-
+		}
 		// Assign screen buffer to the console
-		if (!SetConsoleActiveScreenBuffer(m_hConsole))
+		if (!SetConsoleActiveScreenBuffer(m_hConsole)) {
 			return Error(L"SetConsoleActiveScreenBuffer");
+		}
 		
 		// Set the font size now that the screen buffer has been assigned to the console
 		CONSOLE_FONT_INFOEX cfi;
@@ -397,27 +415,37 @@ public:
 
 		//wcscpy_s(cfi.FaceName, L"Liberation Mono");
 		wcscpy_s(cfi.FaceName, L"Consolas");
-		if (!SetCurrentConsoleFontEx(m_hConsole, false, &cfi))
+		if (!SetCurrentConsoleFontEx(m_hConsole, false, &cfi)) {
 			return Error(L"SetCurrentConsoleFontEx");
+		}
 
 		// Get screen buffer info and check the maximum allowed window size. Return
 		// error if exceeded, so user knows their dimensions/fontsize are too large
 		CONSOLE_SCREEN_BUFFER_INFO csbi;
-		if (!GetConsoleScreenBufferInfo(m_hConsole, &csbi))
+		if (!GetConsoleScreenBufferInfo(m_hConsole, &csbi)) {
 			return Error(L"GetConsoleScreenBufferInfo");
-		if (m_nScreenHeight > csbi.dwMaximumWindowSize.Y)
+		}
+		if (m_nScreenHeight > csbi.dwMaximumWindowSize.Y) {
 			return Error(L"Screen Height / Font Height Too Big");
-		if (m_nScreenWidth > csbi.dwMaximumWindowSize.X)
+		}
+		if (m_nScreenWidth > csbi.dwMaximumWindowSize.X) {
 			return Error(L"Screen Width / Font Width Too Big");
+		}
 
 		// Set Physical Console Window Size
-		m_rectWindow = { 0, 0, (short)m_nScreenWidth - 1, (short)m_nScreenHeight - 1 };
-		if (!SetConsoleWindowInfo(m_hConsole, TRUE, &m_rectWindow))
+		// ! CHANGE: Use static cast instead of C-style cast to avoid narrowing conversion.
+		m_rectWindow = {0, 0, static_cast<short>(m_nScreenWidth - 1), static_cast<short>(m_nScreenHeight - 1)};
+		if (!SetConsoleWindowInfo(m_hConsole, TRUE, &m_rectWindow)) {
 			return Error(L"SetConsoleWindowInfo");
+		}
 
 		// Set flags to allow mouse input		
-		if (!SetConsoleMode(m_hConsoleIn, ENABLE_EXTENDED_FLAGS | ENABLE_WINDOW_INPUT | ENABLE_MOUSE_INPUT))
+		if (!SetConsoleMode(
+			m_hConsoleIn, 
+			ENABLE_EXTENDED_FLAGS | ENABLE_WINDOW_INPUT | ENABLE_MOUSE_INPUT
+		)) {
 			return Error(L"SetConsoleMode");
+		}
 
 		// Allocate memory for screen buffer
 		m_bufScreen = new CHAR_INFO[m_nScreenWidth*m_nScreenHeight];
@@ -429,10 +457,10 @@ public:
 
 	virtual void Draw(int x, int y, short c = 0x2588, short col = 0x000F)
 	{
-		if (x >= 0 && x < m_nScreenWidth && y >= 0 && y < m_nScreenHeight)
-		{
-			m_bufScreen[y * m_nScreenWidth + x].Char.UnicodeChar = c;
-			m_bufScreen[y * m_nScreenWidth + x].Attributes = col;
+		if (x >= 0 && x < m_nScreenWidth && y >= 0 && y < m_nScreenHeight) {
+			int index = (y * m_nScreenWidth) + x; // Classic OLC
+			m_bufScreen[index].Char.UnicodeChar = c;
+			m_bufScreen[index].Attributes = col;
 		}
 	}
 
@@ -447,31 +475,38 @@ public:
 
 	void DrawString(int x, int y, std::wstring c, short col = 0x000F)
 	{
-		for (size_t i = 0; i < c.size(); i++)
-		{
-			m_bufScreen[y * m_nScreenWidth + x + i].Char.UnicodeChar = c[i];
-			m_bufScreen[y * m_nScreenWidth + x + i].Attributes = col;
+		for (size_t i = 0; i < c.size(); i++) {
+			int index = (y * m_nScreenWidth) + x + i; // Classic OLC
+			m_bufScreen[index].Char.UnicodeChar = c[i];
+			m_bufScreen[index].Attributes = col;
 		}
 	}
 
 	void DrawStringAlpha(int x, int y, std::wstring c, short col = 0x000F)
 	{
-		for (size_t i = 0; i < c.size(); i++)
-		{
-			if (c[i] != L' ')
-			{
-				m_bufScreen[y * m_nScreenWidth + x + i].Char.UnicodeChar = c[i];
-				m_bufScreen[y * m_nScreenWidth + x + i].Attributes = col;
+		for (size_t i = 0; i < c.size(); i++) {
+			if (c[i] != L' ') {
+				int index = (y * m_nScreenWidth) + x + i; // Classic OLC
+				m_bufScreen[index].Char.UnicodeChar = c[i];
+				m_bufScreen[index].Attributes = col;
 			}
 		}
 	}
 
+	// Bounds checks. If a param < 0 or >= height/width, fallback to 0 or height/width.
 	void Clip(int &x, int &y)
 	{
-		if (x < 0) x = 0;
-		if (x >= m_nScreenWidth) x = m_nScreenWidth;
-		if (y < 0) y = 0;
-		if (y >= m_nScreenHeight) y = m_nScreenHeight;
+		if (x < 0) {
+			x = 0;
+		} else if (x >= m_nScreenWidth) {
+			x = m_nScreenWidth;
+		}
+		
+		if (y < 0) {
+			y = 0;
+		} else if (y >= m_nScreenHeight) {
+			y = m_nScreenHeight;
+		}
 	}
 
 	void DrawLine(int x1, int y1, int x2, int y2, short c = 0x2588, short col = 0x000F)
@@ -1020,8 +1055,7 @@ protected: // Audio Engine =====================================================
 																	// which are not in the wav file
 
 			// Just check if wave format is compatible with olcCGE
-			if (wavHeader.wBitsPerSample != 16 || wavHeader.nSamplesPerSec != 44100)
-			{
+			if (wavHeader.wBitsPerSample != 16 || wavHeader.nSamplesPerSec != 44100) {
 				std::fclose(f);
 				return;
 			}
@@ -1030,8 +1064,7 @@ protected: // Audio Engine =====================================================
 			long nChunksize = 0;
 			std::fread(&dump, sizeof(char), 4, f); // Read chunk header
 			std::fread(&nChunksize, sizeof(long), 1, f); // Read chunk size
-			while (strncmp(dump, "data", 4) != 0)
-			{
+			while (strncmp(dump, "data", 4) != 0) {
 				// Not audio data, so just skip it
 				std::fseek(f, nChunksize, SEEK_CUR);
 				std::fread(&dump, sizeof(char), 4, f);
@@ -1047,10 +1080,8 @@ protected: // Audio Engine =====================================================
 			float *pSample = fSample;
 			
 			// Read in audio data and normalise
-			for (long i = 0; i < nSamples; i++)
-			{
-				for (int c = 0; c < nChannels; c++)
-				{
+			for (long i = 0; i < nSamples; i++) {
+				for (int c = 0; c < nChannels; c++) {
 					short s = 0;
 					std::fread(&s, sizeof(short), 1, f);
 					*pSample = (float)s / (float)(MAXSHORT);
@@ -1089,17 +1120,17 @@ protected: // Audio Engine =====================================================
 	// number is returned if successful, otherwise -1
 	unsigned int LoadAudioSample(std::wstring sWavFile)
 	{
-		if (!m_bEnableSound)
+		if (!m_bEnableSound) {
 			return -1;
+		}
 
 		olcAudioSample a(sWavFile);
-		if (a.bSampleValid)
-		{
+		if (a.bSampleValid) {
 			vecAudioSamples.push_back(a);
 			return vecAudioSamples.size();
-		}
-		else
+		} else {
 			return -1;
+		}
 	}
 
 	// Add sample 'id' to the mixers sounds to play list
@@ -1113,10 +1144,7 @@ protected: // Audio Engine =====================================================
 		listActiveSamples.push_back(a);
 	}
 
-	void StopSample(int id)
-	{
-
-	}
+	void StopSample(int id) {}
 
 	// The audio system uses by default a specific wave format
 	bool CreateAudio(unsigned int nSampleRate = 44100, unsigned int nChannels = 1,
@@ -1332,11 +1360,7 @@ protected: // Audio Engine =====================================================
 	std::mutex m_muxBlockNotZero;
 	std::atomic<float> m_fGlobalTime = 0.0f;
 
-	
-
 protected:
-	
-
 	struct sKeyState
 	{
 		bool bPressed;
@@ -1370,8 +1394,7 @@ protected:
 		// Note this gets called in a seperate OS thread, so it must
 		// only exit when the game has finished cleaning up, or else
 		// the process will be killed before OnUserDestroy() has finished
-		if (evt == CTRL_CLOSE_EVENT)
-		{
+		if (evt == CTRL_CLOSE_EVENT) {
 			m_bAtomActive = false;
 
 			// Wait for thread to be exited
@@ -1382,19 +1405,19 @@ protected:
 	}
 
 protected:
-	int m_nScreenWidth;
-	int m_nScreenHeight;
-	CHAR_INFO *m_bufScreen;
+	int m_nScreenWidth; // `#columns` in screen buffer.
+	int m_nScreenHeight; // `#rows` in screen buffer.
+	CHAR_INFO *m_bufScreen; // screen buffer 1D array.
 	std::wstring m_sAppName;
-	HANDLE m_hOriginalConsole;
+	HANDLE m_hOriginalConsole; // return to original console on failure.
 	CONSOLE_SCREEN_BUFFER_INFO m_OriginalConsoleInfo;
-	HANDLE m_hConsole;
-	HANDLE m_hConsoleIn;
+	HANDLE m_hConsole; // Output buffer handle.
+	HANDLE m_hConsoleIn; // Input buffer handle: mouse events, not keyboard events.
 	SMALL_RECT m_rectWindow;
-	short m_keyOldState[256] = { 0 };
-	short m_keyNewState[256] = { 0 };
-	bool m_mouseOldState[5] = { 0 };
-	bool m_mouseNewState[5] = { 0 };
+	short m_keyOldState[256] = {0};
+	short m_keyNewState[256] = {0};
+	bool m_mouseOldState[5] = {0};
+	bool m_mouseNewState[5] = {0};
 	bool m_bConsoleInFocus = true;	
 	bool m_bEnableSound = false;
 
