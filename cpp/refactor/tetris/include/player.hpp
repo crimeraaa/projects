@@ -54,7 +54,7 @@ public:
     int piece_id; // Index into tetromino array.
     int rotation; // Current rotation to be modulo by 4. Used for calculating true index.
     Position position; // Indexes into playing field buffer.
-    bool hold; // Stagger to avoid super fast repeating rotations.
+    bool hold_rotate; // Stagger to avoid super fast repeating rotations.
 
     // List of valid keys that we listen for.
     // @warning Please keep this in the same order as `enum Keys`!
@@ -72,5 +72,5 @@ public:
     : piece_id(0)
     , rotation(0)
     , position(fwidth / 2, 0)
-    , hold(false) {}
+    , hold_rotate(false) {}
 };

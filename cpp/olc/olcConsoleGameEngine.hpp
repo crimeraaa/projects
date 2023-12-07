@@ -455,6 +455,7 @@ public:
 		return 1;
 	}
 
+	// Contrary to its name, this just updates the internal screen buffer.
 	virtual void Draw(int x, int y, short c = 0x2588, short col = 0x000F)
 	{
 		if (x >= 0 && x < m_nScreenWidth && y >= 0 && y < m_nScreenHeight) {

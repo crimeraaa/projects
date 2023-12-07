@@ -77,7 +77,8 @@
 			"typeinfo": "cpp",
 			"variant": "cpp",
 			"codecvt": "cpp",
-			"fstream": "cpp"
+			"fstream": "cpp",
+			"*.rh": "cpp"
 		},
 		"dotnet.defaultSolution": "walkthrough.sln"
 	},

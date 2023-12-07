@@ -1,4 +1,4 @@
-EXE = main
+EXE = tetris
 SRC = $(addsuffix .cpp, $(EXE))
 CXXFLAGS := $(CXXFLAGS:-Werror=) -Wno-unused-but-set-variable -DUNICODE -D_UNICODE -I..
 
