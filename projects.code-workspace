@@ -78,7 +78,16 @@
 			"variant": "cpp",
 			"codecvt": "cpp",
 			"fstream": "cpp",
-			"*.rh": "cpp"
+			"*.rh": "cpp",
+			"bitset": "cpp",
+			"__bit_reference": "cpp",
+			"__config": "cpp",
+			"__locale": "cpp",
+			"__split_buffer": "cpp",
+			"__threading_support": "cpp",
+			"__verbose_abort": "cpp",
+			"ios": "cpp",
+			"locale": "cpp"
 		},
 		"dotnet.defaultSolution": "walkthrough.sln"
 	},

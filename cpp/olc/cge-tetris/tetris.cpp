@@ -11,13 +11,14 @@ private:
     enum PieceInfo {PIECE_WIDTH = 4, 
                     PIECE_HEIGHT = 4, 
                     PIECE_AREA = PIECE_WIDTH * PIECE_HEIGHT,
-                    PIECE_COUNT = 7};    
+                    PIECE_COUNT = 7};
 
 // INTERNAL MEMBERS
 private: 
     GameMap m_gamemap;
     Player m_player;
     TetrisGameState m_state;
+    std::vector<int> m_lineclears; // List of rows we should clear from screen
 
     // Assets representing tetris pieces. '.' = empty space, 'X' = part of piece
     const std::array<std::wstring, PIECE_COUNT> m_tetrominos = {
@@ -118,8 +119,8 @@ public:
 bool Tetris::OnUserUpdate(float dt) 
 {
     using std::chrono_literals::operator""ms; // I hate it here (use C++14/17)
-    m_state.counter++;
-    m_state.forcedown = (m_state.counter == m_state.speed);
+    m_state.speedcounter++;
+    m_state.forcedown = (m_state.speedcounter == m_state.speed);
 
     /******************************* GAME TIMING ******************************/
     // 50ms results in roughly 14-20 FPS, since 1000ms/50ms = 20
@@ -148,7 +149,7 @@ bool Tetris::OnUserUpdate(float dt)
 
     if (m_state.forcedown) {
         m_state.gameover = !can_forcedown();
-        m_state.counter = 0; // reset so we can do the == comparison again
+        m_state.speedcounter = 0; // reset so we can do the == comparison again
     }
 
     /******************************** GAME LOGIC ******************************/
@@ -157,7 +158,7 @@ bool Tetris::OnUserUpdate(float dt)
     /****************************** RENDER OUTPUT *****************************/
 
     // Draw Field (a.k.a. update map data)
-    loop_map([this](int x, int y)
+    loop_map([&](int x, int y)
     {
         int map_info = m_gamemap[(y * m_gamemap.width) + x];
         wchar_t map_cell = L" ABCDEFG=#"[map_info];
@@ -167,7 +168,7 @@ bool Tetris::OnUserUpdate(float dt)
 
     // Draw Current Piece
     const std::wstring &piece = m_tetrominos[m_player.piece_id]; 
-    loop_piece([this, piece](int px, int py)
+    loop_piece([&](int px, int py)
     {
         // Reference piece grid
         int index = rotate(px, py, m_player.rotation);
@@ -180,6 +181,33 @@ bool Tetris::OnUserUpdate(float dt)
                  m_player.piece_id + 'A');
         }
     });
+
+    if (!m_lineclears.empty()) {
+        // Display frame (cheekily to draw lines)
+        // javidx9 calls WriteConsoleOutputCharacter here
+        // have to call this ourselves as the CGE API is kinda limiting
+        WriteConsoleOutput(m_hConsole, 
+                           m_bufScreen, 
+                           {(short)m_nScreenWidth, (short)m_nScreenHeight}, 
+                           {0, 0}, 
+                           &m_rectWindow);
+
+        // delay a bit (about 1/2 of a second)
+        std::this_thread::sleep_for(400ms); 
+        for (int v : m_lineclears) {
+            for (int px = 1; px < m_gamemap.width - 1; px++) {
+                // `v` is the most recent index of the row we wanna delete
+                for (int py = v; py > 0; py--) {
+                    int new_index = (py * m_gamemap.width) + px;
+                    int old_index = ((py - 1) * m_gamemap.width) + px;
+                    m_gamemap[new_index] = m_gamemap[old_index];
+                }
+                // Delete individual cells in this row
+                m_gamemap[px] = 0;
+            }
+        }
+        m_lineclears.clear();
+    }
     return !m_state.gameover; // This (should) trigger the exit if false!
 }
 
@@ -199,7 +227,7 @@ bool Tetris::can_forcedown(void)
     // Implied else: can't go further so lock piece at the current location!
     // Assign a variable to avoid constantly indexing inside the loop.
     const std::wstring &piece = m_tetrominos[m_player.piece_id]; 
-    loop_piece([this, piece](int px, int py)
+    loop_piece([&](int px, int py)
     {
         int rotation = rotate(px, py, m_player.rotation);
         if (piece[rotation] == L'X') {
@@ -209,13 +237,44 @@ bool Tetris::can_forcedown(void)
         }
     });
 
+    m_state.piececount++;
+    // Increase speed (read: decrease time interval) every 10 pieces!
+    if (m_state.piececount % 10 == 0) {
+        // Looks like javidx9 caps the speed at 10 milliseconds?
+        if (m_state.speed >= 10) {
+            m_state.speed--;
+        }
+    }
+
     // Check for full completed horizontal line
+    // Translate reference tetromino rows into game map positions
+    for (int py = 0; py < PIECE_HEIGHT; py++) {
+        if (m_player.y + py < m_gamemap.height - 1) {
+            // start true so we can compound assign AND
+            bool is_line = true; 
+            // Don't check first and last columns as those are boundaries
+            for (int px = 1; px < m_gamemap.width - 1; px++) {
+                int index = (m_player.y + py) * m_gamemap.width + px;
+                is_line &= (m_gamemap[index] != 0);
+            }
+            // Remained `true` after all the checks so proceed to mark this line
+            if (is_line) {
+                // Remove line and set to '=' chars
+                for (int px = 1; px < m_gamemap.width - 1; px++) {
+                    int index = (m_player.y + py) * m_gamemap.width + px;
+                    m_gamemap[index] = 8; // index of '=' in the literal
+                }
+                // Push back current row
+                m_lineclears.push_back(m_player.y + py);
+            }
+        }
+    }
 
     // Choose next piece
     m_player.x = m_gamemap.width / 2;
     m_player.y = 0;
     m_player.rotation = 0;
-    m_player.piece_id = std::rand() % 7; // TODO: Use different RNG
+    m_player.piece_id = std::rand() % PIECE_COUNT; // TODO: Use different RNG
 
     // Newly chosen piece doesn't fit at starting location = game over!
     return piece_fits(Offset::NONE);

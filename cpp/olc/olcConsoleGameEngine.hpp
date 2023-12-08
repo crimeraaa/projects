@@ -501,6 +501,7 @@ public:
 	// Bounds checks. If a param < 0 or >= height/width, fallback to 0 or height/width.
 	void Clip(int &x, int &y)
 	{
+		// Evaluate x and y separately
 		if (x < 0) {
 			x = 0;
 		} else if (x >= m_nScreenWidth) {
@@ -520,45 +521,52 @@ public:
 		dx = x2 - x1; dy = y2 - y1;
 		dx1 = abs(dx); dy1 = abs(dy);
 		px = 2 * dy1 - dx1;	py = 2 * dx1 - dy1;
-		if (dy1 <= dx1)
-		{
-			if (dx >= 0)
-				{ x = x1; y = y1; xe = x2; }
-			else
-				{ x = x2; y = y2; xe = x1;}
-
+		if (dy1 <= dx1) {
+			if (dx >= 0) { 
+				x = x1; 
+				y = y1; 
+				xe = x2; 
+			} else { 
+				x = x2; 
+				y = y2; 
+				xe = x1;
+			}
 			Draw(x, y, c, col);
-			
-			for (i = 0; x<xe; i++)
-			{
+			for (i = 0; x<xe; i++) {
 				x = x + 1;
-				if (px<0)
+				if (px<0) {
 					px = px + 2 * dy1;
-				else
-				{
-					if ((dx<0 && dy<0) || (dx>0 && dy>0)) y = y + 1; else y = y - 1;
+				} else {
+					if ((dx<0 && dy<0) || (dx>0 && dy>0)) {
+						y = y + 1;
+					} else {
+						y = y - 1;
+					}
 					px = px + 2 * (dy1 - dx1);
 				}
 				Draw(x, y, c, col);
 			}
-		}
-		else
-		{
-			if (dy >= 0)
-				{ x = x1; y = y1; ye = y2; }
-			else
-				{ x = x2; y = y2; ye = y1; }
-
+		} else {
+			if (dy >= 0) { 
+				x = x1; 
+				y = y1; 
+				ye = y2; 
+			} else { 
+				x = x2; 
+				y = y2; 
+				ye = y1; 
+			}
 			Draw(x, y, c, col);
-
-			for (i = 0; y<ye; i++)
-			{
+			for (i = 0; y < ye; i++) {
 				y = y + 1;
-				if (py <= 0)
+				if (py <= 0) {
 					py = py + 2 * dx1;
-				else
-				{
-					if ((dx<0 && dy<0) || (dx>0 && dy>0)) x = x + 1; else x = x - 1;
+				} else {
+					if ((dx<0 && dy<0) || (dx>0 && dy>0)) {
+						x = x + 1;
+					} else {
+						x = x - 1;
+					}
 					py = py + 2 * (dx1 - dy1);
 				}
 				Draw(x, y, c, col);
@@ -585,17 +593,38 @@ public:
 		int signx1, signx2, dx1, dy1, dx2, dy2;
 		int e1, e2;
 		// Sort vertices
-		if (y1>y2) { SWAP(y1, y2); SWAP(x1, x2); }
-		if (y1>y3) { SWAP(y1, y3); SWAP(x1, x3); }
-		if (y2>y3) { SWAP(y2, y3); SWAP(x2, x3); }
+		if (y1 > y2) { 
+			SWAP(y1, y2); 
+			SWAP(x1, x2); 
+		}
+		if (y1 > y3) { 
+			SWAP(y1, y3); 
+			SWAP(x1, x3); 
+		}
+		if (y2 > y3) { 
+			SWAP(y2, y3); 
+			SWAP(x2, x3); 
+		}
 
-		t1x = t2x = x1; y = y1;   // Starting points
-		dx1 = (int)(x2 - x1); if (dx1<0) { dx1 = -dx1; signx1 = -1; }
-		else signx1 = 1;
+		// Starting points
+		t1x = t2x = x1; y = y1;   
+		dx1 = (int)(x2 - x1); 
+		if (dx1<0) { 
+			dx1 = -dx1; 
+			signx1 = -1; 
+		} else {
+			signx1 = 1;
+		}
+
 		dy1 = (int)(y2 - y1);
-
-		dx2 = (int)(x3 - x1); if (dx2<0) { dx2 = -dx2; signx2 = -1; }
-		else signx2 = 1;
+		dx2 = (int)(x3 - x1); 
+		if (dx2<0) { 
+			dx2 = -dx2; 
+			signx2 = -1; 
+		}
+		else {
+			signx2 = 1;
+		}
 		dy2 = (int)(y3 - y1);
 
 		if (dy1 > dx1) {   // swap values
@@ -606,27 +635,38 @@ public:
 			SWAP(dy2, dx2);
 			changed2 = true;
 		}
-
 		e2 = (int)(dx2 >> 1);
 		// Flat top, just process the second half
-		if (y1 == y2) goto next;
+		if (y1 == y2) {
+			goto next;
+		}
 		e1 = (int)(dx1 >> 1);
-
 		for (int i = 0; i < dx1;) {
 			t1xp = 0; t2xp = 0;
-			if (t1x<t2x) { minx = t1x; maxx = t2x; }
-			else { minx = t2x; maxx = t1x; }
+			if (t1x<t2x) { 
+				minx = t1x; 
+				maxx = t2x; 
+			} else { 
+				minx = t2x; 
+				maxx = t1x; 
+			}
 			// process first line until y value is about to change
 			while (i<dx1) {
 				i++;
 				e1 += dy1;
 				while (e1 >= dx1) {
 					e1 -= dx1;
-					if (changed1) t1xp = signx1;//t1x += signx1;
-					else          goto next1;
+					if (changed1) {
+						t1xp = signx1;//t1x += signx1;
+					} else { 
+						goto next1;
+					}
 				}
-				if (changed1) break;
-				else t1x += signx1;
+				if (changed1) {
+					break;
+				} else {
+					t1x += signx1;
+				}
 			}
 			// Move line
 		next1:
@@ -635,55 +675,99 @@ public:
 				e2 += dy2;
 				while (e2 >= dx2) {
 					e2 -= dx2;
-					if (changed2) t2xp = signx2;//t2x += signx2;
-					else          goto next2;
+					if (changed2) {
+						t2xp = signx2;//t2x += signx2;
+					} else {
+						goto next2;
+					}
 				}
-				if (changed2)     break;
-				else              t2x += signx2;
+				if (changed2) {
+					break;
+				} else {
+					t2x += signx2;
+				}
 			}
 		next2:
-			if (minx>t1x) minx = t1x; if (minx>t2x) minx = t2x;
-			if (maxx<t1x) maxx = t1x; if (maxx<t2x) maxx = t2x;
-			drawline(minx, maxx, y);    // Draw line from min to max points found on the y
-										 // Now increase y
-			if (!changed1) t1x += signx1;
+		// Need to evaluate all separately it looks like
+			if (minx>t1x) {
+				minx = t1x;
+			} 
+			if (minx>t2x) {
+				minx = t2x;
+			}
+			if (maxx<t1x) {
+				maxx = t1x;
+			} 
+			if (maxx<t2x) {
+				maxx = t2x;
+			}
+			drawline(minx, maxx, y); // Draw line from min to max points found on the y
+									 // Now increase y
+			if (!changed1) {
+				t1x += signx1;
+			}
 			t1x += t1xp;
-			if (!changed2) t2x += signx2;
+			if (!changed2) {
+				t2x += signx2;
+			}
 			t2x += t2xp;
 			y += 1;
-			if (y == y2) break;
-
+			if (y == y2) {
+				break;
+			}
 		}
 	next:
 		// Second half
-		dx1 = (int)(x3 - x2); if (dx1<0) { dx1 = -dx1; signx1 = -1; }
-		else signx1 = 1;
+		dx1 = (int)(x3 - x2); 
+		if (dx1<0) { 
+			dx1 = -dx1; signx1 = -1; 
+		} else {
+			signx1 = 1;
+		}
+
 		dy1 = (int)(y3 - y2);
 		t1x = x2;
-
-		if (dy1 > dx1) {   // swap values
+		// swap values
+		if (dy1 > dx1) {
 			SWAP(dy1, dx1);
 			changed1 = true;
+		} else {
+			changed1 = false;
 		}
-		else changed1 = false;
 
 		e1 = (int)(dx1 >> 1);
-
 		for (int i = 0; i <= dx1; i++) {
 			t1xp = 0; t2xp = 0;
-			if (t1x<t2x) { minx = t1x; maxx = t2x; }
-			else { minx = t2x; maxx = t1x; }
+			if (t1x < t2x) { 
+				minx = t1x; 
+				maxx = t2x; 
+			} else { 
+				minx = t2x; 
+				maxx = t1x; 
+			}
 			// process first line until y value is about to change
 			while (i<dx1) {
 				e1 += dy1;
 				while (e1 >= dx1) {
 					e1 -= dx1;
-					if (changed1) { t1xp = signx1; break; }//t1x += signx1;
-					else          goto next3;
+					if (changed1) { 
+						t1xp = signx1; 
+						//t1x += signx1;
+						break; 
+					} else {
+						goto next3;
+					}
 				}
-				if (changed1) break;
-				else   	   	  t1x += signx1;
-				if (i<dx1) i++;
+
+				if (changed1) {
+					break;
+				} else {
+					t1x += signx1;
+				}
+
+				if (i<dx1) {
+					i++;
+				}
 			}
 		next3:
 			// process second line until y value is about to change
@@ -698,16 +782,35 @@ public:
 				else              t2x += signx2;
 			}
 		next4:
+		// Need to evaluate these all separately it looks like
+			if (minx>t1x) {
+				minx = t1x;
+			} 
+			if (minx>t2x) {
+				minx = t2x;
+			}
+			if (maxx<t1x) {
+				maxx = t1x;
+			} 
+			if (maxx<t2x) {
+				maxx = t2x;
+			}
 
-			if (minx>t1x) minx = t1x; if (minx>t2x) minx = t2x;
-			if (maxx<t1x) maxx = t1x; if (maxx<t2x) maxx = t2x;
 			drawline(minx, maxx, y);   										
-			if (!changed1) t1x += signx1;
+			if (!changed1) {
+				t1x += signx1;
+			}
+
 			t1x += t1xp;
-			if (!changed2) t2x += signx2;
+			if (!changed2) {
+				t2x += signx2;
+			}
+
 			t2x += t2xp;
 			y += 1;
-			if (y>y3) return;
+			if (y > y3) {
+				return;
+			}
 		}
 	}
 
@@ -716,20 +819,24 @@ public:
 		int x = 0;
 		int y = r;
 		int p = 3 - 2 * r;
-		if (!r) return;
-
-		while (y >= x) // only formulate 1/8 of circle
-		{
-			Draw(xc - x, yc - y, c, col);//upper left left
-			Draw(xc - y, yc - x, c, col);//upper upper left
-			Draw(xc + y, yc - x, c, col);//upper upper right
-			Draw(xc + x, yc - y, c, col);//upper right right
-			Draw(xc - x, yc + y, c, col);//lower left left
-			Draw(xc - y, yc + x, c, col);//lower lower left
-			Draw(xc + y, yc + x, c, col);//lower lower right
-			Draw(xc + x, yc + y, c, col);//lower right right
-			if (p < 0) p += 4 * x++ + 6;
-			else p += 4 * (x++ - y--) + 10;
+		if (!r) {
+			return;
+		}
+		// only formulate 1/8 of circle
+		while (y >= x) {
+			Draw(xc - x, yc - y, c, col); // upper left left
+			Draw(xc - y, yc - x, c, col); // upper upper left
+			Draw(xc + y, yc - x, c, col); // upper upper right
+			Draw(xc + x, yc - y, c, col); // upper right right
+			Draw(xc - x, yc + y, c, col); // lower left left
+			Draw(xc - y, yc + x, c, col); // lower lower left
+			Draw(xc + y, yc + x, c, col); // lower lower right
+			Draw(xc + x, yc + y, c, col); // lower right right
+			if (p < 0) {
+				p += 4 * x++ + 6;
+			} else {
+				p += 4 * (x++ - y--) + 10;
+			}
 		}
 	}
 
@@ -743,48 +850,57 @@ public:
 
 		auto drawline = [&](int sx, int ex, int ny)
 		{
-			for (int i = sx; i <= ex; i++)
+			for (int i = sx; i <= ex; i++) {
 				Draw(i, ny, c, col);
+			}
 		};
 
-		while (y >= x)
-		{
+		while (y >= x) {
 			// Modified to draw scan-lines instead of edges
 			drawline(xc - x, xc + x, yc - y);
 			drawline(xc - y, xc + y, yc - x);
 			drawline(xc - x, xc + x, yc + y);
 			drawline(xc - y, xc + y, yc + x);
-			if (p < 0) p += 4 * x++ + 6;
-			else p += 4 * (x++ - y--) + 10;
+			if (p < 0) {
+				p += 4 * x++ + 6;
+			} else {
+				p += 4 * (x++ - y--) + 10;
+			}
 		}
 	};
 
 	void DrawSprite(int x, int y, olcSprite *sprite)
 	{
-		if (sprite == nullptr)
+		if (sprite == nullptr) {
 			return;
+		}
 
-		for (int i = 0; i < sprite->nWidth; i++)
-		{
-			for (int j = 0; j < sprite->nHeight; j++)
-			{
-				if (sprite->GetGlyph(i, j) != L' ')
-					Draw(x + i, y + j, sprite->GetGlyph(i, j), sprite->GetColour(i, j));
+		for (int i = 0; i < sprite->nWidth; i++) {
+			for (int j = 0; j < sprite->nHeight; j++) {
+				if (sprite->GetGlyph(i, j) != L' ') {
+					Draw(x + i, 
+					 	 y + j, 
+						 sprite->GetGlyph(i, j), 
+						 sprite->GetColour(i, j));
+				}
 			}
 		}
 	}
 
 	void DrawPartialSprite(int x, int y, olcSprite *sprite, int ox, int oy, int w, int h)
 	{
-		if (sprite == nullptr)
+		if (sprite == nullptr) {
 			return;
+		}
 
-		for (int i = 0; i < w; i++)
-		{
-			for (int j = 0; j < h; j++)
-			{
-				if (sprite->GetGlyph(i+ox, j+oy) != L' ')
-					Draw(x + i, y + j, sprite->GetGlyph(i+ox, j+oy), sprite->GetColour(i+ox, j+oy));
+		for (int i = 0; i < w; i++) {
+			for (int j = 0; j < h; j++) {
+				if (sprite->GetGlyph(i+ox, j+oy) != L' ') {
+					Draw(x + i, 
+						 y + j, 
+						 sprite->GetGlyph(i + ox, j + oy), 
+						 sprite->GetColour(i + ox, j + oy));
+				}
 			}
 		}
 	}
@@ -800,22 +916,19 @@ public:
 		vecTransformedCoordinates.resize(verts);
 
 		// Rotate
-		for (int i = 0; i < verts; i++)
-		{
+		for (int i = 0; i < verts; i++) {
 			vecTransformedCoordinates[i].first = vecModelCoordinates[i].first * cosf(r) - vecModelCoordinates[i].second * sinf(r);
 			vecTransformedCoordinates[i].second = vecModelCoordinates[i].first * sinf(r) + vecModelCoordinates[i].second * cosf(r);
 		}
 
 		// Scale
-		for (int i = 0; i < verts; i++)
-		{
+		for (int i = 0; i < verts; i++) {
 			vecTransformedCoordinates[i].first = vecTransformedCoordinates[i].first * s;
 			vecTransformedCoordinates[i].second = vecTransformedCoordinates[i].second * s;
 		}
 
 		// Translate
-		for (int i = 0; i < verts; i++)
-		{
+		for (int i = 0; i < verts; i++) {
 			vecTransformedCoordinates[i].first = vecTransformedCoordinates[i].first + x;
 			vecTransformedCoordinates[i].second = vecTransformedCoordinates[i].second + y;
 		}
@@ -861,14 +974,13 @@ private:
 	void GameThread()
 	{
 		// Create user resources as part of this thread
-		if (!OnUserCreate()) 
+		if (!OnUserCreate()) {
 			m_bAtomActive = false;
+		}
 
 		// Check if sound system should be enabled
-		if (m_bEnableSound)
-		{
-			if (!CreateAudio())
-			{
+		if (m_bEnableSound) {
+			if (!CreateAudio()) {
 				m_bAtomActive = false; // Failed to create audio system			
 				m_bEnableSound = false;
 			}
@@ -877,11 +989,9 @@ private:
 		auto tp1 = std::chrono::system_clock::now();
 		auto tp2 = std::chrono::system_clock::now();
 
-		while (m_bAtomActive)
-		{
+		while (m_bAtomActive) {
 			// Run as fast as possible
-			while (m_bAtomActive)
-			{
+			while (m_bAtomActive) {
 				// Handle Timing
 				tp2 = std::chrono::system_clock::now();
 				std::chrono::duration<float> elapsedTime = tp2 - tp1;
@@ -889,27 +999,19 @@ private:
 				float fElapsedTime = elapsedTime.count();
 
 				// Handle Keyboard Input
-				for (int i = 0; i < 256; i++)
-				{
+				for (int i = 0; i < 256; i++) {
 					m_keyNewState[i] = GetAsyncKeyState(i);
-
 					m_keys[i].bPressed = false;
 					m_keys[i].bReleased = false;
-
-					if (m_keyNewState[i] != m_keyOldState[i])
-					{
-						if (m_keyNewState[i] & 0x8000)
-						{
+					if (m_keyNewState[i] != m_keyOldState[i]) {
+						if (m_keyNewState[i] & 0x8000) {
 							m_keys[i].bPressed = !m_keys[i].bHeld;
 							m_keys[i].bHeld = true;
-						}
-						else
-						{
+						} else {
 							m_keys[i].bReleased = true;
 							m_keys[i].bHeld = false;
 						}
 					}
-
 					m_keyOldState[i] = m_keyNewState[i];
 				}
 
@@ -917,94 +1019,84 @@ private:
 				INPUT_RECORD inBuf[32];
 				DWORD events = 0;
 				GetNumberOfConsoleInputEvents(m_hConsoleIn, &events);
-				if (events > 0)
+				if (events > 0) {
 					ReadConsoleInput(m_hConsoleIn, inBuf, events, &events);
-
+				}
 				// Handle events - we only care about mouse clicks and movement
 				// for now
-				for (DWORD i = 0; i < events; i++)
-				{
-					switch (inBuf[i].EventType)
+				for (DWORD i = 0; i < events; i++) {
+					switch (inBuf[i].EventType) 
 					{
-					case FOCUS_EVENT:
-					{
-						m_bConsoleInFocus = inBuf[i].Event.FocusEvent.bSetFocus;
-					}
-					break;
-
-					case MOUSE_EVENT:
-					{
-						switch (inBuf[i].Event.MouseEvent.dwEventFlags)
-						{
-						case MOUSE_MOVED:
-						{
-							m_mousePosX = inBuf[i].Event.MouseEvent.dwMousePosition.X;
-							m_mousePosY = inBuf[i].Event.MouseEvent.dwMousePosition.Y;
-						}
+						case FOCUS_EVENT: {
+							m_bConsoleInFocus = inBuf[i].Event.FocusEvent.bSetFocus;
+						} 
 						break;
+						
+						case MOUSE_EVENT: {
+							switch (inBuf[i].Event.MouseEvent.dwEventFlags) 
+							{
+								case MOUSE_MOVED: {
+									m_mousePosX = inBuf[i].Event.MouseEvent.dwMousePosition.X;
+									m_mousePosY = inBuf[i].Event.MouseEvent.dwMousePosition.Y;
+								} break;
 
-						case 0:
-						{
-							for (int m = 0; m < 5; m++)
-								m_mouseNewState[m] = (inBuf[i].Event.MouseEvent.dwButtonState & (1 << m)) > 0;
+								case 0: {
+									for (int m = 0; m < 5; m++) {
+										m_mouseNewState[m] = (inBuf[i].Event.MouseEvent.dwButtonState & (1 << m)) > 0;
+									}
+								} break;
 
-						}
-						break;
-
-						default:
+								default:
+									break;
+							}
+						} break;
+						// We don't care just at the moment
+						default: {
 							break;
 						}
 					}
-					break;
-
-					default:
-						break;
-						// We don't care just at the moment
-					}
 				}
 
-				for (int m = 0; m < 5; m++)
-				{
+				for (int m = 0; m < 5; m++) {
 					m_mouse[m].bPressed = false;
 					m_mouse[m].bReleased = false;
-
-					if (m_mouseNewState[m] != m_mouseOldState[m])
-					{
-						if (m_mouseNewState[m])
-						{
+					if (m_mouseNewState[m] != m_mouseOldState[m]) {
+						if (m_mouseNewState[m]) {
 							m_mouse[m].bPressed = true;
 							m_mouse[m].bHeld = true;
-						}
-						else
-						{
+						} else {
 							m_mouse[m].bReleased = true;
 							m_mouse[m].bHeld = false;
 						}
 					}
-
 					m_mouseOldState[m] = m_mouseNewState[m];
 				}
-
-
 				// Handle Frame Update
-				if (!OnUserUpdate(fElapsedTime))
+				if (!OnUserUpdate(fElapsedTime)) {
 					m_bAtomActive = false;
+				}
 
 				// Update Title & Present Screen Buffer
 				wchar_t s[256];
-				swprintf_s(s, 256, L"OneLoneCoder.com - Console Game Engine - %s - FPS: %3.2f", m_sAppName.c_str(), 1.0f / fElapsedTime);
+				swprintf_s(s, 
+						   256, 
+						   L"OneLoneCoder.com - Console Game Engine - %s - FPS: %3.2f", 
+						   m_sAppName.c_str(), 
+						   1.0f / fElapsedTime);
 				SetConsoleTitle(s);
-				WriteConsoleOutput(m_hConsole, m_bufScreen, { (short)m_nScreenWidth, (short)m_nScreenHeight }, { 0,0 }, &m_rectWindow);
+				WriteConsoleOutput(m_hConsole, 
+								   m_bufScreen, 
+								   {(short)m_nScreenWidth, (short)m_nScreenHeight }, 
+								   {0,0}, 
+								   &m_rectWindow);
 			}
 
-			if (m_bEnableSound)
-			{
+			if (m_bEnableSound) {
 				// Close and Clean up audio system
 			}
 
 			// Allow the user to free resources if they have overrided the destroy function
-			if (OnUserDestroy())
-			{
+			if (OnUserDestroy()) {
 				// ! Probably not good, trying to clear the screen on exit...
 				// Fill(0, 0, m_nScreenWidth, m_nScreenHeight, L' ', 0);
 
@@ -1018,9 +1110,7 @@ private:
 				// CloseHandle(m_hConsoleIn);
 				SetConsoleActiveScreenBuffer(m_hOriginalConsole);
 				m_cvGameFinished.notify_one();
-			}
-			else
-			{
+			} else {
 				// User denied destroy for some reason, so continue running
 				m_bAtomActive = true;
 			}
@@ -1236,6 +1326,7 @@ protected: // Audio Engine =====================================================
 	// Static wrapper for sound card handler
 	static void CALLBACK waveOutProcWrap(HWAVEOUT hWaveOut, UINT uMsg, DWORD dwInstance, DWORD dwParam1, DWORD dwParam2)
 	{
+		// ! Is this even allowed...?
 		((olcConsoleGameEngine*)dwInstance)->waveOutProc(hWaveOut, uMsg, dwParam1, dwParam2);
 	}
 
@@ -1336,13 +1427,12 @@ protected: // Audio Engine =====================================================
 		// Accumulate sample for this channel
 		float fMixerSample = 0.0f;
 
-		for (auto &s : listActiveSamples)
-		{
+		for (auto &s : listActiveSamples) {
 			// Calculate sample position
 			s.nSamplePosition += (long)((float)vecAudioSamples[s.nAudioSampleID - 1].wavHeader.nSamplesPerSec * fTimeStep);
 
 			// If sample position is valid add to the mix
-			if (s.nSamplePosition < vecAudioSamples[s.nAudioSampleID - 1].nSamples)
+			if (s.nSamplePosition < vecAudioSamples[s.nAudioSampleID - 1].nSamples) 
 				fMixerSample += vecAudioSamples[s.nAudioSampleID - 1].fSample[(s.nSamplePosition * vecAudioSamples[s.nAudioSampleID - 1].nChannels) + nChannel];
 			else
 				s.bFinished = true; // Else sound has completed
@@ -1376,8 +1466,7 @@ protected: // Audio Engine =====================================================
 	std::atomic<float> m_fGlobalTime = 0.0f;
 
 protected:
-	struct sKeyState
-	{
+	struct sKeyState {
 		bool bPressed;
 		bool bReleased;
 		bool bHeld;
@@ -1387,18 +1476,43 @@ protected:
 	int m_mousePosY;
 
 public:
-	sKeyState GetKey(int nKeyID){ return m_keys[nKeyID]; }
-	int GetMouseX() { return m_mousePosX; }
-	int GetMouseY() { return m_mousePosY; }
-	sKeyState GetMouse(int nMouseButtonID) { return m_mouse[nMouseButtonID]; }
-	bool IsFocused() { return m_bConsoleInFocus; }
+	sKeyState GetKey(int nKeyID) 
+	{ 
+		return m_keys[nKeyID]; 
+	}
+
+	int GetMouseX() 
+	{ 
+		return m_mousePosX; 
+	}
+
+	int GetMouseY() 
+	{ 
+		return m_mousePosY; 
+	}
+	
+	sKeyState GetMouse(int nMouseButtonID) 
+	{ 
+		return m_mouse[nMouseButtonID]; 
+	}
+
+	bool IsFocused() 
+	{ 
+		return m_bConsoleInFocus; 
+	}
 
 
 protected:
 	int Error(const wchar_t *msg)
 	{
 		wchar_t buf[256];
-		FormatMessage(FORMAT_MESSAGE_FROM_SYSTEM, NULL, GetLastError(), MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT), buf, 256, NULL);
+		FormatMessage(FORMAT_MESSAGE_FROM_SYSTEM, 
+					  NULL, 
+					  GetLastError(), 
+					  MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT), 
+					  buf, 
+					  256, 
+					  NULL);
 		SetConsoleActiveScreenBuffer(m_hOriginalConsole);
 		wprintf(L"ERROR: %s\n\t%s\n", msg, buf);
 		return 0;

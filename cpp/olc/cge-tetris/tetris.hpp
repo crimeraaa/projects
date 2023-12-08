@@ -88,11 +88,15 @@ struct TetrisGameState {
     bool gameover; // Exit or continue playing condition.
     bool forcedown; // Try to move player's piece downwards over time.
     int speed;
-    int counter; // Determine when to forcedown.
+    int speedcounter; // Determine when to forcedown.
+    int piececount; // every 10 pieces, increase speed!
+    int score;
     TetrisGameState(int starting_speed)
         : gameover{false}
         , forcedown{false}
         , speed{starting_speed}
-        , counter{0} 
+        , speedcounter{0} 
+        , piececount{0}
+        , score{0}
     {}
 };
