@@ -2,7 +2,7 @@
 #include <array>
 #include <string>
 
-// a.k.a. "Playing Field"
+// a.k.a. "Playing Field", consists of indexes into the literal `" ABCDEFG=#"`.
 class GameMap {
 // Willing to expose these, read-only members anwyay
 public:
@@ -10,8 +10,7 @@ public:
     const int height; // `#rows`
     const int area; // `#cells`
 private:
-    // mapinfo, numbers which determine which cell to use
-    // indexes into the literal L" ABCEDFG=#".
+    // each cell determines which char to use (indexes into above literal)
     uint8_t *m_buffer; 
 
 // HELPER FUNCTIONS
@@ -27,7 +26,7 @@ public:
         : width{field_width}
         , height{field_height}
         , area{field_width * field_height}
-        , m_buffer{new uint8_t[area]} 
+        , m_buffer{new uint8_t[area]} // raw pointers cause I'm hella lazy
     {
         // Start up game map as just walls and blank spaces
         for (int x = 0; x < field_width; x++) {
@@ -42,12 +41,13 @@ public:
         }
     }
 
+    // Delete any heap-allocated members here!
     ~GameMap() 
     {
         delete[] m_buffer;
     }
 
-    // Provide read-write access to the buffer's elements
+    // Provide read-write access to the buffer's elements.
     unsigned char &operator[](int index) 
     {
         return m_buffer[index];
@@ -66,11 +66,12 @@ public:
     }
 };
 
-// All members public, is meant to be modified by everybody
+// Bunch of fundamental types strung together to represent player state.
+// @note All members public, it's meant to be modified by everybody anyway.
 struct Player {  
     int piece_id; // Index into tetromino array.
     int rotation; // Current rotated value, to be modulo by 4.
-    bool hold_rotate; // Stagger rotation to slow it down.
+    bool hold_rotate; // Stagger rotation to avoid 15 rotations a second.
     int x; // `column#` index into game map/playing field
     int y; // `row#` index into game map/playing field
 
@@ -80,5 +81,18 @@ struct Player {
         , hold_rotate{false}
         , x{field_width / 2}
         , y{0} 
+    {}
+};
+
+struct TetrisGameState {
+    bool gameover; // Exit or continue playing condition.
+    bool forcedown; // Try to move player's piece downwards over time.
+    int speed;
+    int counter; // Determine when to forcedown.
+    TetrisGameState(int starting_speed)
+        : gameover{false}
+        , forcedown{false}
+        , speed{starting_speed}
+        , counter{0} 
     {}
 };

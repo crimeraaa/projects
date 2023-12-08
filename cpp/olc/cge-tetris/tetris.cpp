@@ -1,6 +1,7 @@
 #include "olcConsoleGameEngine.hpp"
 #include "tetris.hpp"
 #include <array>
+#include <functional>
 #include <string>
 #include <thread>
 
@@ -16,7 +17,7 @@ private:
 private: 
     GameMap m_gamemap;
     Player m_player;
-    bool m_gameover;
+    TetrisGameState m_state;
 
     // Assets representing tetris pieces. '.' = empty space, 'X' = part of piece
     const std::array<std::wstring, PIECE_COUNT> m_tetrominos = {
@@ -26,7 +27,7 @@ private:
         L"..X..XX..X......", // 2+2: Z block
         L".X...XX...X.....", // 2+2: S block
         L".X...X...XX.....", // 3+1: L block
-        L"..X...X..XX....."  // 3+1: J block
+        L"..X...X..XX.....", // 3+1: J block
     };
 // CONSTRUCTOR AND DESTRUCTION
 public:
@@ -40,9 +41,9 @@ public:
            int font_height) 
         : m_gamemap(gamemap_width, gamemap_height)
         , m_player(gamemap_width)
-        , m_gameover(false)
+        , m_state(20)
     {
-        m_sAppName = L"Console Tetris";
+        m_sAppName = L"Tetris";
         ConstructConsole(screen_width, screen_height, font_width, font_height);
     }
 
@@ -58,8 +59,13 @@ public:
         return true;
     }
 
-    // Use lambda function: function pointers cannot have captures!
-    template<typename Function> void loop_map(Function callback) 
+    // Game loop: the 4 stages of every computer game ever
+    // @note Don't include `override` keyword when defining outside!
+    bool OnUserUpdate(float dt) override;
+
+    // Loop through `m_gamemap.width`, then `m_gamemap.height`.
+    // @param callback Loop body, use coords to accesse game map cell.
+    void loop_map(std::function<void(int mx, int my)> callback) 
     {
         for (int x = 0; x < m_gamemap.width; x++) {
             for (int y = 0; y < m_gamemap.height; y++) {
@@ -68,15 +74,20 @@ public:
         }
     }
 
-    // Use lambda function: function pointers cannot have captures!
-    template<typename Function> void loop_piece(Function callback) 
+    // Loop through `PIECE_WIDTH`, then through `PIECE_HEIGHT`.
+    // @param callback Loop body, use coords to access reference piece cell.
+    void loop_piece(std::function<void(int px, int py)> callback) 
     {
-        for (int px = 0; px < PIECE_WIDTH; px++) {
-            for (int py = 0; py < PIECE_HEIGHT; py++) {
-                callback(px, py);
+        for (int x = 0; x < PIECE_WIDTH; x++) {
+            for (int y = 0; y < PIECE_HEIGHT; y++) {
+                callback(x, y);
             }
         }
     }
+
+    // Symbolic constants to be passed into `is_valid_move`.
+    enum class Offset {NONE, LEFT, RIGHT, DOWN, ROTATE};
+
     /**
      * @brief Get the correct index into a piece based on its rotation.
      *
@@ -86,24 +97,29 @@ public:
      */
     int rotate(int tx, int ty, int rotation);
 
+    // "Transforms" a tetromino array to be used in the field array.
+    // @note This is javidx9's original implementation.
     bool piece_fits(int id, int rotation, int fx, int fy);
 
-    // Game loop: the 4 stages of every computer game ever
-    // @note Don't include `override` keyword when defining outside!
-    bool OnUserUpdate(float dt) override;
-
-    // Pass this to `is_valid_move`.
-    enum class Offset {NONE, LEFT, RIGHT, DOWN, ROTATE};
+    // Overload to be called to just check current piece based on given offset.
+    // @note After offsets are determined, this calls the above `piece_fits`.
+    bool piece_fits(Offset code);
 
     // Check if the given key is held and piece fits with the given offset.
     // @note You can opt to use other virtual key codes, 
     // e.g. instead of `VK_LEFT` you use the char `'W'` for left movement.
     bool is_valid_move(unsigned char vkey, Offset offset);
+
+    // Tries to move player's current piece downards, may try to lock the piece.
+    // @return If locked the piece, does the player's new piece fit at the top?
+    bool can_forcedown(void);
 };
 
 bool Tetris::OnUserUpdate(float dt) 
 {
-    using std::chrono_literals::operator""ms; // I hate it here
+    using std::chrono_literals::operator""ms; // I hate it here (use C++14/17)
+    m_state.counter++;
+    m_state.forcedown = (m_state.counter == m_state.speed);
 
     /******************************* GAME TIMING ******************************/
     // 50ms results in roughly 14-20 FPS, since 1000ms/50ms = 20
@@ -113,7 +129,7 @@ bool Tetris::OnUserUpdate(float dt)
     // Actual input listening is done via `olcConsoleGameEngine::GameThread`
     // So really we're just updating player position!
 
-    // ? Booleans evaluate to true = 1 and false = 0, so can do arithmetic!
+    // ? Booleans evaluate to true = 1 and false = 0, so we can do arithmetic!
     m_player.x -= is_valid_move(VK_LEFT, Offset::LEFT);
     m_player.x += is_valid_move(VK_RIGHT, Offset::RIGHT);
     // {x=0, y=0} = topleft, so add to go downwards the y-axis
@@ -123,61 +139,128 @@ bool Tetris::OnUserUpdate(float dt)
     if (is_valid_move('Z', Offset::ROTATE)) {
         // Yes, the boolean NOT is intentional for this: think about it!
         m_player.rotation += !m_player.hold_rotate;
-        m_player.hold_rotate = true;
+        // On next call if this branch is reached, !true = 0 so we'll not rotate.
+        m_player.hold_rotate = true; 
     } else {
         // Stop holding the moment rotation key is let go!
         m_player.hold_rotate = false; 
     }
 
-    // Game Logic
+    if (m_state.forcedown) {
+        m_state.gameover = !can_forcedown();
+        m_state.counter = 0; // reset so we can do the == comparison again
+    }
+
+    /******************************** GAME LOGIC ******************************/
     // Shapes falling, collision detection, scoring
 
-    // Render Output
+    /****************************** RENDER OUTPUT *****************************/
 
-    // Draw Field: using '&' implicitly captures the this pointer!
-    loop_map([&](int x, int y)->void {
+    // Draw Field (a.k.a. update map data)
+    loop_map([this](int x, int y)
+    {
         int map_info = m_gamemap[(y * m_gamemap.width) + x];
-        wchar_t map_cell = L" ABCEDFG=#"[map_info];
+        wchar_t map_cell = L" ABCDEFG=#"[map_info];
         // Use `olcConsoleGameEngine::Draw` to draw to a single cell.
         Draw(x + 2, y + 2, map_cell);
     });
 
     // Draw Current Piece
-    const std::wstring &current_piece = m_tetrominos[m_player.piece_id];
-    loop_piece([&, current_piece](int px, int py)->void {
+    const std::wstring &piece = m_tetrominos[m_player.piece_id]; 
+    loop_piece([this, piece](int px, int py)
+    {
         // Reference piece grid
         int index = rotate(px, py, m_player.rotation);
         // Skip parts of the grid that aren't part of the piece itself
         // Else: is part of the piece so we wanna draw something to the screen
-        if (current_piece[index] == L'X') {
+        if (piece[index] == L'X') {
             // Add 'A' to piece ID to get actual char representation to draw.
             Draw(m_player.x + px + 2, 
                  m_player.y + py + 2, 
                  m_player.piece_id + 'A');
         }
     });
-
-    return true;
+    return !m_state.gameover; // This (should) trigger the exit if false!
 }
 
 bool Tetris::is_valid_move(unsigned char vkey, Offset offset)
 {
-    int offset_x = 0, offset_y = 0, offset_r = 0;
-    switch (offset)
-    {
-        case Offset::NONE: break;
-        case Offset::LEFT: offset_x = -1; break;
-        case Offset::RIGHT: offset_x = 1; break;
-        case Offset::DOWN: offset_y = 1; break;
-        // For now we only support clockwise rotation
-        case Offset::ROTATE: offset_r = 1; break;
+    // Call the overloaded piece_fits cause cause can be used w/o a vkey
+    return m_keys[vkey].bHeld && piece_fits(offset);
+}
+
+bool Tetris::can_forcedown(void) 
+{
+    // Can fit in row below us so we are good
+    if (piece_fits(Offset::DOWN)) {
+        m_player.y++; 
+        return true;
     }
-    bool held = m_keys[vkey].bHeld;
-    bool fits = piece_fits(m_player.piece_id, 
-                           m_player.rotation + offset_r,
-                           m_player.x + offset_x,
-                           m_player.y + offset_y);
-    return held && fits;
+    // Implied else: can't go further so lock piece at the current location!
+    // Assign a variable to avoid constantly indexing inside the loop.
+    const std::wstring &piece = m_tetrominos[m_player.piece_id]; 
+    loop_piece([this, piece](int px, int py)
+    {
+        int rotation = rotate(px, py, m_player.rotation);
+        if (piece[rotation] == L'X') {
+            int i = ((m_player.y + py) * m_gamemap.width) + (m_player.x + px);
+            // Add one so that we skip the first char, ' ' in literal.
+            m_gamemap[i] = m_player.piece_id + 1;
+        }
+    });
+
+    // Check for full completed horizontal line
+
+    // Choose next piece
+    m_player.x = m_gamemap.width / 2;
+    m_player.y = 0;
+    m_player.rotation = 0;
+    m_player.piece_id = std::rand() % 7; // TODO: Use different RNG
+
+    // Newly chosen piece doesn't fit at starting location = game over!
+    return piece_fits(Offset::NONE);
+}
+
+bool Tetris::piece_fits(Offset offset)
+{
+    int x = 0, y = 0, r = 0; // our values to offset by, default is 0 all.
+    switch (offset) {
+        case Offset::NONE: break;
+        case Offset::LEFT: x = -1; break;
+        case Offset::RIGHT: x = 1; break;
+        case Offset::DOWN: y = 1; break;
+        case Offset::ROTATE: r = 1; break; // Only have clockwise rotation :(
+    }
+    // Call original implementation to do the actual calculations.
+    return piece_fits(m_player.piece_id, 
+                      m_player.rotation + r,
+                      m_player.x + x,
+                      m_player.y + y);
+}
+
+bool Tetris::piece_fits(int id, int rotation, int fx, int fy) 
+{
+    // reference tetromino
+    const std::wstring &piece = m_tetrominos[id];
+    // TODO: Use lambda for this? But have early return, maybe not
+    for (int px = 0; px < PIECE_WIDTH; px++) {
+        for (int py = 0; py < PIECE_HEIGHT; py++) {
+            int piece_index = rotate(px, py, rotation);
+            int field_index = (fy + py) * m_gamemap.width + (fx + px);
+            if (!m_gamemap.is_in_bounds(fx + px, fy + py)) {
+                continue;
+            }
+            // Is cell part of tetris piece/block itself?
+            bool is_piece = (piece[piece_index] == L'X');
+
+            // Game Map cell w/ value 0 represents ' ' (space) character 
+            bool is_occupied = (m_gamemap[field_index] != 0);
+            if (is_piece && is_occupied) {
+                return false; // got collision
+            }
+        }
+    }
+    return true;
 }
 
 int Tetris::rotate(int tx, int ty, int rotation)
@@ -185,7 +268,7 @@ int Tetris::rotate(int tx, int ty, int rotation)
     switch (rotation % 4) {
         /** 0 DEGREES:       0  1  2  3
                              4  5  6  7
-                            8  9 10 11
+                             8  9 10 11
                             12 13 14 15 */
         case 0: return (ty * PIECE_WIDTH) + tx;
 
@@ -197,8 +280,8 @@ int Tetris::rotate(int tx, int ty, int rotation)
 
         /** 180 DEGREES:    15 14 13 12
                             11 10  9  8
-                            7  6  5  4
-                            3  2  1  0 */
+                             7  6  5  4
+                             3  2  1  0 */
         case 2: return (PIECE_AREA - 1) - (ty * PIECE_WIDTH) - tx;
 
         /** 270 DEGREES:    3  7 11 15
@@ -210,39 +293,8 @@ int Tetris::rotate(int tx, int ty, int rotation)
     return 0;
 }
 
-bool Tetris::piece_fits(int id, int rotation, int fx, int fy) 
-{
-    // reference tetromino
-    const auto &piece = m_tetrominos[id];
-    for (int px = 0; px < PIECE_WIDTH; px++) {
-        for (int py = 0; py < PIECE_HEIGHT; py++) {
-            // Correct index into the reference tetromino
-            int piece_index = rotate(px, py, rotation);
-
-            // Spot in playing field where we want to check for collisions.
-            int field_index = (fy + py) * m_gamemap.width + (fx + px);
-
-            // Remember screen buffer is much larger than the playing field!
-            if (!m_gamemap.is_in_bounds(fx + px, fy + py)) {
-                continue;
-            }
-
-            // Consider 'X' as part of the piece in the tetromino grid.
-            bool is_piece = (piece[piece_index] != L'.');
-
-            // Game Map: cell w/ value 0 represents ' ' (space) character 
-            bool is_occupied = (m_gamemap[field_index] != 0);
-
-            // We're on a part of the piece and it collided with something!
-            if (is_piece && is_occupied) {
-                return false;
-            }
-        }
-    }
-    return true;
-}
-
 int main() {
+    // system("pause");
     Tetris tetris;
     tetris.Start();
     return 0;

@@ -358,6 +358,8 @@ public:
 		m_bEnableSound = true;
 	}
 
+	// Sets up our Windows console screen, along with lots of error checking.
+	// @note If there is an existing window, that is used instead so be careful!
 	int ConstructConsole(int width, int height, int fontw, int fonth)
 	{
 		if (m_hConsole == INVALID_HANDLE_VALUE) {
@@ -469,9 +471,11 @@ public:
 	{
 		Clip(x1, y1);
 		Clip(x2, y2);
-		for (int x = x1; x < x2; x++)
-			for (int y = y1; y < y2; y++)
+		for (int x = x1; x < x2; x++) {
+			for (int y = y1; y < y2; y++) {
 				Draw(x, y, c, col);
+			}
+		}
 	}
 
 	void DrawString(int x, int y, std::wstring c, short col = 0x000F)
@@ -827,8 +831,9 @@ public:
 
 	~olcConsoleGameEngine()
 	{
-		SetConsoleActiveScreenBuffer(m_hOriginalConsole);
-		delete[] m_bufScreen;
+		// ? Clang ASan claims this is a double-free?
+		// SetConsoleActiveScreenBuffer(m_hOriginalConsole);
+		// delete[] m_bufScreen;
 	}
 
 public:
@@ -1000,8 +1005,17 @@ private:
 			// Allow the user to free resources if they have overrided the destroy function
 			if (OnUserDestroy())
 			{
+				// ! Probably not good, trying to clear the screen on exit...
+				// Fill(0, 0, m_nScreenWidth, m_nScreenHeight, L' ', 0);
+
+				// ? Clang ASan yells about a double free coming from here.
+				// The default destructor does do the same things though?
+
 				// User has permitted destroy, so exit and clean up
 				delete[] m_bufScreen;
+				// ! This might not be right.
+				// CloseHandle(m_hConsole);
+				// CloseHandle(m_hConsoleIn);
 				SetConsoleActiveScreenBuffer(m_hOriginalConsole);
 				m_cvGameFinished.notify_one();
 			}
