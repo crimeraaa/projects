@@ -15,6 +15,12 @@
 
 typedef BigInt_Digit  Digit;
 typedef BigInt_Result Result;
+typedef BigInt_Error  Error;
+
+typedef enum {
+    SIGN_POSITIVE = false,
+    SIGN_NEGATIVE = true,
+} Sign;
 
 typedef struct {
     const char *data;
@@ -33,7 +39,7 @@ bigint_init(BigInt *b)
     b->data = NULL;
     b->len  = 0;
     b->cap  = 0;
-    b->sign = false;
+    b->sign = SIGN_POSITIVE;
 }
 
 static int
@@ -66,28 +72,35 @@ count_digits_int(int *value, int base, bool *sign)
 }
 
 static void
-bigint_zero(BigInt *b, int start, int stop)
+bigint_fill_zero(BigInt *b, int start, int stop)
 {
     Digit *data = &b->data[start];
     size_t len  = cast(size_t)(stop - start);
     memset(data, 0, sizeof(data[0]) * len);
 }
 
-static void
+static Error
 bigint_init_len_cap(BigInt *b, int len, int cap)
 {
     b->data = make(Digit, cap);
+    if (b->data == NULL) {
+        return BIGINT_ERROR_MEMORY;
+    }
     b->len  = len;
     b->cap  = cap;
-    b->sign = false;
-    bigint_zero(b, 0, cap);
+    b->sign = SIGN_POSITIVE;
+    bigint_fill_zero(b, 0, cap);
+    return BIGINT_OK;
 }
 
-void
+BigInt_Error
 bigint_init_int(BigInt *b, int value)
 {
     int n_digits = count_digits_int(&value, BIGINT_DIGIT_BASE, &b->sign);
-    bigint_init_len_cap(b, n_digits, n_digits);
+    Error err = bigint_init_len_cap(b, n_digits, n_digits);
+    if (err != BIGINT_OK) {
+        return err;
+    }
 
     for (int i = 0; i < n_digits; i++) {
         // Get the (current) least significant digit.
@@ -98,6 +111,7 @@ bigint_init_int(BigInt *b, int value)
         // Concept check: 1234 // 10 == 123
         value /= BIGINT_DIGIT_BASE;
     }
+    return err;
 }
 
 static bool
@@ -132,19 +146,19 @@ is_space(char ch)
     return false;
 }
 
-static bool
+static Sign
 string_get_sign(String *s)
 {
-    bool sign = false;
+    Sign sign = SIGN_POSITIVE;
     if (s->len > 1) {
         char ch = s->data[0];
         if (ch == '+') {
             goto skip_sign;
         } else if (ch == '-') {
-            sign = true;
+            sign = SIGN_NEGATIVE;
 skip_sign:
-            s->data += 2;
-            s->len -= 2;
+            s->data += 1;
+            s->len -= 1;
         }
     }
     return sign;
@@ -217,7 +231,7 @@ char_to_int(char ch, int base)
     return -1;
 }
 
-void
+BigInt_Error
 bigint_init_string(BigInt *b, const char *s)
 {
     String m;
@@ -226,13 +240,22 @@ bigint_init_string(BigInt *b, const char *s)
     string_trim(&m);
 
     // Start with 0 so we can build on top of it.
-    bigint_init_int(b, 0);
+    Error err = bigint_init_int(b, 0);
+    if (err != BIGINT_OK) {
+        return err;
+    }
 
-    // Check for unary minus or unary plus
-    b->sign = string_get_sign(&m);
+    // Check for unary minus or unary plus. Don't set the sign yet;
+    // Introducing negatives at this point makes handling difficult.
+    Sign sign = string_get_sign(&m);
+    // b->sign = sign;
 
-    // Check for leading base prefix
+    // Check for leading base prefix.
     int base = string_get_base(&m);
+    if (base == -1) {
+        err = BIGINT_ERROR_BASE;
+        goto fail;
+    }
 
     const char *start = m.data;
     const char *end   = m.data + m.len;
@@ -245,8 +268,15 @@ bigint_init_string(BigInt *b, const char *s)
         if (digit != -1) {
             bigint_mul_digit(b, b, cast(Digit)base);
             bigint_add_digit(b, b, digit);
+        } else {
+            err = BIGINT_ERROR_DIGIT;
+fail:
+            bigint_destroy(b);
+            return err;
         }
     }
+    b->sign = sign;
+    return BIGINT_OK;
 }
 
 static void
@@ -311,7 +341,7 @@ bigint_to_lstring(const BigInt *b, char *buf, size_t cap, size_t *len)
 
         // For each digit, write its base-10 representation from most-to-least
         // significant using the current maximum place value (`10**n`).
-        Digit place = digit_place_value(digit, /*base=*/ 10);
+        Digit place = digit_place_value(digit, /*base=*/10);
 
         // Do we require leading zeroes for non-most-significant-digits?
         if (i < msd_index) {
@@ -370,179 +400,315 @@ bigint_safe_at(const BigInt *b, int i)
     return 0;
 }
 
-static void
+static bool
 bigint_resize(BigInt *b, int n)
 {
     if (n > b->cap) {
-        b->data = resize(Digit, b->data, b->cap, n);
-        bigint_zero(b, /*start=*/ b->cap, /*stop=*/ n);
+        Digit *ptr = resize(Digit, b->data, b->cap, n);
+        if (ptr == NULL) {
+            return false;            
+        }
+        b->data = ptr;
+        bigint_fill_zero(b, /*start=*/b->cap, /*stop=*/n);
         b->cap = n;
     }
     // Resizing always changes the user-facing length.
     b->len = n;
+    return true;
 }
 
-void
-bigint_add(BigInt *out, const BigInt *a, const BigInt *b)
+#define bigint_resize(b, n) if (!bigint_resize(b, n)) return BIGINT_ERROR_MEMORY
+
+
+/** @brief Split `r` into digit and carry. Works even if well below `base`. */
+static Digit
+result_split(Result r, Digit *carry)
 {
-    // One of the operands is negative and the other is positive?
-    if (a->sign != b->sign) {
-        // -a + b == b - a
-        if (a->sign) {
-            bigint_sub(out, b, a);
-            return;
-        }
-        //  a + -b == a - b
-        if (b->sign) {
-            bigint_sub(out, a, b);
-            return;
-        }
+    // E.g. 9 + 3 = 12
+    *carry = r / BIGINT_DIGIT_BASE; // 12 // 10 == 1
+    return cast(Digit)(r % BIGINT_DIGIT_BASE); // 12 %  10 == 2
+}
+
+static Digit
+digit_add_carry(Digit a, Digit b, Digit *carry)
+{
+    Result sum = cast(Result)a + cast(Result)b + cast(Result)*carry;
+    return result_split(sum, carry);
+}
+
+static Error
+bigint_add_carry(BigInt *b, BigInt_Digit carry)
+{
+    if (carry > 0) {
+        bigint_resize(b, b->len + 1);
+        b->data[b->len - 1] = carry;
     }
+    return BIGINT_OK;
+}
+
+
+/** @brief `out = a + b` without considering their signedness. */
+static Error
+bigint_add_unsigned(BigInt *out, const BigInt *a, const BigInt *b)
+{
     // Save in case `out` aliases either `a` or `b`
     int max_n = max_int(a->len, b->len);
-
-    // +1 to cap for pessimistic assumption.
-    // Concept check:  1 (len=1) +  2 (len=1) =   3 (len=1)
-    //                 9 (len=1) +  1 (len=1) =  10 (len=2)
-    //                99 (len=2) + 99 (len=2) = 198 (len=3)
-    bigint_resize(out, max_n + 1);
+    bigint_resize(out, max_n);
 
     Digit carry = 0;
     for (int i = 0; i < max_n; i++) {
         // Get the current least-significant-digits of each operand.
-        Digit  da  = bigint_safe_at(a, i);
-        Digit  db  = bigint_safe_at(b, i);
-        Result sum = da + db + carry;
-        // E.g. 9 + 3 = 12
-        if (sum >= BIGINT_DIGIT_BASE) {
-            carry = sum / BIGINT_DIGIT_BASE; // 12 // 10 == 1
-            sum %= BIGINT_DIGIT_BASE;        // 12 %  10 == 2
-        } else {
-            carry = 0;
-        }
-        out->data[i] = sum;
+        Digit arg_a  = bigint_safe_at(a, i);
+        Digit arg_b  = bigint_safe_at(b, i);
+        out->data[i] = digit_add_carry(arg_a, arg_b, &carry);
     }
-
-    // Pessimistic assumption was satisfied?
-    if (carry > 0) {
-        out->data[out->len - 1] = carry;
-    } else {
-        out->len -= 1;
-    }
-
-    // Assumes a->sign == b->sign and both are negative
-    // -a + -b == -a - b == -(a + b)
-    if (a->sign) {
-        // Only negate non-zero results
-        if (out->len == 1 && out->data[0] == 0) {
-            out->sign = false;
-        } else {
-            out->sign = true;
-        }
-    } else {
-        out->sign = false;
-    }
-
+    return bigint_add_carry(out, carry);
 }
 
-void
-bigint_add_digit(BigInt *out, const BigInt *a, BigInt_Digit digit)
+static Error
+bigint_sub_unsigned(BigInt *out, const BigInt *a, const BigInt *b)
 {
-    // -a + b == b - a
-    if (a->sign) {
-        stub();
-    }
-    // +1 to cap for pessimistic assumption.
-    bigint_resize(out, a->len + 1);
+    unused(out);
+    unused(a);
+    unused(b);
+    stub();
+    return BIGINT_OK;
+}
 
-    Digit carry = digit;
-    for (int i = 0; i < a->len; i++) {
-        Digit  tmp = a->data[i];
-        Result sum = tmp + carry;
-        if (sum >= BIGINT_DIGIT_BASE) {
-            carry = sum / BIGINT_DIGIT_BASE;
-            sum  %= BIGINT_DIGIT_BASE;
-        } else {
-            carry = 0;
+BigInt_Error
+bigint_add(BigInt *out, const BigInt *a, const BigInt *b)
+{
+    // 1.) One of the operands is negative and the other is positive?
+    if (a->sign != b->sign) {
+        // 1.1.) -a + b == b - a
+        if (a->sign) {
+            return bigint_sub_unsigned(out, b, a);
         }
-        out->data[i] = sum;
-        if (carry == 0) {
+
+        // 1.2.) a + -b == a - b
+        return bigint_sub_unsigned(out, a, b);
+    }
+
+    // 2.) Both operands are both negative or both positive?
+    // 2.1.) -a + -b == -a - b == -(a + b)
+    // 2.2.) +a + +b == +(a + b)
+    out->sign = a->sign;
+    return bigint_add_unsigned(out, a, b);
+}
+
+BigInt_Error
+bigint_add_digit(BigInt *out, const BigInt *a, BigInt_Digit b)
+{
+    // -a + b == b - a == -(a - b)
+    if (a->sign) {
+        Error err = bigint_sub_digit(out, a, b);
+        out->sign = !out->sign;
+        return err;
+    }
+    bigint_resize(out, a->len);
+
+    // For our purposes `b` will also hold the carry.
+    for (int i = 0; i < a->len; i++) {
+        out->data[i] = digit_add_carry(a->data[i], 0, &b);
+        if (b == 0) {
             break;
         }
     }
-
-    // Pessimistic assumption was satisfied?
-    if (carry > 0) {
-        out->data[out->len - 1] = carry;
-    } else {
-        out->len -= 1;
-    }
+    return bigint_add_carry(out, b);
 }
 
-void
+BigInt_Error
 bigint_sub(BigInt *out, const BigInt *a, const BigInt *b)
 {
-    unused(out);
-    unused(a);
-    unused(b);
+    // 1.) One of the operands is negative and the other is positive?
+    if (a->sign != b->sign) {
+        // 1.1.) -a - b == -(a + b)
+        if (a->sign) {
+            Error e = bigint_add_unsigned(out, a, b);
+            out->sign = !bigint_is_zero(out);
+            return e;
+        }
+        // 1.2.) a - -b == a + b
+        return bigint_add_unsigned(out, a, b);
+    }
+
+    // 2.) Both of the operands are negative or positive?
+    // 2.1.) a - b
+    // 2.2.) -a - -b == -a + b == -(a - b)
     stub();
+    return BIGINT_OK;
 }
 
-void
+BigInt_Error
+bigint_sub_digit(BigInt *out, const BigInt *a, BigInt_Digit b)
+{
+    // Save in case of aliasing.
+    int n = a->len;
+    unused(b);
+    bigint_resize(out, n);
+    // -a - b <= 0
+    //  a - b >= 0
+    out->sign = a->sign;
+    stub();
+    return BIGINT_OK;
+}
+
+BigInt_Error
 bigint_mul(BigInt *restrict out, const BigInt *a, const BigInt *b)
 {
-    unused(out);
-    unused(a);
-    unused(b);
+    // 1.1.) +a * +b >= 0
+    // 1.2.) +a * -b <= 0
+    // 1.3.) -a * -b <= 0
+    // 1.4.) -a * -b >= 0
+    out->sign = (a->sign == b->sign);
     stub();
+    return BIGINT_OK;
 }
 
-void
-bigint_mul_digit(BigInt *out, const BigInt *a, BigInt_Digit digit)
+static Digit
+digit_mul_carry(Digit a, Digit b, Digit *carry)
+{
+    Result product = (cast(Result)a * cast(Result)b) + cast(Result)*carry;
+    return result_split(product, carry);
+}
+
+static Error
+bigint_mul_carry(BigInt *out, Digit carry)
+{
+    if (carry > 0) {
+        bigint_resize(out, out->len + 1);
+        out->data[out->len - 1] = carry;
+    }
+    return BIGINT_OK;
+}
+
+BigInt_Error
+bigint_mul_digit(BigInt *out, const BigInt *a, BigInt_Digit b)
 {
     // Save in case `out` aliases `a`
     int n = a->len;
-    bigint_resize(out, n + 1);
+    bigint_resize(out, n);
 
     // if a >= 0 then a * digit >= 0
     // if a  < 0 then a * digit < 0
     out->sign = a->sign;
 
-    Result carry = 0;
+    Digit carry = 0;
     for (int i = 0; i < n; i++) {
-        Result product = (cast(Result)a->data[i] * cast(Result)digit) + carry;
-        if (product >= BIGINT_DIGIT_BASE) {
-            carry = product / BIGINT_DIGIT_BASE;
-            product %= BIGINT_DIGIT_BASE;
-        } else {
-            carry = 0;
-        }
-
-        out->data[i] = product;
+        out->data[i] = digit_mul_carry(a->data[i], b, &carry);
     }
-
-    // Pessimistic assumption was satisfied?
-    if (carry > 0) {
-        out->data[out->len - 1] += carry;
-    } else {
-        out->len -= 1;
-    }
+    return bigint_mul_carry(out, carry);
 }
 
-void
+BigInt_Error
 bigint_div(BigInt *restrict out, const BigInt *a, const BigInt *b)
 {
-    unused(out);
-    unused(a);
-    unused(b);
+    // 1.1.) +a // +b >= 0
+    // 1.2.) +a // -b <= 0
+    // 1.3.) -a // -b <= 0
+    // 1.4.) -a // -b >= 0
+    out->sign = (a->sign == b->sign);
     stub();
+    return BIGINT_OK;
 }
 
-void
+BigInt_Error
 bigint_mod(BigInt *restrict out, const BigInt *a, const BigInt *b)
 {
     unused(out);
     unused(a);
     unused(b);
     stub();
+    return BIGINT_OK;
+}
+
+bool
+bigint_is_zero(const BigInt *b)
+{
+    // We are only storing the zero digit?
+    return (b->len == 1) && (b->data[0] == 0);
+}
+
+bool
+bigint_eq(const BigInt *a, const BigInt *b)
+{
+    // Fast paths
+    if (a->sign != b->sign || a->len != b->len) {
+        return false;
+    }
+    
+    // Assumes a->len == b->len
+    for (int i = 0; i < a->len; i++) {
+        // Found some digit that differs?
+        if (a->data[i] != b->data[i]) {
+            return false;
+        }
+    }
+    return true;
+}
+
+typedef enum {
+    FAST_EQUAL,
+    FAST_LESS,
+    FAST_GREATER,
+} Fast_Comparison;
+
+static Fast_Comparison
+bigint_fast_compare(const BigInt *a, const BigInt *b)
+{
+    // 1.) One is positive while the other is negative?
+    if (a->sign != b->sign) {
+        // 1.1.) -a < +b
+        // 1.2.) +a < -b
+        return a->sign ? FAST_LESS : FAST_GREATER;
+    }
+
+    // 2.) Same signs but differing lengths.
+    if (a->len != b->len) {
+        // When `a` is negative, it is only lesser if it has more digits.
+        if (a->sign) {
+            return a->len > b->len ? FAST_LESS : FAST_GREATER;
+        }
+        // Otherwise `a` is positive; it is only lesser if it has less digits.
+        else {
+            return a->len < b->len ? FAST_LESS : FAST_GREATER;
+        }
+    }
+    return FAST_EQUAL;
+}
+
+bool
+bigint_lt(const BigInt *a, const BigInt *b)
+{
+    Fast_Comparison fast = bigint_fast_compare(a, b);
+    if (fast != FAST_EQUAL) {
+        return fast == FAST_LESS;
+    }
+
+    // Same signs and same lengths; Need to do a digit-by-digit comparison.
+    for (int i = 0; i < a->len; i++) {
+        // Found some digit that is the opposite of less-than?
+        if (a->data[i] >= b->data[i]) {
+            return false;
+        }
+    }
+    return true;
+}
+
+bool
+bigint_leq(const BigInt *a, const BigInt *b)
+{
+    Fast_Comparison fast = bigint_fast_compare(a, b);
+    if (fast != FAST_EQUAL) {
+        return fast == FAST_LESS;
+    }
+
+    // Same signs and same lengths; Need to do a digit-by-digit comparison.
+    for (int i = 0; i < a->len; i++) {
+        // Found some digit that is the opposite of less-equal?
+        if (a->data[i] > b->data[i]) {
+            return false;
+        }
+    }
+    return true;
 }
