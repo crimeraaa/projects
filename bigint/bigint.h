@@ -1,11 +1,11 @@
 #ifndef BIGINT_H
 #define BIGINT_H
 
-#include <stdbool.h>
-#include <stddef.h>
-#include <stdint.h>
+#include <stdbool.h>    // bool
+#include <stddef.h>     // size_t
+#include <stdint.h>     // u?int[\d]+_t, intmax_t
 
-// [BIGINT] CONFIGURATION
+// === CONFIGUATION ======================================================== {{{
 
 // The desired integer base. For simplicity, we use some multiple of 10.
 #define BIGINT_DIGIT_BASE           1000000000
@@ -22,15 +22,21 @@
 // The number of base-16 digits in `base - 1`.
 #define BIGINT_DIGIT_BASE16_LENGTH  8
 
-// The primary digit type. Must be able to hold the range `[0, base)`.
+// The primary digit type used for addition and some multiplication.
+// Must be able to hold the range `[0, base)`.
 #define BIGINT_DIGIT_TYPE           uint32_t
 
-// The secondary digit type. Must be able to hold the range `[0, base*base)`.
-#define BIGINT_DIGIT_RESULT         uint64_t
+// The secondary digit type used for subtraction and multiplication.
+// Must be able to hold the range `[-(base*2), base*base)`.
+#define BIGINT_WORD_TYPE            int64_t
+
+// === }}} =====================================================================
+
+#define BIGINT_DIGIT_MAX            (BIGINT_DIGIT_BASE - 1)
 
 // Convenience typedefs.
 typedef BIGINT_DIGIT_TYPE           BigInt_Digit;
-typedef BIGINT_DIGIT_RESULT         BigInt_Result;
+typedef BIGINT_WORD_TYPE            BigInt_Word;
 
 typedef struct {
     // Digits are stored in a little-endian fashion; the least significant
@@ -97,9 +103,6 @@ bigint_destroy(BigInt *b);
 BigInt_Error
 bigint_add(BigInt *out, const BigInt *a, const BigInt *b);
 
-BigInt_Error
-bigint_add_digit(BigInt *out, const BigInt *a, BigInt_Digit b);
-
 
 /** @brief `out = a - b`
  *
@@ -110,10 +113,6 @@ bigint_add_digit(BigInt *out, const BigInt *a, BigInt_Digit b);
 BigInt_Error
 bigint_sub(BigInt *out, const BigInt *a, const BigInt *b);
 
-BigInt_Error
-bigint_sub_digit(BigInt *out, const BigInt *a, BigInt_Digit b);
-
-
 /** @brief `out = a * b`
  *
  * @note(2025-11-01)
@@ -121,16 +120,6 @@ bigint_sub_digit(BigInt *out, const BigInt *a, BigInt_Digit b);
  */
 BigInt_Error
 bigint_mul(BigInt *restrict out, const BigInt *a, const BigInt *b);
-
-
-/** @brief `out = a * b`
- *
- * @note(2025-11-01) Assumptions
- *  1.) `out` may alias `a` because we only iterate over the digit sequence
- *      once in this case.
- */
-BigInt_Error
-bigint_mul_digit(BigInt *out, const BigInt *a, BigInt_Digit b);
 
 
 /** @brief = `out = a / b`
@@ -146,6 +135,27 @@ bigint_div(BigInt *restrict out, const BigInt *a, const BigInt *b);
 BigInt_Error
 bigint_mod(BigInt *restrict out, const BigInt *a, const BigInt *b);
 
+BigInt_Error
+bigint_add_digit(BigInt *out, const BigInt *a, BigInt_Digit b);
+
+BigInt_Error
+bigint_sub_digit(BigInt *out, const BigInt *a, BigInt_Digit b);
+
+
+/** @brief `out = a * b`
+ *
+ * @note(2025-11-01) Assumptions
+ *  1.) `out` may alias `a` because we only iterate over the digit sequence
+ *      once in this case.
+ */
+BigInt_Error
+bigint_mul_digit(BigInt *out, const BigInt *a, BigInt_Digit b);
+
+
+/** @brief `out = -a` */
+BigInt_Error
+bigint_neg(BigInt *out, const BigInt *a);
+
 
 // === }}} =====================================================================
 
@@ -153,21 +163,60 @@ bigint_mod(BigInt *restrict out, const BigInt *a, const BigInt *b);
 // === COMPARISON ========================================================== {{{
 
 
+/** @brief Queries `b == 0`. Assumes that `-0` is impossible. */
 bool
 bigint_is_zero(const BigInt *b);
 
+
+/** @brief Queries `b < 0`. Assumes that `-0` is impossible. */
+bool
+bigint_is_neg(const BigInt *b);
+
+
+/** @brief Queries `b >= 0`. */
+#define bigint_is_pos(b)    (!bigint_is_neg(b))
+
+
+/** @brief Queries `a == b`, considering signedness. */
 bool
 bigint_eq(const BigInt *a, const BigInt *b);
 
+
+/** @brief Queries `a < b`, considering signedness. */
 bool
 bigint_lt(const BigInt *a, const BigInt *b);
 
+
+/** @brief Queries `a <= b`, considering signedness. */
 bool
 bigint_leq(const BigInt *a, const BigInt *b);
 
+// (x != y) == !(x == y)
 #define bigint_neq(a, b)    (!bigint_eq(a, b))
+
+// (x > y) == (y < x)
 #define bigint_gt(a, b)     bigint_lt(b, a)
+
+// (x >= y) == (y <= x)
 #define bigint_geq(a, b)    bigint_leq(b, a)
+
+bool
+bigint_eq_digit(const BigInt *a, BigInt_Digit b);
+
+bool
+bigint_lt_digit(const BigInt *a, BigInt_Digit b);
+
+bool
+bigint_leq_digit(const BigInt *a, BigInt_Digit b);
+
+// (x != y) == !(x == y)
+#define bigint_neq_digit(a, b)  (!bigint_eq_digit(a, b))
+
+// (x > y) == !(x <= y)
+#define bigint_gt_digit(a, b)   (!bigint_leq_digit(a, b))
+
+// (x >= y) == !(x < y)
+#define bigint_geq_digit(a, b)  (!bigint_lt_digit(a, b))
 
 
 // === }}} =====================================================================

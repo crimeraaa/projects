@@ -3,19 +3,29 @@
 
 #include "bigint.h"
 
+static void
+bigint_print(const BigInt *b, char c)
+{
+    char buf[256];
+    size_t n = 0;
+    const char *s = bigint_to_lstring(b, buf, sizeof(buf), &n);
+    printf("%c: '%s' (%zu / %zu chars written)\n",
+        c, s, n, bigint_string_length(b, /*base=*/10));
+}
+
 static int
 unary(const char *op, const char *arg)
 {
     BigInt b;
     int err = 0;
-    char buf[256];
     bigint_init_string(&b, arg);
     if (op != NULL) {
         fprintf(stderr, "Invalid unary operation'%s'\n", op);
         err = 1;
         goto cleanup;
     }
-    printf("b: '%s'\n", bigint_to_string(&b, buf, sizeof(buf)));
+    bigint_print(&b, 'b');
+
 cleanup:
     bigint_destroy(&b);
     return err;
@@ -26,7 +36,6 @@ binary(const char *arg_a, const char *op, const char *arg_b)
 {
     BigInt a, b, c;
     int err = 0;
-    char buf[256];
     bigint_init_string(&a, arg_a);
     bigint_init_string(&b, arg_b);
     bigint_init(&c);
@@ -35,15 +44,18 @@ binary(const char *arg_a, const char *op, const char *arg_b)
     case '+':
         bigint_add(&c, &a, &b);
         break;
+    case '-':
+        bigint_sub_digit(&c, &a, b.data[0]);
+        break;
     default:
         err = 1;
         fprintf(stderr, "Invalid binary operation '%s'.\n", op);
         goto cleanup;
     }
 
-    printf("a: '%s'\n", bigint_to_string(&a, buf, sizeof(buf)));
-    printf("b: '%s'\n", bigint_to_string(&b, buf, sizeof(buf)));
-    printf("c: '%s'\n", bigint_to_string(&c, buf, sizeof(buf)));
+    bigint_print(&a, 'a');
+    bigint_print(&b, 'b');
+    bigint_print(&c, 'c');
 
 cleanup:
     bigint_destroy(&c);
