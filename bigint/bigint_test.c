@@ -57,11 +57,11 @@ main(int argc, char *argv[])
 {
     switch (argc) {
     case 2:
-        return unary(/*op=*/ NULL, /*arg=*/ argv[1]);
+        return unary(/*op=*/NULL, /*arg=*/argv[1]);
     case 3:
-        return unary(/*op=*/ argv[1], /*arg_a=*/ argv[2]);
+        return unary(/*op=*/argv[1], /*arg_a=*/argv[2]);
     case 4:
-        return binary(/*arg_a=*/ argv[1], /*op=*/ argv[2], /*arg_b=*/ argv[3]);
+        return binary(/*arg_a=*/argv[1], /*op=*/argv[2], /*arg_b=*/argv[3]);
     default:
         fprintf(stderr, "Usage: %s [<integer> [<operation> <integer>]]\n",
             argv[0]);

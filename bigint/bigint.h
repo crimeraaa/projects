@@ -10,8 +10,17 @@
 // The desired integer base. For simplicity, we use some multiple of 10.
 #define BIGINT_DIGIT_BASE           1000000000
 
+// The number of base-2 digits in `base - 1`.
+#define BIGINT_DIGIT_BASE2_LENGTH   30
+
+// The number of base-8 digits in `base - 1`.
+#define BIGINT_DIGIT_BASE8_LENGTH   10
+
 // The number of base-10 digits in `base - 1`.
 #define BIGINT_DIGIT_BASE10_LENGTH  9
+
+// The number of base-16 digits in `base - 1`.
+#define BIGINT_DIGIT_BASE16_LENGTH  8
 
 // The primary digit type. Must be able to hold the range `[0, base)`.
 #define BIGINT_DIGIT_TYPE           uint32_t
@@ -41,13 +50,13 @@ typedef struct {
 
 typedef enum {
     BIGINT_OK,
-    
+
     // When parsing a string, we received an invalid integer base prefix.
     BIGINT_ERROR_BASE,
-    
+
     // When parsing a string, we found an invalid character of a certain base.
     BIGINT_ERROR_DIGIT,
-    
+
     // We failed to (re)allocate something.
     BIGINT_ERROR_MEMORY,
 } BigInt_Error;
@@ -61,6 +70,10 @@ bigint_init_int(BigInt *b, int i);
 BigInt_Error
 bigint_init_string(BigInt *b, const char *s);
 
+size_t
+bigint_string_length(const BigInt *b, int base);
+
+/** @brief Write the base-10 representation of `b` into `buf[:cap]`. */
 const char *
 bigint_to_lstring(const BigInt *b, char *buf, size_t cap, size_t *len);
 
@@ -68,6 +81,9 @@ bigint_to_lstring(const BigInt *b, char *buf, size_t cap, size_t *len);
 
 void
 bigint_destroy(BigInt *b);
+
+
+// === ARITHMETIC ========================================================== {{{
 
 
 /**
@@ -130,6 +146,13 @@ bigint_div(BigInt *restrict out, const BigInt *a, const BigInt *b);
 BigInt_Error
 bigint_mod(BigInt *restrict out, const BigInt *a, const BigInt *b);
 
+
+// === }}} =====================================================================
+
+
+// === COMPARISON ========================================================== {{{
+
+
 bool
 bigint_is_zero(const BigInt *b);
 
@@ -145,5 +168,9 @@ bigint_leq(const BigInt *a, const BigInt *b);
 #define bigint_neq(a, b)    (!bigint_eq(a, b))
 #define bigint_gt(a, b)     bigint_lt(b, a)
 #define bigint_geq(a, b)    bigint_leq(b, a)
+
+
+// === }}} =====================================================================
+
 
 #endif // BIGINT_H

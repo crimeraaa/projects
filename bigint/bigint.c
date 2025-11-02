@@ -42,10 +42,32 @@ bigint_init(BigInt *b)
     b->sign = SIGN_POSITIVE;
 }
 
-static int
-count_digits_int(int *value, int base, bool *sign)
+static void
+bigint_fill_zero(BigInt *b, int start, int stop)
 {
-    int tmp = *value;
+    Digit *data = &b->data[start];
+    size_t len  = cast(size_t)(stop - start);
+    memset(data, 0, sizeof(data[0]) * len);
+}
+
+static Error
+bigint_init_len_cap(BigInt *b, int len, int cap)
+{
+    b->data = make(Digit, cap);
+    if (b->data == NULL) {
+        return BIGINT_ERROR_MEMORY;
+    }
+    b->len  = len;
+    b->cap  = cap;
+    b->sign = SIGN_POSITIVE;
+    bigint_fill_zero(b, 0, cap);
+    return BIGINT_OK;
+}
+
+static int
+count_digits_intmax_t(intmax_t *value, int base, bool *sign)
+{
+    intmax_t tmp = *value;
     *sign = (tmp < 0);
 
     // The below loop will never start.
@@ -71,32 +93,12 @@ count_digits_int(int *value, int base, bool *sign)
     return n;
 }
 
-static void
-bigint_fill_zero(BigInt *b, int start, int stop)
+/** @brief Workhorse function. Do not expose as `intmax_t` is a nightmare for APIs.
+ * See: https://thephd.dev/intmax_t-hell-c++-c */
+static BigInt_Error
+bigint_init_intmax_t(BigInt *b, intmax_t value)
 {
-    Digit *data = &b->data[start];
-    size_t len  = cast(size_t)(stop - start);
-    memset(data, 0, sizeof(data[0]) * len);
-}
-
-static Error
-bigint_init_len_cap(BigInt *b, int len, int cap)
-{
-    b->data = make(Digit, cap);
-    if (b->data == NULL) {
-        return BIGINT_ERROR_MEMORY;
-    }
-    b->len  = len;
-    b->cap  = cap;
-    b->sign = SIGN_POSITIVE;
-    bigint_fill_zero(b, 0, cap);
-    return BIGINT_OK;
-}
-
-BigInt_Error
-bigint_init_int(BigInt *b, int value)
-{
-    int n_digits = count_digits_int(&value, BIGINT_DIGIT_BASE, &b->sign);
+    int n_digits = count_digits_intmax_t(&value, BIGINT_DIGIT_BASE, &b->sign);
     Error err = bigint_init_len_cap(b, n_digits, n_digits);
     if (err != BIGINT_OK) {
         return err;
@@ -105,13 +107,19 @@ bigint_init_int(BigInt *b, int value)
     for (int i = 0; i < n_digits; i++) {
         // Get the (current) least significant digit.
         // Concept check: 1234 % 10 == 4
-        b->data[i] = value % BIGINT_DIGIT_BASE;
+        b->data[i] = cast(Digit)(value % BIGINT_DIGIT_BASE);
 
         // Pop the (current) least significant digit.
         // Concept check: 1234 // 10 == 123
         value /= BIGINT_DIGIT_BASE;
     }
     return err;
+}
+
+BigInt_Error
+bigint_init_int(BigInt *b, int value)
+{
+    return bigint_init_intmax_t(b, cast(intmax_t)value);
 }
 
 static bool
@@ -314,6 +322,66 @@ digit_place_value(Digit d, Result base)
     return cast(Digit)place;
 }
 
+static int
+digit_count_digits(Digit d, Digit base)
+{
+    int n = 0;
+    if (d == 0) {
+        return 1;
+    }
+
+    while (d > 0) {
+        n += 1;
+        d /= base;
+    }
+    return n;
+}
+
+size_t
+bigint_string_length(const BigInt *b, int base)
+{
+    if (b->len == 0) {
+        return 1;
+    }
+    
+    size_t n_chars = 0;
+    if (b->sign) {
+        n_chars += 1;
+    }
+    
+    int msd_index = b->len - 1;
+
+    // MSD has variable width with no leading zeroes.
+    n_chars += digit_count_digits(b->data[msd_index], cast(Digit)base);
+
+    // Beyond MSD, all remaining digits have fixed width.
+    // They may have leading zeroes.
+    // for (int i = msd_index - 1; i >= 0; i -= 1) {
+    //     Digit d = b->data[i];
+    // }
+    return n_chars;
+}
+
+
+/** @brief Writes all significant digits from MSD to LSD. */
+static void
+string_append_digit(String_Builder *sb, Digit digit, Digit base)
+{
+    Digit pv = digit_place_value(digit, base);
+    for (;;) {
+        // Get the leftmost digit (MSD), e.g. 1 in 1234.
+        Digit msd = digit / pv;
+        string_append(sb, cast(char)msd + '0');
+        // "Trim" the MSD's magnitude, e.g. remove 1000 from 1234.
+        digit -= msd * pv;
+        pv /= base;
+        // No more digits to process? (Would also cause division by zero!)
+        if (pv == 0) {
+            break;
+        }
+    }
+}
+
 const char *
 bigint_to_lstring(const BigInt *b, char *buf, size_t cap, size_t *len)
 {
@@ -325,6 +393,7 @@ bigint_to_lstring(const BigInt *b, char *buf, size_t cap, size_t *len)
         return NULL;
     }
 
+    // No digits to work with?
     if (b->len == 0) {
         string_append(&sb, '0');
         goto nul_terminate;
@@ -333,36 +402,24 @@ bigint_to_lstring(const BigInt *b, char *buf, size_t cap, size_t *len)
     if (b->sign) {
         string_append(&sb, '-');
     }
-
-    // Write the most significant digits first.
+    
+    // Write the MSD. It will never have leading zeroes.
     int msd_index = b->len - 1;
-    for (int i = msd_index; i >= 0; --i) {
+    string_append_digit(&sb, b->data[msd_index], /*base=*/10);
+    
+    // Write everything past the MSD. They may have leading zeroes.
+    for (int i = msd_index - 1; i >= 0; i -= 1) {
         Digit digit = b->data[i];
 
         // For each digit, write its base-10 representation from most-to-least
         // significant using the current maximum place value (`10**n`).
-        Digit place = digit_place_value(digit, /*base=*/10);
-
-        // Do we require leading zeroes for non-most-significant-digits?
-        if (i < msd_index) {
-            Result tmp = cast(Result)digit;
-            // E.g. in base-100, we want to pad '1' with 1 zero to get 01 in 1801.
-            while (tmp * 10 < BIGINT_DIGIT_BASE) {
-                string_append(&sb, '0');
-                tmp *= 10;
-            }
+        Result tmp = cast(Result)digit;
+        // E.g. in base-100, we want to pad '1' with 1 zero to get 01 in 1801.
+        while (tmp * 10 < BIGINT_DIGIT_BASE) {
+            string_append(&sb, '0');
+            tmp *= 10;
         }
-
-        // Write all the non-zero (significant) digits.
-        for (;;) {
-            Digit first = digit / place;
-            string_append(&sb, cast(char)first + '0');
-            digit -= first * place;
-            place /= 10;
-            if (place == 0) {
-                break;
-            }
-        }
+        string_append_digit(&sb, digit, /*base=*/10);
     }
 
 nul_terminate:
@@ -437,7 +494,7 @@ digit_add_carry(Digit a, Digit b, Digit *carry)
 }
 
 static Error
-bigint_add_carry(BigInt *b, BigInt_Digit carry)
+bigint_add_carry(BigInt *b, Digit carry)
 {
     if (carry > 0) {
         bigint_resize(b, b->len + 1);
@@ -549,7 +606,11 @@ bigint_sub_digit(BigInt *out, const BigInt *a, BigInt_Digit b)
     // -a - b <= 0
     //  a - b >= 0
     out->sign = a->sign;
-    stub();
+    
+    // Digit crossed = 0;
+    // for (int i = 0; i < n; i++) {
+
+    // }
     return BIGINT_OK;
 }
 
@@ -573,11 +634,12 @@ digit_mul_carry(Digit a, Digit b, Digit *carry)
 }
 
 static Error
-bigint_mul_carry(BigInt *out, Digit carry)
+bigint_mul_carry(BigInt *b, Digit carry)
 {
     if (carry > 0) {
-        bigint_resize(out, out->len + 1);
-        out->data[out->len - 1] = carry;
+        bigint_resize(b, b->len + 1);
+        /** @todo(2025-11-02): Should be += or just = ? */
+        b->data[b->len - 1] = carry;
     }
     return BIGINT_OK;
 }
