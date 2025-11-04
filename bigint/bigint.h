@@ -39,9 +39,17 @@ typedef BIGINT_DIGIT_TYPE           BigInt_Digit;
 typedef BIGINT_WORD_TYPE            BigInt_Word;
 
 typedef struct {
+    void *(*fn)(void *ptr, size_t old_size, size_t new_size, void *context);
+    void *context;
+} BigInt_Allocator;
+
+typedef struct {
     // Digits are stored in a little-endian fashion; the least significant
     // digit is stored at the 0th index. E.g. 1234 is stored as {4,3,2,1}.
     BigInt_Digit *data;
+
+    // Each BigInt remembers its allocator.
+    const BigInt_Allocator *allocator;
 
     // How many digits are validly indexable in `data`.
     int len;
@@ -68,22 +76,63 @@ typedef enum {
 } BigInt_Error;
 
 void
-bigint_init(BigInt *b);
+bigint_init(BigInt *b, const BigInt_Allocator *a);
 
 BigInt_Error
-bigint_init_int(BigInt *b, int i);
+bigint_init_int(BigInt *b, int i, const BigInt_Allocator *a);
 
+
+/** @brief Write the integer string `s` of given `base` into `b`.
+ *
+ * If the base cannot be determined it will be assumed to be base-10.
+ */
 BigInt_Error
-bigint_init_string(BigInt *b, const char *s);
+bigint_init_base_string(BigInt *b, const char *s, int base,
+    const BigInt_Allocator *a);
 
+
+/** @brief Get the string length of the would be base-`base` representation. */
 size_t
-bigint_string_length(const BigInt *b, int base);
+bigint_base_string_length(const BigInt *b, int base);
 
-/** @brief Write the base-10 representation of `b` into `buf[:cap]`. */
+
+/** @brief Write the base-N representation of `b` into a buffer from `a`.
+ *  Stores the string length in `len`.
+ *
+ * @return The buffer if successful, else `NULL` if the buffer could not fit
+ *  the string representation of `b` in the given base and/or the buffer could
+ *  not be resized.
+ */
 const char *
-bigint_to_lstring(const BigInt *b, char *buf, size_t cap, size_t *len);
+bigint_to_base_lstring(const BigInt *b, const BigInt_Allocator *a, int base,
+    size_t *len);
 
-#define bigint_to_string(b, buf, cap)   bigint_to_lstring(b, buf, cap, NULL)
+
+/** @brief Write integer string `s`, of an unknown base, into `b`. */
+#define bigint_init_string(b, s, a) \
+    bigint_init_base_string(b, s, /*base=*/0, a)
+
+
+/** @brief Get the string length of the would-be base-10 representation. */
+#define bigint_string_length(b) \
+    bigint_base_string_length(b, /*base=*/10)
+
+
+/** @brief Write the base-N representation of `b` into a buffer allocated by `a`. */
+#define bigint_to_base_string(b, a, base) \
+    bigint_to_base_lstring(b, a, base, NULL)
+
+
+/** @brief Write the base-10 representation of `b` into a buffer allocated by
+ * `a`. Stores the string length in `len`. */
+#define bigint_to_lstring(b, a, len) \
+    bigint_to_base_lstring(b, a, /*base=*/10, len)
+
+
+/** @brief Write the base-10 representation of `b` into a buffer allocated by
+ * `a`. */
+#define bigint_to_string(b, a) \
+    bigint_to_lstring(b, a, NULL)
 
 void
 bigint_destroy(BigInt *b);
@@ -218,6 +267,14 @@ bigint_leq_digit(const BigInt *a, BigInt_Digit b);
 // (x >= y) == !(x < y)
 #define bigint_geq_digit(a, b)  (!bigint_lt_digit(a, b))
 
+/** @brief `|a| < |b|` */
+bool
+bigint_lt_abs(const BigInt *a, const BigInt *b);
+
+
+/** @brief `|a| < |b|` */
+bool
+bigint_lt_digit_abs(const BigInt *a, BigInt_Digit b);
 
 // === }}} =====================================================================
 
