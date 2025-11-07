@@ -2,10 +2,15 @@
 #include <string.h> // strcspn
 #include <stdlib.h> // realloc, free
 
+#include "lstring.h"
 #include "bigint.h"
+#include "bigint_repl.h"
 
 #define cast(T)         (T)
 #define unused(expr)    ((void)(expr))
+
+static Token
+lexer_lex(Lexer *x);
 
 static void *
 stdc_allocator_fn(void *ptr, size_t old_size, size_t new_size, void *context)
@@ -15,10 +20,11 @@ stdc_allocator_fn(void *ptr, size_t old_size, size_t new_size, void *context)
     unused(context);
 
     // Free request?
-    if (ptr != NULL && new_size == 0) {
+    if (new_size == 0) {
         free(ptr);
         return NULL;
     }
+
     // New allocation or resize request?
     return realloc(ptr, new_size);
 }
@@ -111,10 +117,54 @@ cleanup:
     return err;
 }
 
+static void
+evaluate(String input)
+{
+    Parser p;
+    p.lexer.input  = input;
+    p.lexer.start  = 0;
+    p.lexer.cursor = 0;
+
+    p.consumed.type   = TOKEN_EOF;
+    p.consumed.lexeme = input;
+
+    BigInt ans;
+    bigint_init(&ans, &stdc_allocator);
+    for (;;) {
+        Token t = lexer_lex(&p.lexer);
+        if (t.type == TOKEN_EOF) {
+            break;
+        }
+        printf("Token(%02i): '%.*s'\n", cast(int)t.type,
+            cast(int)t.lexeme.len, t.lexeme.data);
+    }
+    bigint_destroy(&ans);
+}
+
+static int
+repl(void)
+{
+    char buf[512];
+    for (;;) {
+        printf(">");
+        String s;
+        s.data = fgets(buf, sizeof(buf), stdin);
+        if (s.data == NULL) {
+            fputc('\n', stdout);
+            break;
+        }
+        s.len = strcspn(s.data, "\r\n");
+        evaluate(s);
+    }
+    return 0;
+}
+
 int
 main(int argc, char *argv[])
 {
     switch (argc) {
+    case 1:
+        return repl();
     case 2:
         return unary(/*op=*/NULL, /*arg=*/argv[1]);
     case 3:
@@ -126,4 +176,105 @@ main(int argc, char *argv[])
             argv[0]);
         return 1;
     }
+}
+
+static bool
+lexer_is_eof(const Lexer *x)
+{
+    return x->cursor >= x->input.len;
+}
+
+// Returns the character at the current cursor.
+static char
+lexer_peek(Lexer *x)
+{
+    return x->input.data[x->cursor];
+}
+
+// Increments the cursor.
+static void
+lexer_advance(Lexer *x)
+{
+    x->cursor += 1;
+}
+
+// Advances the cursor only if it matches `ch`.
+static bool
+lexer_match(Lexer *x, char ch)
+{
+    if (lexer_peek(x) == ch) {
+        lexer_advance(x);
+        return true;
+    }
+    return false;
+}
+
+// Trim leading whitespace
+static void
+lexer_skip_whitespace(Lexer *x)
+{
+    while (!lexer_is_eof(x) && is_space(lexer_peek(x))) {
+        lexer_advance(x);
+    }
+}
+
+static String
+string_slice(String s, size_t start, size_t stop)
+{
+    String r;
+    r.data = &s.data[start];
+    r.len  = stop - start;
+    return r;
+}
+
+static Token
+lexer_make_token(Lexer *x, Token_Type t)
+{
+    Token k;
+    k.type   = t;
+    k.lexeme = string_slice(x->input, x->start, x->cursor);
+    return k;
+}
+
+static Token
+lexer_lex(Lexer *x)
+{
+    lexer_skip_whitespace(x);
+    x->start = x->cursor;
+    if (lexer_is_eof(x)) {
+        return lexer_make_token(x, TOKEN_EOF);
+    }
+
+    char ch = lexer_peek(x);
+    lexer_advance(x);
+    if (is_alnum(ch)) {
+        ch = lexer_peek(x);
+        while (is_alnum(ch) || ch == ',' || ch == '_') {
+            lexer_advance(x);
+            ch = lexer_peek(x);
+        }
+        return lexer_make_token(x, TOKEN_NUMBER);
+    }
+
+    Token_Type t = TOKEN_UNKNOWN;
+    switch (ch) {
+    case '+': t = TOKEN_PLUS;    break;
+    case '-': t = TOKEN_MINUS;   break;
+    case '*': t = TOKEN_STAR;    break;
+    case '/': t = TOKEN_SLASH;   break;
+    case '%': t = TOKEN_PERCENT; break;
+
+    case '=':
+        if (lexer_match(x, '='))
+            t = TOKEN_EQUALS;
+        break;
+    case '<': t = lexer_match(x, '=') ? TOKEN_LESS_EQUAL    : TOKEN_GREATER_EQUAL; break;
+    case '>': t = lexer_match(x, '=') ? TOKEN_GREATER_EQUAL : TOKEN_GREATER_THAN;  break;
+    case '!':
+        if (lexer_match(x, '='))
+            t = TOKEN_NOT_EQUAL;
+        break;
+    }
+
+    return lexer_make_token(x, t);
 }

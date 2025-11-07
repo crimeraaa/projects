@@ -82,13 +82,17 @@ BigInt_Error
 bigint_init_int(BigInt *b, int i, const BigInt_Allocator *a);
 
 
-/** @brief Write the integer string `s` of given `base` into `b`.
+/** @brief Write the integer string `s` (bounded by length `n`) of given `base`
+ * into `b`.
  *
  * If the base cannot be determined it will be assumed to be base-10.
  */
 BigInt_Error
-bigint_init_base_string(BigInt *b, const char *s, int base,
+bigint_init_base_lstring(BigInt *b, const char *s, size_t n, int base,
     const BigInt_Allocator *a);
+
+#define bigint_init_base_string(b, s, base, a) \
+    bigint_init_base_lstring(b, s, strlen(s), base, a)
 
 
 /** @brief Get the string length of the would be base-`base` representation. */
@@ -108,9 +112,16 @@ bigint_to_base_lstring(const BigInt *b, const BigInt_Allocator *a, int base,
     size_t *len);
 
 
-/** @brief Write integer string `s`, of an unknown base, into `b`. */
+/** @brief Write integer string `s` (bounded by `n`), of unknown base, into
+ *  `b`. */
+#define bigint_init_lstring(b, s, n, a) \
+    bigint_init_base_lstring(b, s, n, /*base=*/0, a)
+
+
+/** @brief Write integer in the nul-terminated string `s`, of unknown base into
+ *  `b`. */
 #define bigint_init_string(b, s, a) \
-    bigint_init_base_string(b, s, /*base=*/0, a)
+    bigint_init_lstring(b, s, strlen(s), a)
 
 
 /** @brief Get the string length of the would-be base-10 representation. */

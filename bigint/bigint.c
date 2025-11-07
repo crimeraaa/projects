@@ -1,6 +1,8 @@
 #include <stdio.h>  // fprintf
 #include <string.h> // strlen, memset
 
+#define LSTRING_IMPLEMENTATION
+#include "lstring.h"
 #include "bigint.h"
 
 #define eprintf(fmt, ...)   fprintf(stderr, fmt, __VA_ARGS__)
@@ -23,11 +25,6 @@ typedef enum {
     SIGN_POSITIVE = false,
     SIGN_NEGATIVE = true,
 } Sign;
-
-typedef struct {
-    const char *data;
-    size_t      len;
-} String;
 
 typedef struct {
     const BigInt_Allocator *allocator;
@@ -169,38 +166,6 @@ bigint_init_int(BigInt *b, int value, const BigInt_Allocator *a)
     return bigint_init_intmax_t(b, cast(intmax_t)value, a);
 }
 
-static bool
-is_decimal(char c)
-{
-    return '0' <= c && c <= '9';
-}
-
-static bool
-is_upper(char ch)
-{
-    return 'A' <= ch && ch <= 'Z';
-}
-
-static bool
-is_lower(char ch)
-{
-    return 'a' <= ch && ch <= 'z';
-}
-
-static bool
-is_space(char ch)
-{
-    switch (ch) {
-    case ' ':
-    case '\t':
-    case '\n':
-    case '\v':
-    case '\r':
-        return true;
-    }
-    return false;
-}
-
 static Sign
 string_get_sign(String *s)
 {
@@ -262,7 +227,7 @@ char_to_int(char ch, int base)
 {
     int i = -1;
     // Convert character to potential integer representation up to base-36
-    if (is_decimal(ch)) {
+    if (is_digit(ch)) {
         i = ch - '0';
     } else if (is_lower(ch)) {
         i = ch - 'a' + 10;
@@ -278,12 +243,12 @@ char_to_int(char ch, int base)
 }
 
 BigInt_Error
-bigint_init_base_string(BigInt *b, const char *s, int base,
+bigint_init_base_lstring(BigInt *b, const char *s, size_t n, int base,
     const BigInt_Allocator *a)
 {
     String m;
     m.data = s;
-    m.len  = strlen(s);
+    m.len  = n;
     string_trim(&m);
     bigint_init(b, a);
     Error err = BIGINT_OK;
@@ -514,7 +479,7 @@ bigint_to_base_lstring(const BigInt *b, const BigInt_Allocator *a, int base,
 
     // Write the MSD. It will never have leading zeroes.
     int msd_index = b->len - 1;
-    err = string_append_digit(&sb, b->data[msd_index], /*base=*/10);
+    err = string_append_digit(&sb, b->data[msd_index], base);
     if (err) return NULL;
 
     // Write everything past the MSD. They may have leading zeroes.
@@ -528,9 +493,9 @@ bigint_to_base_lstring(const BigInt *b, const BigInt_Allocator *a, int base,
         while (tmp * 10 < BIGINT_DIGIT_BASE) {
             err = string_append_char(&sb, '0');
             if (err) return NULL;
-            tmp *= 10;
+            tmp *= cast(Word)base;
         }
-        err = string_append_digit(&sb, digit, /*base=*/10);
+        err = string_append_digit(&sb, digit, cast(Digit)base);
         if (err) return NULL;
     }
 
@@ -703,13 +668,13 @@ bigint_add(BigInt *out, const BigInt *a, const BigInt *b)
 {
     // 1.) One of the operands is negative and the other is positive?
     if (a->sign != b->sign) {
-        // 1.1.) -a + b == b - a and a < b
+        // 1.1.) -a + b == -(a - b)
         if (bigint_is_neg(a)) {
             return bigint_sub_unsigned(out, b, a);
         }
 
-        // 1.2.) a + -b == a - b and a > b
-        return bigint_sub_unsigned(out, a, b);
+        // 1.2.) a + -b == a - b
+        return bigint_sub(out, a, b);
     }
 
     // 2.) Both operands are both negative or positive?
@@ -982,9 +947,9 @@ bigint_eq(const BigInt *a, const BigInt *b)
 }
 
 typedef enum {
-    FAST_EQUAL,
-    FAST_LESS,
-    FAST_GREATER,
+    BIGINT_EQUAL,
+    BIGINT_LESS,
+    BIGINT_GREATER,
 } BigInt_Comparison;
 
 static BigInt_Comparison
@@ -994,14 +959,14 @@ bigint_fast_compare_abs(const BigInt *a, const BigInt *b)
     if (a->len != b->len) {
         // When `a` is negative, it is only lesser if it has more digits.
         if (bigint_is_neg(a)) {
-            return a->len > b->len ? FAST_LESS : FAST_GREATER;
+            return a->len > b->len ? BIGINT_LESS : BIGINT_GREATER;
         }
         // Otherwise `a` is positive; it is only lesser if it has less digits.
         else {
-            return a->len < b->len ? FAST_LESS : FAST_GREATER;
+            return a->len < b->len ? BIGINT_LESS : BIGINT_GREATER;
         }
     }
-    return FAST_EQUAL;
+    return BIGINT_EQUAL;
 }
 
 static BigInt_Comparison
@@ -1011,7 +976,7 @@ bigint_fast_compare(const BigInt *a, const BigInt *b)
     if (a->sign != b->sign) {
         // 1.1.) -a < +b
         // 1.2.) +a > -b
-        return bigint_is_neg(a) ? FAST_LESS : FAST_GREATER;
+        return bigint_is_neg(a) ? BIGINT_LESS : BIGINT_GREATER;
     }
     return bigint_fast_compare_abs(a, b);
 }
@@ -1020,8 +985,8 @@ bool
 bigint_lt(const BigInt *a, const BigInt *b)
 {
     BigInt_Comparison fast = bigint_fast_compare(a, b);
-    if (fast != FAST_EQUAL) {
-        return fast == FAST_LESS;
+    if (fast != BIGINT_EQUAL) {
+        return fast == BIGINT_LESS;
     }
 
     // Same signs and same lengths; Need to do a digit-by-digit comparison.
@@ -1038,8 +1003,8 @@ bool
 bigint_leq(const BigInt *a, const BigInt *b)
 {
     BigInt_Comparison fast = bigint_fast_compare(a, b);
-    if (fast != FAST_EQUAL) {
-        return fast == FAST_LESS;
+    if (fast != BIGINT_EQUAL) {
+        return fast == BIGINT_LESS;
     }
 
     // Same signs and same lengths; Need to do a digit-by-digit comparison.
@@ -1062,7 +1027,7 @@ bool
 bigint_lt_digit(const BigInt *a, BigInt_Digit b)
 {
     // Check sign first since b >= 0 and a < b if a < 0
-    return bigint_is_neg(a) || (a->len == 1 && a->data[0] < b);
+    return bigint_is_neg(a) || bigint_lt_digit_abs(a, b);
 }
 
 bool
@@ -1076,8 +1041,8 @@ bool
 bigint_lt_abs(const BigInt *a, const BigInt *b)
 {
     BigInt_Comparison fast = bigint_fast_compare_abs(a, b);
-    if (fast != FAST_EQUAL) {
-        return fast == FAST_LESS;
+    if (fast != BIGINT_EQUAL) {
+        return fast == BIGINT_LESS;
     }
 
     // Same signs and same lengths; Need to do a digit-by-digit comparison.
