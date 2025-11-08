@@ -5,48 +5,31 @@
 #include "lstring.h"
 #include "bigint.h"
 
-#define eprintf(fmt, ...)   fprintf(stderr, fmt, __VA_ARGS__)
-#define eprintfln(fmt, ...) eprintf(fmt "\n", __VA_ARGS__)
-#define eprintln(s)         eprintfln("%s", s)
-
-#define cast(T)             (T)
-#define unused(expr)        (void)(expr)
-#define stub() \
-    eprintfln("%s:%i: Unimplemented\n", __FILE__, __LINE__); \
-    __builtin_trap()
-
-
-typedef BigInt_Allocator Allocator;
-typedef BigInt_Digit     Digit;
-typedef BigInt_Word      Word;
-typedef BigInt_Error     Error;
-
-typedef enum {
-    SIGN_POSITIVE = false,
-    SIGN_NEGATIVE = true,
-} Sign;
+typedef BigInt_Digit Digit;
+typedef BigInt_Word  Word;
+typedef BigInt_Error Error;
 
 typedef struct {
-    const BigInt_Allocator *allocator;
+    const Allocator *allocator;
     char *data;
     size_t len;
     size_t cap;
 } String_Builder;
 
 static void *
-mem_rawmake(const BigInt_Allocator *a, size_t n)
+mem_rawmake(const Allocator *a, size_t n)
 {
     return a->fn(NULL, 0, n, a->context);
 }
 
 static void *
-mem_rawresize(const BigInt_Allocator *a, void *ptr, size_t o, size_t n)
+mem_rawresize(const Allocator *a, void *ptr, size_t o, size_t n)
 {
     return a->fn(ptr, o, n, a->context);
 }
 
 static void
-mem_rawfree(const BigInt_Allocator *a, void *ptr, size_t n)
+mem_rawfree(const Allocator *a, void *ptr, size_t n)
 {
     (void)a->fn(ptr, n, 0, a->context);
 }
@@ -79,13 +62,13 @@ mem_rawfree(const BigInt_Allocator *a, void *ptr, size_t n)
 #define mem_free(ptr, n, a)     mem_rawfree(a, ptr, sizeof((ptr)[0]) * (n))
 
 void
-bigint_init(BigInt *b, const BigInt_Allocator *a)
+bigint_init(BigInt *b, const Allocator *a)
 {
     b->data      = NULL;
     b->allocator = a;
     b->len       = 0;
     b->cap       = 0;
-    b->sign      = SIGN_POSITIVE;
+    b->sign      = BIGINT_POSITIVE;
 }
 
 static void
@@ -97,7 +80,7 @@ bigint_fill_zero(BigInt *b, int start, int stop)
 }
 
 static Error
-bigint_init_len_cap(BigInt *b, int len, int cap, const BigInt_Allocator *a)
+bigint_init_len_cap(BigInt *b, int len, int cap, const Allocator *a)
 {
     b->data = mem_make(Digit, cap, a);
     if (b->data == NULL) {
@@ -105,13 +88,13 @@ bigint_init_len_cap(BigInt *b, int len, int cap, const BigInt_Allocator *a)
     }
     b->len  = len;
     b->cap  = cap;
-    b->sign = SIGN_POSITIVE;
+    b->sign = BIGINT_POSITIVE;
     bigint_fill_zero(b, 0, cap);
     return BIGINT_OK;
 }
 
 static int
-count_digits_intmax_t(intmax_t *value, int base, bool *sign)
+bigint_count_digits(intmax_t *value, int base, bool *sign)
 {
     intmax_t tmp = *value;
     *sign = (tmp < 0);
@@ -121,7 +104,7 @@ count_digits_intmax_t(intmax_t *value, int base, bool *sign)
         return 1;
     }
 
-    if (*sign == SIGN_NEGATIVE) {
+    if (*sign == BIGINT_NEGATIVE) {
         // Concept check: -1234 % 10 == 6; We do not want this!
         tmp    = -tmp;
         *value = tmp;
@@ -142,9 +125,9 @@ count_digits_intmax_t(intmax_t *value, int base, bool *sign)
 /** @brief Workhorse function. Do not expose as `intmax_t` is a nightmare for APIs.
  * See: https://thephd.dev/intmax_t-hell-c++-c */
 static BigInt_Error
-bigint_init_intmax_t(BigInt *b, intmax_t value, const BigInt_Allocator *a)
+bigint_init_int_impl(BigInt *b, intmax_t value, const Allocator *a)
 {
-    int n_digits = count_digits_intmax_t(&value, BIGINT_DIGIT_BASE, &b->sign);
+    int n_digits = bigint_count_digits(&value, BIGINT_DIGIT_BASE, &b->sign);
     Error err = bigint_init_len_cap(b, n_digits, n_digits, a);
     if (err) return err;
 
@@ -161,15 +144,15 @@ bigint_init_intmax_t(BigInt *b, intmax_t value, const BigInt_Allocator *a)
 }
 
 BigInt_Error
-bigint_init_int(BigInt *b, int value, const BigInt_Allocator *a)
+bigint_init_int(BigInt *b, int value, const Allocator *a)
 {
-    return bigint_init_intmax_t(b, cast(intmax_t)value, a);
+    return bigint_init_int_impl(b, cast(intmax_t)value, a);
 }
 
-static Sign
+static BigInt_Sign
 string_get_sign(String *s)
 {
-    Sign sign = SIGN_POSITIVE;
+    BigInt_Sign sign = BIGINT_POSITIVE;
     for (; s->len > 1; s->data += 1, s->len -= 1) {
         char ch = s->data[0];
         if (ch == '+') {
@@ -177,7 +160,7 @@ string_get_sign(String *s)
             continue;
         } else if (ch == '-') {
             // Unary minus flips the sign, e.g. -2, +-2, --2, -+-2, ---2
-            sign = (sign == SIGN_NEGATIVE) ? SIGN_POSITIVE : SIGN_NEGATIVE;
+            sign = (sign == BIGINT_NEGATIVE) ? BIGINT_POSITIVE : BIGINT_NEGATIVE;
         } else if (is_space(ch)) {
             continue;
         } else {
@@ -244,19 +227,26 @@ char_to_int(char ch, int base)
 
 BigInt_Error
 bigint_init_base_lstring(BigInt *b, const char *s, size_t n, int base,
-    const BigInt_Allocator *a)
+    const Allocator *a)
+{
+    bigint_init(b, a);
+    return bigint_set_base_lstring(b, s, n, base);
+}
+
+BigInt_Error
+bigint_set_base_lstring(BigInt *b, const char *s, size_t n, int base)
 {
     String m;
     m.data = s;
     m.len  = n;
     string_trim(&m);
-    bigint_init(b, a);
+
     Error err = BIGINT_OK;
 
     // Check for unary minus or unary plus. Don't set the sign yet;
     // Because the intermediate calculations will undo it anyway.
     // Delaying this also accounts for inputs like "-0".
-    Sign sign = string_get_sign(&m);
+    BigInt_Sign sign = string_get_sign(&m);
 
     // No explicit base given, try to check for a prefix.
     if (base == 0) {
@@ -291,12 +281,13 @@ fail:
 
     // Finalize the sign after all the intermediate calculations.
     // We assume all the above calculations already clamped us.
-    b->sign = bigint_is_zero(b) ? SIGN_POSITIVE : sign;
+    b->sign = bigint_is_zero(b) ? BIGINT_POSITIVE : sign;
     return BIGINT_OK;
+
 }
 
 static void
-string_builder_init(String_Builder *sb, const BigInt_Allocator *a)
+string_builder_init(String_Builder *sb, const Allocator *a)
 {
     sb->allocator = a;
     sb->data = NULL;
@@ -454,7 +445,7 @@ string_append_base_prefix(String_Builder *sb, int base)
 }
 
 const char *
-bigint_to_base_lstring(const BigInt *b, const BigInt_Allocator *a, int base,
+bigint_to_base_lstring(const BigInt *b, const Allocator *a, int base,
     size_t *len)
 {
     String_Builder sb;
@@ -514,6 +505,13 @@ bigint_destroy(BigInt *b)
     mem_free(b->data, b->cap, b->allocator);
 }
 
+void
+bigint_clear(BigInt *b)
+{
+    b->sign = BIGINT_POSITIVE;
+    b->len  = 0;
+}
+
 static bool
 bigint_resize(BigInt *b, int n)
 {
@@ -551,7 +549,7 @@ bigint_clamp(BigInt *b)
     }
 
     if (bigint_is_zero(b)) {
-        b->sign = SIGN_POSITIVE;
+        b->sign = BIGINT_POSITIVE;
     }
     return BIGINT_OK;
 }
@@ -632,7 +630,7 @@ split_diff(Word diff, Digit *carry)
 }
 
 
-/** @brief `out = |a| - |b|`, assuming `|a| >= |b|`. */
+/** @brief `out = |a| - |b|` where `|a| >= |b|`. */
 static Error
 bigint_sub_unsigned(BigInt *out, const BigInt *a, const BigInt *b)
 {
@@ -666,58 +664,100 @@ bigint_sub_unsigned(BigInt *out, const BigInt *a, const BigInt *b)
 BigInt_Error
 bigint_add(BigInt *out, const BigInt *a, const BigInt *b)
 {
+    out->sign = a->sign;
+
     // 1.) One of the operands is negative and the other is positive?
     if (a->sign != b->sign) {
         // 1.1.) -a + b == -(a - b)
         if (bigint_is_neg(a)) {
-            return bigint_sub_unsigned(out, b, a);
+            // 1.1.1.) -a + b >= 0
+            //  where |a| < |b|
+            //
+            // Concept check: (-2) + 3 == 1
+            if (bigint_lt_abs(a, b)) {
+                goto negative_result;
+            }
+
+            // 1.1.2.) -a + b < 0
+            //  where |a| > |b|
+            //
+            // Concept check: (-3) + 2 == (-1)
+            //                (-4) + 4 == 0
+            goto positive_result;
         }
 
-        // 1.2.) a + -b == a - b
-        return bigint_sub(out, a, b);
+        // 1.2.) a + (-b) == a - b
+        // 1.2.1.) a + (-b) >= 0
+        //  when |a| >= |b|
+        if (bigint_geq_abs(a, b)) {
+positive_result:
+            return bigint_sub_unsigned(out, a, b);
+        }
+
+        // 1.2.2.) a + (-b)  < 0
+        //  when |a| < |b|
+negative_result:
+        out->sign = b->sign;
+        return bigint_sub_unsigned(out, b, a);
     }
 
     // 2.) Both operands are both negative or positive?
-    // 2.1.) -a + -b == -a - b == -(a + b)
-    // 2.2.) +a + +b == +(a + b)
-    out->sign = a->sign;
+    // 2.1.) (-a) + (-b) == -a - b == -(a + b)
+    // 2.2.) a + b >= 0
     return bigint_add_unsigned(out, a, b);
 }
 
 BigInt_Error
 bigint_sub(BigInt *out, const BigInt *a, const BigInt *b)
 {
+    // Propagate the left hand side sign by default.
+    out->sign = a->sign;
+
     // 1.) One of the operands is negative and the other is positive?
     if (a->sign != b->sign) {
-        // 1.1.) -a - b == -(|a| + |b|) where a < 0 and b >= 0
-        if (bigint_is_neg(a)) {
-            Error err = bigint_add_unsigned(out, a, b);
-            if (err == BIGINT_OK) {
-                bigint_neg(out, out);
-            }
-            return err;
-        }
-        // 1.2.) a - -b == |a| + |b| where a >= 0 and b < 0
+        // Use the sign of `a` no matter what.
+        //
+        // 1.1.) (-a) - b < 0
+        //  where a < 0
+        //    and b >= 0
+        //
+        // Concept check:   (-2) - 3  == -(2 + 3) == -5
+        //                  (-3) - 2  == -(3 + 2) == -5
+        //
+        // 1.2.) a - (-b) >= 0
+        //  where a >= 0
+        //    and b < 0
+        //
+        // Concept check:   2 - (-3) ==  2 + 3 == 5
+        //                  3 - (-2) ==  3 + 2 == 5
         return bigint_add_unsigned(out, a, b);
     }
 
-    out->sign = a->sign;
-
     // 2.) Both operands are negative or positive?
+    // Ensure |a| >= |b| so that we can do unsigned subtraction.
     if (a->len < b->len) {
         bigint_swap(&a, &b);
     }
 
-    // 2.1.) a - b < 0 where a < b and a >= 0 and b >= 0
+    // 2.1.) a - b < 0
+    //  where a < b
+    //    and a >= 0
+    //    and b >= 0
+    //
+    // Concept check:   2  -   3  == -(3 - 2)  == -1
+    //                (-2) - (-3) ==  (-2) + 3 ==  3 - 2 == 1
     if (bigint_lt_abs(a, b)) {
-        Error err = bigint_sub_unsigned(out, b, a);
-        if (err == BIGINT_OK) {
-            bigint_neg(out, out);
-        }
-        return err;
+        out->sign = !a->sign;
+        return bigint_sub_unsigned(out, b, a);
     }
 
-    // 2.2.) a - b >= 0 where a >= b and a >= 0 and b >= 0
+    // 2.2.) a - b >= 0
+    //  where a >= b
+    //    and a >= 0
+    //    and b >= 0
+    //
+    // Concept check:   3  -   2  == 1
+    //                (-3) - (-2) == (-3) + 2 == -1
     return bigint_sub_unsigned(out, a, b);
 }
 
@@ -779,7 +819,8 @@ bigint_sub_digit_unsigned(BigInt *out, const BigInt *a, BigInt_Digit b)
 BigInt_Error
 bigint_add_digit(BigInt *out, const BigInt *a, BigInt_Digit b)
 {
-    // -a + b == |b| - |a| == -(|a| - |b|) where a < b
+    // 1.) -a + b == |b| - |a| == -(|a| - |b|)
+    //  where a < b
     if (bigint_is_neg(a)) {
         Error err = bigint_sub_digit_unsigned(out, a, b);
         if (err == BIGINT_OK) {
@@ -787,24 +828,31 @@ bigint_add_digit(BigInt *out, const BigInt *a, BigInt_Digit b)
         }
         return err;
     }
+    // 2.) a + b
+    // where a >= b
     return bigint_add_digit_unsigned(out, a, b);
 }
 
 BigInt_Error
 bigint_sub_digit(BigInt *out, const BigInt *a, BigInt_Digit b)
 {
-    // 1.) -a - b == -(a + b) where a < 0 and a < b
     // Subtracting from a negative is the same as negating an addition.
+    //
+    // 1.) -a - b == -(a + b)
+    //  where a < 0
+    //    and a < b
     if (bigint_is_neg(a)) {
-        Error err = bigint_add_digit_unsigned(out, a, b);
-        if (err == BIGINT_OK) {
-            bigint_neg(out, out);
-        }
-        return err;
+        // 1.1.) -a - b <= 0
+        // Concept check:   (-3) - 2 == -5
+        //                  (-2) - 2 == -4
+        out->sign = a->sign;
+        return bigint_add_digit_unsigned(out, a, b);
     }
 
-    // 2.) a - b < 0 == -(-a + b) == -(b - a) where a < b
     // Simple because we are only working with one digit.
+    //
+    // 2.) a - b < 0 == -(-a + b) == -(b - a)
+    //  where a < b
     if (bigint_lt_digit_abs(a, b)) {
         bigint_resize(out, a->len + 1);
         Word diff = b - a->data[0];
@@ -813,7 +861,9 @@ bigint_sub_digit(BigInt *out, const BigInt *a, BigInt_Digit b)
         return bigint_clamp(out);
     }
 
-    // 3.) a - b >= 0 where a >= b
+    // 3.) a - b >= 0
+    //  where a >= b
+    //    and a >= 0
     return bigint_sub_digit_unsigned(out, a, b);
 }
 
@@ -875,11 +925,11 @@ bigint_mul_digit(BigInt *out, const BigInt *a, BigInt_Digit b)
 BigInt_Error
 bigint_neg(BigInt *out, const BigInt *a)
 {
-    Sign sign = SIGN_NEGATIVE;
+    BigInt_Sign sign = BIGINT_NEGATIVE;
     // 1.) `out = -0`
     // 2.) `out = -(-a)`
     if (bigint_is_zero(a) || bigint_is_neg(a)) {
-        sign = SIGN_POSITIVE;
+        sign = BIGINT_POSITIVE;
     }
 
     // 3.) `out = -out`
@@ -925,7 +975,7 @@ bigint_is_zero(const BigInt *b)
 bool
 bigint_is_neg(const BigInt *b)
 {
-    return b->sign == SIGN_NEGATIVE;
+    return b->sign == BIGINT_NEGATIVE;
 }
 
 bool
@@ -945,12 +995,6 @@ bigint_eq(const BigInt *a, const BigInt *b)
     }
     return true;
 }
-
-typedef enum {
-    BIGINT_EQUAL,
-    BIGINT_LESS,
-    BIGINT_GREATER,
-} BigInt_Comparison;
 
 static BigInt_Comparison
 bigint_fast_compare_abs(const BigInt *a, const BigInt *b)
@@ -1056,6 +1100,24 @@ bigint_lt_abs(const BigInt *a, const BigInt *b)
 }
 
 bool
+bigint_leq_abs(const BigInt *a, const BigInt *b)
+{
+    BigInt_Comparison fast = bigint_fast_compare_abs(a, b);
+    if (fast != BIGINT_EQUAL) {
+        return fast == BIGINT_LESS;
+    }
+
+    // Same signs and same lengths; Need to do a digit-by-digit comparison.
+    for (int i = 0; i < a->len; i++) {
+        // Found some digit that is the opposite of less-equal?
+        if (a->data[i] > b->data[i]) {
+            return false;
+        }
+    }
+    return true;
+}
+
+bool
 bigint_lt_digit_abs(const BigInt *a, BigInt_Digit b)
 {
     return a->len == 1 && a->data[0] < b;
@@ -1064,10 +1126,6 @@ bigint_lt_digit_abs(const BigInt *a, BigInt_Digit b)
 // === }}} =====================================================================
 
 // Macro cleanup in case of unity builds
-#undef cast
-#undef unused
-#undef stub
-
 #undef mem_make
 #undef mem_resize
 #undef mem_free

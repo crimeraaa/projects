@@ -1,12 +1,15 @@
 #ifndef LSTRING_H
 #define LSTRING_H
 
-#include <stddef.h>
+#include "common.h"
 
 typedef struct {
     const char *data;
     size_t      len;
 } String;
+
+#define string_expand(s)    (int)(s).len, (s).data
+#define string_literal(s)   {(s), sizeof(s) - 1}
 
 int
 is_digit(char ch);

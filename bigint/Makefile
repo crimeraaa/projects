@@ -1,7 +1,7 @@
 CC := clang
 CC_FLAGS := -Wall -Wextra -Werror -std=c11 -g -fsanitize=address
 
-bin/bigint: obj/bigint.o bigint_test.c | bin
+bin/bigint: main.c obj/bigint.o obj/lexer.o obj/parser.o | bin
 	$(CC) $(CC_FLAGS) -o $@ $^
 
 obj/%.o: %.c %.h | obj
