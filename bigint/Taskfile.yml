@@ -1,0 +1,87 @@
+# https://taskfile.dev
+
+version: '3'
+
+vars:
+  CC: clang
+  CC_FLAGS: >-
+    -std=c11
+    -g
+    -Wall
+    -Wextra
+    -Werror
+    -pedantic
+    -fsanitize=address
+
+  OUT: bin/bigint
+
+tasks:
+  # list:
+  #   vars:
+  #     GLOB: >-
+  #       odin/lulu/*.odin
+  #       {lua,cpp}/src/*.[ch]*
+  #       tests/**/*.lua
+  #       printers/**/*.py
+  #   cmds:
+  #     - ls -1 {{.GLOB}}
+
+  run:
+    desc: Re-build the bigint executable if needed, then run it.
+    deps:
+      - task: build
+    cmds:
+      - '{{.OUT}} {{.CLI_ARGS}}'
+    interactive: true
+
+  build:
+    desc: Re-build the bigint executable if needed.
+    cmds:
+      - mkdir -p bin
+      - '{{.CC}} {{.CC_FLAGS}} -o ./{{.OUT}} *.c'
+    sources:
+      - ./*.[ch]
+    generates:
+      - ./{{.OUT}}
+
+  fix-whitespace:
+    desc: Remove trailing whitespace from all project files.
+    deps:
+      - task: find-and-replace
+        vars:
+          VIM_PATTERN: '\s\+$'
+          VIM_REPLACE: ''
+
+  # https://github.com/crimeraaa/lulu/blob/16cf4f5d187546704e7f66c9c401d85c4a71b68a/Taskfile.yml#L95C8-L95C11
+  find-and-replace:
+    desc: Replace a pattern in all project files. Uses Vim syntax.
+    vars:
+      VIM: vim
+      VIM_GLOB: >-
+        *.[ch]
+
+      # Dissection:
+      #   -e
+      #     Ex mode, used mainly for non-interactive file editing.
+      #
+      #   -u NONE
+      #     Do not load .vimrc nor init.vim of any kind.
+      #
+      #   -c <command>
+      #     Execute <command> after entering. Multiple instances of this
+      #     can be chained.
+      #
+      #   -- <...>
+      #     Positional arguments: file names or globs thereof.
+      VIM_FLAGS: >-
+        -e
+        -u NONE
+        -c ':bufdo! %s/{{.VIM_PATTERN}}/{{.VIM_REPLACE}}/ge'
+        -c ':xa'
+    prompt: This command will potentially modify all project files. Continue?
+    cmds:
+      - '{{.VIM}} {{.VIM_FLAGS}} {{.VIM_GLOB}}'
+    requires:
+      vars: [VIM_PATTERN, VIM_REPLACE]
+    preconditions:
+      - sh: command -v {{.VIM}}

@@ -5,6 +5,7 @@
 #include "lstring.h"
 #include "bigint.h"
 #include "parser.h"
+#include "stack.h"
 
 static void *
 stdc_allocator_fn(void *ptr, size_t old_size, size_t new_size, void *context)
@@ -26,35 +27,18 @@ stdc_allocator_fn(void *ptr, size_t old_size, size_t new_size, void *context)
 static const Allocator
 stdc_allocator = {stdc_allocator_fn, NULL};
 
-static void *
-buffer_allocator_fn(void *ptr, size_t old_size, size_t new_size, void *context)
-{
-    char *buf = cast(char *)context;
-    unused(old_size);
+static Stack
+stack;
 
-    // Free request?
-    if (ptr != NULL && new_size == 0) {
-        return NULL;
-    }
-
-    // New allocation OR resize request which fits in the buffer?
-    if (0 <= new_size && new_size < BUFSIZ) {
-        return buf;
-    }
-    // Otherwise, doesn't fit in the buffer.
-    return NULL;
-}
+static const Allocator
+stack_allocator = {stack_allocator_fn, &stack};
 
 static void
 bigint_print(const BigInt *b, char c)
 {
-    char buf[BUFSIZ];
     size_t n = 0;
-    Allocator a;
-    a.fn      = &buffer_allocator_fn;
-    a.context = buf;
 
-    const char *s = bigint_to_lstring(b, &a, &n);
+    const char *s = bigint_to_lstring(b, &stack_allocator, &n);
     printf("%c: '%s' (%zu / %zu chars written)\n",
         c, s, n, bigint_string_length(b));
 }
@@ -66,7 +50,7 @@ unary(const char *op, const char *arg)
     int err = 0;
     bigint_init_string(&b, arg, &stdc_allocator);
     if (op != NULL) {
-        fprintf(stderr, "Invalid unary operation'%s'\n", op);
+        eprintfln("Invalid unary operation '%s'\n", op);
         err = 1;
         goto cleanup;
     }
@@ -75,6 +59,14 @@ unary(const char *op, const char *arg)
 cleanup:
     bigint_destroy(&b);
     return err;
+}
+
+static void
+print_compare(const BigInt *a, const char *op, const BigInt *b, bool cmp)
+{
+    printf("%s %s %s => %s\n",
+        bigint_to_string(a, &stack_allocator), op,
+        bigint_to_string(b, &stack_allocator), (cmp) ? "true" : "false");
 }
 
 static int
@@ -86,14 +78,33 @@ binary(const char *arg_a, const char *op, const char *arg_b)
     bigint_init_string(&b, arg_b, &stdc_allocator);
     bigint_init(&c, &stdc_allocator);
 
-    switch (op[0]) {
-    case '+':
-        bigint_add(&c, &a, &b);
+    // The following is absolutely abysmal
+    switch (strlen(op)) {
+    case 1: {
+        switch (op[0]) {
+        case '+': bigint_add(&c, &a, &b); break;
+        case '-': bigint_sub(&c, &a, &b); break;
+        case '<': print_compare(&a, op, &b, bigint_lt(&a, &b)); break;
+        case '>': print_compare(&a, op, &b, bigint_gt(&a, &b)); break;
+        default:  goto error;
+        }
         break;
-    case '-':
-        bigint_sub(&c, &a, &b);
+    }
+    case 2: {
+        if (op[1] != '=') {
+            goto error;
+        }
+        switch (op[0]) {
+        case '!': print_compare(&a, op, &b, bigint_neq(&a, &b)); break;
+        case '=': print_compare(&a, op, &b, bigint_eq(&a, &b));  break;
+        case '<': print_compare(&a, op, &b, bigint_leq(&a, &b)); break;
+        case '>': print_compare(&a, op, &b, bigint_geq(&a, &b)); break;
+        default:  goto error;
+        }
         break;
+    }
     default:
+error:
         err = 1;
         fprintf(stderr, "Invalid binary operation '%s'.\n", op);
         goto cleanup;
@@ -128,8 +139,8 @@ repl(void)
     BigInt ans;
     bigint_init(&ans, &stdc_allocator);
     for (;;) {
-        printf(">");
         String s;
+        printf(">");
         s.data = fgets(buf, sizeof(buf), stdin);
         if (s.data == NULL) {
             fputc('\n', stdout);
@@ -139,6 +150,7 @@ repl(void)
 
         bigint_clear(&ans);
         evaluate(s, &ans);
+        stack_free_all(&stack);
     }
     bigint_destroy(&ans);
     return 0;

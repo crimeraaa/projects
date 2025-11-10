@@ -16,51 +16,6 @@ typedef struct {
     size_t cap;
 } String_Builder;
 
-static void *
-mem_rawmake(const Allocator *a, size_t n)
-{
-    return a->fn(NULL, 0, n, a->context);
-}
-
-static void *
-mem_rawresize(const Allocator *a, void *ptr, size_t o, size_t n)
-{
-    return a->fn(ptr, o, n, a->context);
-}
-
-static void
-mem_rawfree(const Allocator *a, void *ptr, size_t n)
-{
-    (void)a->fn(ptr, n, 0, a->context);
-}
-
-
-/**
- * @param T <type>
- * @param n <integer-type>   The number of `T` you wish to allocate.
- * @param a BigInt_Allocator
- */
-#define mem_make(T, n, a)           (T *)mem_rawmake(a, sizeof(T) * (n))
-
-
-/**
- * @param T     <type>
- * @param ptr   T *
- * @param old_n <integer-type>      The current number of `T` in `ptr`.
- * @param new_n <integer-type>      The new number of `T` that `ptr` will use.
- * @param a     BigInt_Allocator
- */
-#define mem_resize(T, ptr, old_n, new_n, a) \
-    (T *)mem_rawresize(a, ptr, sizeof(T) * (old_n), sizeof(T) * (new_n))
-
-
-/**
- * @param ptr   <type> *
- * @param n     <integer-type>      The number of `<type>` in `ptr`.
- * @param a     BigInt_Allocator
- */
-#define mem_free(ptr, n, a)     mem_rawfree(a, ptr, sizeof((ptr)[0]) * (n))
-
 void
 bigint_init(BigInt *b, const Allocator *a)
 {
@@ -86,9 +41,10 @@ bigint_init_len_cap(BigInt *b, int len, int cap, const Allocator *a)
     if (b->data == NULL) {
         return BIGINT_ERROR_MEMORY;
     }
-    b->len  = len;
-    b->cap  = cap;
-    b->sign = BIGINT_POSITIVE;
+    b->allocator = a;
+    b->len       = len;
+    b->cap       = cap;
+    b->sign      = BIGINT_POSITIVE;
     bigint_fill_zero(b, 0, cap);
     return BIGINT_OK;
 }
@@ -456,22 +412,23 @@ bigint_to_base_lstring(const BigInt *b, const Allocator *a, int base,
     // No digits to work with?
     if (b->len == 0) {
         err = string_append_char(&sb, '0');
-        if (err) return NULL;
+        if (err) goto fail;
+
         goto nul_terminate;
     }
 
     if (bigint_is_neg(b)) {
         err = string_append_char(&sb, '-');
-        if (err) return NULL;
+        if (err) goto fail;
     }
 
     err = string_append_base_prefix(&sb, base);
-    if (err) return NULL;
+    if (err) goto fail;
 
     // Write the MSD. It will never have leading zeroes.
     int msd_index = b->len - 1;
     err = string_append_digit(&sb, b->data[msd_index], base);
-    if (err) return NULL;
+    if (err) goto fail;
 
     // Write everything past the MSD. They may have leading zeroes.
     for (int i = msd_index - 1; i >= 0; i -= 1) {
@@ -481,20 +438,26 @@ bigint_to_base_lstring(const BigInt *b, const Allocator *a, int base,
         // significant using the current maximum place value (`10**n`).
         Word tmp = cast(Word)digit;
         // E.g. in base-100, we want to pad '1' with 1 zero to get 01 in 1801.
-        while (tmp * 10 < BIGINT_DIGIT_BASE) {
+        while (tmp * cast(Word)base < BIGINT_DIGIT_BASE) {
             err = string_append_char(&sb, '0');
-            if (err) return NULL;
+            if (err) goto fail;
+
             tmp *= cast(Word)base;
         }
         err = string_append_digit(&sb, digit, cast(Digit)base);
-        if (err) return NULL;
+        if (err) goto fail;
     }
 
 nul_terminate:
     if (len != NULL) {
         *len = cast(size_t)sb.len;
     }
-    string_append_char(&sb, '\0');
+    err = string_append_char(&sb, '\0');
+
+    if (err) {
+fail:
+        return NULL;
+    }
     return sb.data;
 
 }
@@ -612,19 +575,19 @@ bigint_add_unsigned(BigInt *out, const BigInt *a, const BigInt *b)
 }
 
 static Digit
-split_diff(Word diff, Digit *carry)
+split_diff(Word diff, Digit *borrow)
 {
     // Need to borrow?
     if (diff < 0) {
         // Recall when borrowing we only ever "cross out" 1 at a time.
         // This will be subtracted in subsequent iterations.
-        *carry = 1;
+        *borrow = 1;
 
         // This is the actual "borrowing". Recall how when we "cross out"
         // a digit to the left, the target digit has its base added to it.
         diff += BIGINT_DIGIT_BASE;
     } else {
-        *carry = 0;
+        *borrow = 0;
     }
     return cast(Digit)diff;
 }
@@ -640,23 +603,24 @@ bigint_sub_unsigned(BigInt *out, const BigInt *a, const BigInt *b)
         return BIGINT_ERROR_MEMORY;
     }
 
-    Digit carry = 0;
+    Digit borrow = 0;
     int i = 0;
 
-    // Subtract the digit places common to both `a` and `b`, propagting the
+    // Subtract the digit places common to both `a` and `b`, propagating the
     // carry as a negative offset.
     for (; i < min_used; i += 1) {
         Word diff = cast(Word)a->data[i] - cast(Word)b->data[i];
-        out->data[i] = split_diff(diff, &carry);
+        diff -= cast(Word)borrow;
+        out->data[i] = split_diff(diff, &borrow);
     }
 
     // Copy over the digit places in `a` that are not in `b`.
     for (; i < max_used; i += 1) {
-        Word diff = cast(Word)a->data[i] - cast(Word)carry;
-        out->data[i] = split_diff(diff, &carry);
+        Word diff = cast(Word)a->data[i] - cast(Word)borrow;
+        out->data[i] = split_diff(diff, &borrow);
     }
 
-    out->data[max_used] = carry;
+    out->data[max_used] = borrow;
     return bigint_clamp(out);
 }
 
@@ -675,7 +639,7 @@ bigint_add(BigInt *out, const BigInt *a, const BigInt *b)
             //
             // Concept check: (-2) + 3 == 1
             if (bigint_lt_abs(a, b)) {
-                goto negative_result;
+                goto use_b_sign;
             }
 
             // 1.1.2.) -a + b < 0
@@ -683,20 +647,20 @@ bigint_add(BigInt *out, const BigInt *a, const BigInt *b)
             //
             // Concept check: (-3) + 2 == (-1)
             //                (-4) + 4 == 0
-            goto positive_result;
+            goto use_a_sign;
         }
 
         // 1.2.) a + (-b) == a - b
         // 1.2.1.) a + (-b) >= 0
         //  when |a| >= |b|
         if (bigint_geq_abs(a, b)) {
-positive_result:
+use_a_sign:
             return bigint_sub_unsigned(out, a, b);
         }
 
         // 1.2.2.) a + (-b)  < 0
         //  when |a| < |b|
-negative_result:
+use_b_sign:
         out->sign = b->sign;
         return bigint_sub_unsigned(out, b, a);
     }
@@ -769,6 +733,11 @@ bigint_mul(BigInt *restrict out, const BigInt *a, const BigInt *b)
     // 1.3.) -a * -b <  0
     // 1.4.) -a * -b >= 0
     out->sign = (a->sign != b->sign);
+
+    if (a->len < b->len) {
+        bigint_swap(&a, &b);
+    }
+
     stub();
     return BIGINT_OK;
 }
@@ -819,23 +788,45 @@ bigint_sub_digit_unsigned(BigInt *out, const BigInt *a, BigInt_Digit b)
 BigInt_Error
 bigint_add_digit(BigInt *out, const BigInt *a, BigInt_Digit b)
 {
+    out->sign = BIGINT_POSITIVE;
+
     // 1.) -a + b == |b| - |a| == -(|a| - |b|)
     //  where a < b
+    //    and a < 0
+    //    and b >= 0
     if (bigint_is_neg(a)) {
-        Error err = bigint_sub_digit_unsigned(out, a, b);
-        if (err == BIGINT_OK) {
-            bigint_neg(out, out);
+        // 1.1.) -a + b <= 0
+        //  where |a| >= |b|
+        //
+        // Concept check: -3 + 2 = -1
+        //                -2 + 2 =  0
+        if (bigint_geq_digit_abs(a, b)) {
+            Error err = bigint_sub_digit_unsigned(out, a, b);
+            if (err == BIGINT_OK) {
+                bigint_neg(out, out);
+            }
+            return err;
         }
-        return err;
+
+        // 1.2.) -a + b > 0
+        //  where |a| < |b|
+        //
+        // Concept check: -2 + 3 = 1
+        return bigint_sub_digit_unsigned(out, a, b);
     }
+
     // 2.) a + b
     // where a >= b
+    //   and a >= 0
+    //   and b >= 0
     return bigint_add_digit_unsigned(out, a, b);
 }
 
 BigInt_Error
 bigint_sub_digit(BigInt *out, const BigInt *a, BigInt_Digit b)
 {
+    out->sign = a->sign;
+
     // Subtracting from a negative is the same as negating an addition.
     //
     // 1.) -a - b == -(a + b)
@@ -845,7 +836,6 @@ bigint_sub_digit(BigInt *out, const BigInt *a, BigInt_Digit b)
         // 1.1.) -a - b <= 0
         // Concept check:   (-3) - 2 == -5
         //                  (-2) - 2 == -4
-        out->sign = a->sign;
         return bigint_add_digit_unsigned(out, a, b);
     }
 
@@ -853,6 +843,8 @@ bigint_sub_digit(BigInt *out, const BigInt *a, BigInt_Digit b)
     //
     // 2.) a - b < 0 == -(-a + b) == -(b - a)
     //  where a < b
+    //    and a >= 0
+    //    and b >= 0
     if (bigint_lt_digit_abs(a, b)) {
         bigint_resize(out, a->len + 1);
         Word diff = b - a->data[0];
@@ -864,6 +856,7 @@ bigint_sub_digit(BigInt *out, const BigInt *a, BigInt_Digit b)
     // 3.) a - b >= 0
     //  where a >= b
     //    and a >= 0
+    //    and b >= 0
     return bigint_sub_digit_unsigned(out, a, b);
 }
 
@@ -978,43 +971,25 @@ bigint_is_neg(const BigInt *b)
     return b->sign == BIGINT_NEGATIVE;
 }
 
-bool
-bigint_eq(const BigInt *a, const BigInt *b)
-{
-    // Fast paths
-    if (a->sign != b->sign || a->len != b->len) {
-        return false;
-    }
-
-    // Assumes a->len == b->len
-    for (int i = 0; i < a->len; i++) {
-        // Found some digit that differs?
-        if (a->data[i] != b->data[i]) {
-            return false;
-        }
-    }
-    return true;
-}
-
 static BigInt_Comparison
-bigint_fast_compare_abs(const BigInt *a, const BigInt *b)
+bigint_compare_fast_abs(const BigInt *a, const BigInt *b)
 {
     // 2.) Same signs but differing lengths.
     if (a->len != b->len) {
         // When `a` is negative, it is only lesser if it has more digits.
         if (bigint_is_neg(a)) {
-            return a->len > b->len ? BIGINT_LESS : BIGINT_GREATER;
+            return (a->len > b->len) ? BIGINT_LESS : BIGINT_GREATER;
         }
         // Otherwise `a` is positive; it is only lesser if it has less digits.
         else {
-            return a->len < b->len ? BIGINT_LESS : BIGINT_GREATER;
+            return (a->len < b->len) ? BIGINT_LESS : BIGINT_GREATER;
         }
     }
     return BIGINT_EQUAL;
 }
 
 static BigInt_Comparison
-bigint_fast_compare(const BigInt *a, const BigInt *b)
+bigint_compare_fast(const BigInt *a, const BigInt *b)
 {
     // 1.) One is positive while the other is negative?
     if (a->sign != b->sign) {
@@ -1022,106 +997,100 @@ bigint_fast_compare(const BigInt *a, const BigInt *b)
         // 1.2.) +a > -b
         return bigint_is_neg(a) ? BIGINT_LESS : BIGINT_GREATER;
     }
-    return bigint_fast_compare_abs(a, b);
+    return bigint_compare_fast_abs(a, b);
 }
 
-bool
-bigint_lt(const BigInt *a, const BigInt *b)
+BigInt_Comparison
+bigint_compare(const BigInt *a, const BigInt *b)
 {
-    BigInt_Comparison fast = bigint_fast_compare(a, b);
+    BigInt_Comparison fast = bigint_compare_fast(a, b);
+    // 1.) Can already tell the ordering based on sign and/or digit count?
     if (fast != BIGINT_EQUAL) {
-        return fast == BIGINT_LESS;
+        return fast;
     }
 
-    // Same signs and same lengths; Need to do a digit-by-digit comparison.
-    for (int i = 0; i < a->len; i++) {
-        // Found some digit that is the opposite of less-than?
-        if (a->data[i] >= b->data[i]) {
-            return false;
+    // 2.) Same signs, same lengths. Compare MSD to LSD.
+    bool negative = bigint_is_neg(a);
+    for (int i = a->len - 1; i >= 0; i -= 1) {
+        // 2.1.) |a[i]| < |b[i]|
+        //
+        // Concept check:   2  <   3
+        //                |-2| < |-3|
+        if (a->data[i] < b->data[i]) {
+            return (negative) ? BIGINT_GREATER : BIGINT_LESS;
+        }
+        // 2.1.) |a[i]| > |b[i]|
+        //
+        // Concept check:   5  >   1
+        //                |-3| > |-2|
+        else if (a->data[i] > b->data[i]) {
+            return (negative) ? BIGINT_LESS : BIGINT_GREATER;
         }
     }
-    return true;
+    return BIGINT_EQUAL;
 }
 
-bool
-bigint_leq(const BigInt *a, const BigInt *b)
+BigInt_Comparison
+bigint_compare_abs(const BigInt *a, const BigInt *b)
 {
-    BigInt_Comparison fast = bigint_fast_compare(a, b);
+    BigInt_Comparison fast = bigint_compare_fast_abs(a, b);
+    // 1.) Can already tell the ordering based on length?
     if (fast != BIGINT_EQUAL) {
-        return fast == BIGINT_LESS;
+        return fast;
     }
 
-    // Same signs and same lengths; Need to do a digit-by-digit comparison.
-    for (int i = 0; i < a->len; i++) {
-        // Found some digit that is the opposite of less-equal?
-        if (a->data[i] > b->data[i]) {
-            return false;
+    // 2.) Same lengths. Do not consider signedness. Compare MSD to LSD.
+    for (int i = a->len - 1; i >= 0; i -= 1) {
+        if (a->data[i] < b->data[i]) {
+            return BIGINT_LESS;
+        }
+        else if (a->data[i] > b->data[i]) {
+            return BIGINT_GREATER;
         }
     }
-    return true;
+    return BIGINT_EQUAL;
 }
 
-bool
-bigint_eq_digit(const BigInt *a, BigInt_Digit b)
+BigInt_Comparison
+bigint_compare_digit(const BigInt *a, BigInt_Digit b)
 {
-    return bigint_is_pos(a) && (a->len == 1 && a->data[0] == b);
+    // 1.) -a < b
+    //  where  a  < 0
+    //    and |a| > 0
+    //    and  b >= 0
+    if (bigint_is_neg(a)) {
+        return BIGINT_LESS;
+    }
+    return bigint_compare_digit_abs(a, b);
 }
 
-bool
-bigint_lt_digit(const BigInt *a, BigInt_Digit b)
+BigInt_Comparison
+bigint_compare_digit_abs(const BigInt *a, BigInt_Digit b)
 {
-    // Check sign first since b >= 0 and a < b if a < 0
-    return bigint_is_neg(a) || bigint_lt_digit_abs(a, b);
-}
-
-bool
-bigint_leq_digit(const BigInt *a, BigInt_Digit b)
-{
-    // Check sign first since b >= 0 and a < b if a < 0
-    return bigint_is_neg(a) || (a->len == 1 && a->data[0] <= b);
-}
-
-bool
-bigint_lt_abs(const BigInt *a, const BigInt *b)
-{
-    BigInt_Comparison fast = bigint_fast_compare_abs(a, b);
-    if (fast != BIGINT_EQUAL) {
-        return fast == BIGINT_LESS;
+    // 2.) a <= b
+    //  where a == 0
+    //    and b >= 0
+    if (bigint_is_zero(a)) {
+        // 2.1.) 0 == 0
+        // 2.2.) 0  < b
+        return (b == 0) ? BIGINT_EQUAL : BIGINT_LESS;
     }
 
-    // Same signs and same lengths; Need to do a digit-by-digit comparison.
-    for (int i = 0; i < a->len; i++) {
-        // Found some digit that is the opposite of less-than?
-        if (a->data[i] >= b->data[i]) {
-            return false;
-        }
-    }
-    return true;
-}
-
-bool
-bigint_leq_abs(const BigInt *a, const BigInt *b)
-{
-    BigInt_Comparison fast = bigint_fast_compare_abs(a, b);
-    if (fast != BIGINT_EQUAL) {
-        return fast == BIGINT_LESS;
+    // 3.) a > b
+    //  where #a >  1
+    //    and #b == 1
+    if (a->len > 1) {
+        return BIGINT_GREATER;
     }
 
-    // Same signs and same lengths; Need to do a digit-by-digit comparison.
-    for (int i = 0; i < a->len; i++) {
-        // Found some digit that is the opposite of less-equal?
-        if (a->data[i] > b->data[i]) {
-            return false;
-        }
+    if (a->data[0] > b) {
+        return BIGINT_GREATER;
+    } else if (a->data[0] < b) {
+        return BIGINT_LESS;
     }
-    return true;
+    return BIGINT_EQUAL;
 }
 
-bool
-bigint_lt_digit_abs(const BigInt *a, BigInt_Digit b)
-{
-    return a->len == 1 && a->data[0] < b;
-}
 
 // === }}} =====================================================================
 

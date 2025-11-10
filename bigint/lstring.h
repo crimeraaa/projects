@@ -28,31 +28,31 @@ is_space(char ch);
 
 #ifdef LSTRING_IMPLEMENTATION
 
-inline int
+int
 is_digit(char ch)
 {
     return '0' <= ch && ch <= '9';
 }
 
-inline int
+int
 is_upper(char ch)
 {
     return 'A' <= ch && ch <= 'Z';
 }
 
-inline int
+int
 is_lower(char ch)
 {
     return 'a' <= ch && ch <= 'z';
 }
 
-inline int
+int
 is_alnum(char ch)
 {
     return is_digit(ch) || is_upper(ch) || is_lower(ch);
 }
 
-inline int
+int
 is_space(char ch)
 {
     switch (ch) {
