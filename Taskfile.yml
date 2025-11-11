@@ -28,6 +28,7 @@ tasks:
 
   run:
     desc: Re-build the bigint executable if needed, then run it.
+    dir: '{{.USER_WORKING_DIR}}'
     deps:
       - task: build
     cmds:
@@ -36,9 +37,10 @@ tasks:
 
   build:
     desc: Re-build the bigint executable if needed.
+    dir: '{{.USER_WORKING_DIR}}'
     cmds:
       - mkdir -p bin
-      - '{{.CC}} {{.CC_FLAGS}} -o ./{{.OUT}} *.c'
+      - '{{.CC}} {{.CC_FLAGS}} -o ./{{.OUT}} ./*.c'
     sources:
       - ./*.[ch]
     generates:
@@ -46,6 +48,7 @@ tasks:
 
   fix-whitespace:
     desc: Remove trailing whitespace from all project files.
+    dir: '{{.USER_WORKING_DIR}}'
     deps:
       - task: find-and-replace
         vars:
@@ -55,6 +58,7 @@ tasks:
   # https://github.com/crimeraaa/lulu/blob/16cf4f5d187546704e7f66c9c401d85c4a71b68a/Taskfile.yml#L95C8-L95C11
   find-and-replace:
     desc: Replace a pattern in all project files. Uses Vim syntax.
+    dir: '{{.USER_WORKING_DIR}}'
     vars:
       VIM: vim
       VIM_GLOB: >-
