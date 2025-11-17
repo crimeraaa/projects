@@ -1,8 +1,11 @@
-#ifndef BIGINT_COMMON_H
-#define BIGINT_COMMON_H
+#ifndef PROJECTS_COMMON_H
+#define PROJECTS_COMMON_H
 
-#include <assert.h>
-#include <stddef.h>
+#include <assert.h> // assert
+#include <stdalign.h> // alignof
+#include <stdbool.h> // bool
+#include <stddef.h> // size_t, NULL
+#include <stdint.h> // uinptr_t
 
 #define cast(T)         (T)
 #define unused(expr)    ((void)(expr))
@@ -17,4 +20,4 @@
     __builtin_trap()
 
 
-#endif /* BIGINT_COMMON_H */
+#endif /* PROJECTS_COMMON_H */

@@ -1,0 +1,19 @@
+version: '3'
+
+tasks:
+  run:
+    desc: Run `{{.OUT}}`.
+    deps:
+      - task: build
+    cmds:
+      - '{{.OUT}} {{.CLI_ARGS}}'
+    interactive: true
+
+  build:
+    desc: Re-build `{{.OUT}}` if needed.
+    cmds:
+      - mkdir -p bin
+      - '{{.CC}} {{.CC_FLAGS}} -o {{.OUT}} ./main.c'
+    sources:
+      - ./*.[ch]
+      - ../common.h

@@ -3,7 +3,7 @@
 
 #include <stdio.h>  // BUFSIZ
 
-#include "common.h"
+#include "../common.h"
 
 typedef struct {
     size_t prev_offset;

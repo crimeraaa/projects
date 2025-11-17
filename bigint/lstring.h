@@ -1,7 +1,7 @@
 #ifndef LSTRING_H
 #define LSTRING_H
 
-#include "common.h"
+#include "../common.h"
 
 typedef struct {
     const char *data;

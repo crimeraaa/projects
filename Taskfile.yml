@@ -13,7 +13,18 @@ vars:
     -pedantic
     -fsanitize=address
 
-  OUT: bin/bigint
+  # OUT: bin/bigint
+
+includes:
+  # bigint:
+  #   taskfile: ./bigint/Build.yml
+  #   dir: ./bigint
+
+  mem:
+    taskfile: ./mem/Build.yml
+    vars:
+      OUT: ./bin/main
+    dir: ./mem
 
 tasks:
   # list:
@@ -26,25 +37,25 @@ tasks:
   #   cmds:
   #     - ls -1 {{.GLOB}}
 
-  run:
-    desc: Re-build the bigint executable if needed, then run it.
-    dir: '{{.USER_WORKING_DIR}}'
-    deps:
-      - task: build
-    cmds:
-      - '{{.OUT}} {{.CLI_ARGS}}'
-    interactive: true
+  # run:
+  #   desc: Re-build the bigint executable if needed, then run it.
+  #   dir: '{{.USER_WORKING_DIR}}'
+  #   deps:
+  #     - task: build
+  #   cmds:
+  #     - '{{.OUT}} {{.CLI_ARGS}}'
+  #   interactive: true
 
-  build:
-    desc: Re-build the bigint executable if needed.
-    dir: '{{.USER_WORKING_DIR}}'
-    cmds:
-      - mkdir -p bin
-      - '{{.CC}} {{.CC_FLAGS}} -o ./{{.OUT}} ./*.c'
-    sources:
-      - ./*.[ch]
-    generates:
-      - ./{{.OUT}}
+  # build:
+  #   desc: Re-build the bigint executable if needed.
+  #   dir: '{{.USER_WORKING_DIR}}'
+  #   cmds:
+  #     - mkdir -p bin
+  #     - '{{.CC}} {{.CC_FLAGS}} -o ./{{.OUT}} ./*.c'
+  #   sources:
+  #     - ./*.[ch]
+  #   generates:
+  #     - ./{{.OUT}}
 
   fix-whitespace:
     desc: Remove trailing whitespace from all project files.
