@@ -9,7 +9,7 @@
 #include "parser.c"
 
 static void *
-stdc_allocator_fn(void *context,
+default_allocator_fn(void *context,
     Allocator_Mode      mode,
     void               *old_memory,
     size_t              old_size,
@@ -33,18 +33,17 @@ stdc_allocator_fn(void *context,
     return NULL;
 }
 
-static const Allocator
-stdc_allocator = {stdc_allocator_fn, NULL};
+static Allocator
+default_allocator = {default_allocator_fn, NULL},
+temp_allocator;
 
-static Arena
-arena;
 
 static void
 bigint_print(const BigInt *b, char c)
 {
     size_t n = 0;
 
-    const char *s = bigint_to_lstring(b, &n, arena_allocator(&arena));
+    const char *s = bigint_to_lstring(b, &n, temp_allocator);
     printfln("%c: '%s' (%zu / %zu chars written)",
         c, s, n, bigint_string_length(b));
 }
@@ -54,7 +53,7 @@ unary(const char *op, const char *arg)
 {
     BigInt b;
     int err = 0;
-    bigint_init_string(&b, arg, stdc_allocator);
+    bigint_init_string(&b, arg, default_allocator);
     if (op != NULL) {
         eprintfln("Invalid unary operation '%s'", op);
         err = 1;
@@ -71,9 +70,9 @@ static void
 print_compare(const BigInt *a, const char *op, const BigInt *b, bool cmp)
 {
     printfln("%s %s %s => %s",
-        bigint_to_string(a, arena_allocator(&arena)),
+        bigint_to_string(a, temp_allocator),
         op,
-        bigint_to_string(b, arena_allocator(&arena)),
+        bigint_to_string(b, temp_allocator),
         (cmp) ? "true" : "false");
 }
 
@@ -82,9 +81,9 @@ binary(const char *arg_a, const char *op, const char *arg_b)
 {
     BigInt a, b, c;
     int err = 0;
-    bigint_init_string(&a, arg_a, stdc_allocator);
-    bigint_init_string(&b, arg_b, stdc_allocator);
-    bigint_init(&c, stdc_allocator);
+    bigint_init_string(&a, arg_a, temp_allocator);
+    bigint_init_string(&b, arg_b, temp_allocator);
+    bigint_init(&c, temp_allocator);
 
     // The following is absolutely abysmal
     switch (strlen(op)) {
@@ -145,7 +144,7 @@ repl(void)
 {
     char buf[256];
     BigInt ans;
-    bigint_init(&ans, stdc_allocator);
+    bigint_init(&ans, default_allocator);
     for (;;) {
         String s;
         printf(">");
@@ -158,7 +157,7 @@ repl(void)
 
         bigint_clear(&ans);
         evaluate(s, &ans);
-        arena_free_all(&arena);
+        mem_free_all(temp_allocator);
     }
     bigint_destroy(&ans);
     return 0;
@@ -168,7 +167,9 @@ int
 main(int argc, char *argv[])
 {
     static char buf[BUFSIZ];
+    static Arena arena;
     arena_init(&arena, buf, sizeof(buf));
+    temp_allocator = arena_allocator(&arena);
     switch (argc) {
     case 1:
         return repl();

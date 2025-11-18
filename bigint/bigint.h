@@ -41,14 +41,14 @@ typedef struct {
     // digit is stored at the 0th index. E.g. 1234 is stored as {4,3,2,1}.
     BigInt_Digit *data;
 
-    // Each BigInt remembers its allocator.
-    Allocator allocator;
-
     // How many digits are validly indexable in `data`.
     int len;
 
     // How many digits are allocated for in `data`.
     int cap;
+
+    // Each BigInt remembers its allocator.
+    Allocator allocator;
 
     // `true` indicates negative (e.g. sign bit toggled) while `false`
     // indicates positive.
@@ -85,133 +85,18 @@ bigint_init(BigInt *b, Allocator allocator);
 BigInt_Error
 bigint_init_int(BigInt *b, int i, Allocator allocator);
 
-/** @brief Write the integer string `s` (bounded by length `n`) of given `base`
- * into `b`.
+/** @brief Write the integer string `data` (bounded by length `len`) of given
+ *  `base` into `dst`.
  *
  * @param base  If 0, we will attempt to determine it based on any prefixes.
  *              Otherwise, it will default to 10.
  */
 BigInt_Error
-bigint_init_base_lstring(BigInt *b,
-    const char *s,
-    size_t      n,
+bigint_init_base_lstring(BigInt *dst,
+    const char *data,
+    size_t      len,
     int         base,
     Allocator   allocator);
-
-
-/** @brief Write the integer string `s` (bounded by `n`) of base `base` into
- * the BigInt `b`.
- *
- * @param b Must be already initialized with an allocator.
- */
-BigInt_Error
-bigint_set_base_lstring(BigInt *b, const char *s, size_t n, int base);
-
-
-/** @brief Get the string length of the would be base-`base` representation. */
-size_t
-bigint_base_string_length(const BigInt *b, int base);
-
-
-/** @brief Write the base-N representation of `b` into a buffer from `a`.
- *  Stores the string length in `len`.
- *
- * @return The buffer if successful, else `NULL` if the buffer could not fit
- *  the string representation of `b` in the given base and/or the buffer could
- *  not be resized.
- */
-const char *
-bigint_to_base_lstring(const BigInt *b,
-    int       base,
-    size_t   *len,
-    Allocator allocator);
-
-
-/** @brief Writes the integer nul-terminated string `s`, of base `b`, into
- *  `b` to be initialized with the Allocator `a`.
- *
- * @param b         BigInt *
- * @param s         const char *    - Read-only, nul-terminated string.
- * @param base      int             - Base to interpret `s` in.
- * @param allocator Allocator
- */
-#define bigint_init_base_string(b, s, base, allocator)                         \
-    bigint_init_base_lstring(b,                                                \
-        /*s=*/        s,                                                       \
-        /*n=*/        strlen(s),                                               \
-        /*base=*/     base,                                                    \
-        /*allocator=*/allocator)
-
-
-/** @brief Write integer string `s` (bounded by `n`), of unknown base, into
- *  `b` to be initialized with the Allocator `a`.
- *
- * If the base cannot be determined, it will default to 10.
- *
- * @param b         BigInt *
- * @param s         const char * - Read-only string, may not be nul-terminated.
- * @param n         size_t       - Number of characters in `s`.
- * @param allocator Allocator    - Allocates the digit array used by `b`.
- */
-#define bigint_init_lstring(b, s, n, allocator) \
-    bigint_init_base_lstring(b,                                                \
-        /*s=*/          s,                                                     \
-        /*n=*/          n,                                                     \
-        /*base=*/       0,                                                     \
-        /*allocator=*/  allocator)
-
-
-/** @brief Write integer in the nul-terminated string `s`, of unknown base
- *  into the BigInt `b`.
- *
- * @param b         BigInt *
- * @param s         const char * - A nul-terminated string.
- * @param allocator Allocator    - Allocates the digit array used by `b`.
- */
-#define bigint_init_string(b, s, allocator)                                    \
-    bigint_init_lstring(b,                                                     \
-        /*s=*/          s,                                                     \
-        /*n=*/          strlen(s),                                             \
-        /*allocator=*/  allocator)
-
-
-/** @brief Get the string length of the would-be base-10 representation.
- *
- * @param b BigInt *
- */
-#define bigint_string_length(b) \
-    bigint_base_string_length(b, /*base=*/10)
-
-
-/** @brief Write the base-`base` representation of `b`.
- *
- * @param b         BigInt *
- * @param base      int        - What base to write the output string in.
- * @param allocator Allocator  - Allocates the string buffer.
- */
-#define bigint_to_base_string(b, base, allocator) \
-    bigint_to_base_lstring(b, base, /*len=*/NULL, allocator)
-
-
-/** @brief Write the base-10 representation of `b`
- *
- * @param b         BigInt *
- * @param len       size_t *    - Optional out parameter for string length.
- * @param allocator Allocator   - Allocates the string buffer.
- */
-#define bigint_to_lstring(b, len, allocator) \
-    bigint_to_base_lstring(b, /*base=*/10, len, allocator)
-
-
-/** @brief Write the base-10 representation of `b`.
- *
- * @param b         BigInt *
- * @param allocator Allocator    - Allocates the string buffer.
- */
-#define bigint_to_string(b, allocator)                                         \
-    bigint_to_lstring(b,                                                       \
-        /*len=*/      NULL,                                                    \
-        /*allocator=*/allocator)
 
 
 void
@@ -220,74 +105,201 @@ bigint_destroy(BigInt *b);
 void
 bigint_clear(BigInt *b);
 
+BigInt_Error
+bigint_copy(BigInt *dst, const BigInt *src);
+
+
+/** @brief Write the integer string `data` (bounded by `len`) of base `base`
+ * into the BigInt `dst`.
+ *
+ * @param dst Must be already initialized with an allocator.
+ */
+BigInt_Error
+bigint_set_base_lstring(BigInt *dst, const char *data, size_t len, int base);
+
+
+/** @brief Get the string length of the would be base-`base` representation. */
+size_t
+bigint_base_string_length(const BigInt *src, int base);
+
+
+/** @brief Write the base-N representation of `src` into a buffer from
+ *  `allocator`.
+ *
+ * @param len
+ *  Optional out-parameter to store the number of characters in the string.
+ *
+ * @return The buffer if successful, else `NULL` if the buffer could not fit
+ *  the string representation of `b` in the given base and/or the buffer could
+ *  not be resized.
+ */
+const char *
+bigint_to_base_lstring(const BigInt *src,
+    int       base,
+    size_t   *len,
+    Allocator allocator);
+
+
+/** @brief Writes the integer nul-terminated string `s`, of base `b`, into
+ *  `b` to be initialized with the Allocator `a`.
+ *
+ * @param dst       BigInt *
+ * @param cstring   const char *    - Read-only, nul-terminated string.
+ * @param base      int             - Base to interpret `s` in.
+ * @param allocator Allocator
+ */
+#define bigint_init_base_string(dst, cstring, base, allocator)                 \
+    bigint_init_base_lstring(dst,                                              \
+        /*data=*/     cstring,                                                 \
+        /*len=*/      strlen(cstring),                                         \
+        /*base=*/     base,                                                    \
+        /*allocator=*/allocator)
+
+
+/** @brief Write integer string `data` (bounded by `len`), of unknown base,
+ *  into `dst` to be initialized with the Allocator `allocator`.
+ *
+ * If the base cannot be determined, it will default to 10.
+ *
+ * @param dst       BigInt *
+ * @param data      const char * - Read-only string, may not be nul-terminated.
+ * @param len       size_t       - Number of characters in `data`.
+ * @param allocator Allocator    - Allocates the digit array used by `dst`.
+ */
+#define bigint_init_lstring(dst, data, len, allocator)                         \
+    bigint_init_base_lstring(dst,                                              \
+        /*data=*/       data,                                                  \
+        /*len=*/        len,                                                   \
+        /*base=*/       0,                                                     \
+        /*allocator=*/  allocator)
+
+
+/** @brief Write integer in the nul-terminated string `string`, of unknown
+ *  base into the BigInt `dst`.
+ *
+ * @param dst       BigInt *
+ * @param cstring   const char * - A nul-terminated string.
+ * @param allocator Allocator    - Allocates the digit array used by `dst`.
+ */
+#define bigint_init_string(dst, cstring, allocator)                            \
+    bigint_init_lstring(dst,                                                   \
+        /*string=*/     cstring,                                               \
+        /*len=*/        strlen(cstring),                                       \
+        /*allocator=*/  allocator)
+
+
+/** @brief Get the string length of the would-be base-10 representation.
+ *
+ * @param src BigInt *
+ */
+#define bigint_string_length(src) \
+    bigint_base_string_length(src, /*base=*/10)
+
+
+/** @brief Write the base-`base` representation of `src`.
+ *
+ * @param src       BigInt *
+ * @param base      int        - What base to write the output string in.
+ * @param allocator Allocator  - Allocates the string buffer.
+ */
+#define bigint_to_base_string(src, base, allocator)                            \
+    bigint_to_base_lstring(src,                                                \
+        /*base=*/          base,                                               \
+        /*len=*/           NULL,                                               \
+        /*allocator=*/     allocator)
+
+
+/** @brief Write the base-10 representation of `src`
+ *
+ * @param src       BigInt *
+ * @param len       size_t *    - Optional out parameter for string length.
+ * @param allocator Allocator   - Allocates the string buffer.
+ */
+#define bigint_to_lstring(src, len, allocator)                                 \
+    bigint_to_base_lstring(src,                                                \
+        /*base=*/          10,                                                 \
+        /*len=*/           len,                                                \
+        /*allocator=*/     allocator)
+
+
+/** @brief Write the base-10 representation of `src`.
+ *
+ * @param src       BigInt *
+ * @param allocator Allocator    - Allocates the string buffer.
+ */
+#define bigint_to_string(src, allocator)                                       \
+    bigint_to_lstring(src,                                                     \
+        /*len=*/      NULL,                                                    \
+        /*allocator=*/allocator)
+
 
 // === ARITHMETIC ========================================================== {{{
 
 
-/** @brief `out = a + b`
+/** @brief `dst = a + b`
  *
- * @param out
+ * @param dst
  *  Must be already initialized with an allocator.
  *  May alias either `a` and/or `b`.
  */
 BigInt_Error
-bigint_add(BigInt *out, const BigInt *a, const BigInt *b);
+bigint_add(BigInt *dst, const BigInt *a, const BigInt *b);
 
 
-/** @brief `out = a - b`
+/** @brief `dst = a - b`
  *
- * @param out
+ * @param dst
  *  Must already be initialized with an allocator.
  *  May alias either `a` and/or `b`.
  */
 BigInt_Error
-bigint_sub(BigInt *out, const BigInt *a, const BigInt *b);
+bigint_sub(BigInt *dst, const BigInt *a, const BigInt *b);
 
 
-/** @brief `out = a * b`
+/** @brief `dst = a * b`
  *
- * @param out
+ * @param dst
  *  Must already be initialized with an allocator.
  *  May NOT alias either `a` nor `b`.
  */
 BigInt_Error
-bigint_mul(BigInt *restrict out, const BigInt *a, const BigInt *b);
+bigint_mul(BigInt *restrict dst, const BigInt *a, const BigInt *b);
 
 
-/** @brief = `out = a / b`
+/** @brief `dst = a / b`
  *
- * @param out
+ * @param dst
  *  Must already be initialized with an allocator.
  *  May NOT alias either `a` nor `b`.
  */
 BigInt_Error
-bigint_div(BigInt *restrict out, const BigInt *a, const BigInt *b);
+bigint_div(BigInt *restrict dst, const BigInt *a, const BigInt *b);
 
 
-/** @brief = `out = a % b` */
+/** @brief `dst = a % b` */
 BigInt_Error
-bigint_mod(BigInt *restrict out, const BigInt *a, const BigInt *b);
-
-BigInt_Error
-bigint_add_digit(BigInt *out, const BigInt *a, BigInt_Digit b);
+bigint_mod(BigInt *restrict dst, const BigInt *a, const BigInt *b);
 
 BigInt_Error
-bigint_sub_digit(BigInt *out, const BigInt *a, BigInt_Digit b);
+bigint_add_digit(BigInt *dst, const BigInt *a, BigInt_Digit b);
+
+BigInt_Error
+bigint_sub_digit(BigInt *dst, const BigInt *a, BigInt_Digit b);
 
 
-/** @brief `out = a * b`
+/** @brief `dst = a * b`
  *
- * @param out
+ * @param dst
  *  Must already be initialized with an allocator.
  *  May alias `a` because we only iterate over the digit sequence once.
  */
 BigInt_Error
-bigint_mul_digit(BigInt *out, const BigInt *a, BigInt_Digit b);
+bigint_mul_digit(BigInt *dst, const BigInt *a, BigInt_Digit b);
 
 
-/** @brief `out = -a` */
+/** @brief `dst = -a` */
 BigInt_Error
-bigint_neg(BigInt *out, const BigInt *a);
+bigint_neg(BigInt *dst, const BigInt *src);
 
 
 // === }}} =====================================================================
