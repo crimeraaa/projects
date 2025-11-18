@@ -145,8 +145,6 @@ arena_allocator_fn(void *context,
 Allocator
 arena_allocator(Arena *a)
 {
-    Allocator r;
-    r.fn      = arena_allocator_fn;
-    r.context = a;
+    Allocator r = {arena_allocator_fn, a};
     return r;
 }

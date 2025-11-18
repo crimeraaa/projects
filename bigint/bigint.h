@@ -1,11 +1,7 @@
 #ifndef BIGINT_H
 #define BIGINT_H
 
-#include <stdbool.h>    // bool
-#include <stddef.h>     // size_t
-#include <stdint.h>     // u?int[\d]+_t, intmax_t
-
-#include "mem.h"
+#include "../mem/allocator.h"
 
 // === CONFIGUATION ======================================================== {{{
 
@@ -46,7 +42,7 @@ typedef struct {
     BigInt_Digit *data;
 
     // Each BigInt remembers its allocator.
-    const Allocator *allocator;
+    Allocator allocator;
 
     // How many digits are validly indexable in `data`.
     int len;
@@ -84,10 +80,10 @@ typedef enum {
 } BigInt_Comparison;
 
 void
-bigint_init(BigInt *b, const Allocator *a);
+bigint_init(BigInt *b, Allocator allocator);
 
 BigInt_Error
-bigint_init_int(BigInt *b, int i, const Allocator *a);
+bigint_init_int(BigInt *b, int i, Allocator allocator);
 
 /** @brief Write the integer string `s` (bounded by length `n`) of given `base`
  * into `b`.
@@ -96,8 +92,11 @@ bigint_init_int(BigInt *b, int i, const Allocator *a);
  *              Otherwise, it will default to 10.
  */
 BigInt_Error
-bigint_init_base_lstring(BigInt *b, const char *s, size_t n, int base,
-    const Allocator *a);
+bigint_init_base_lstring(BigInt *b,
+    const char *s,
+    size_t      n,
+    int         base,
+    Allocator   allocator);
 
 
 /** @brief Write the integer string `s` (bounded by `n`) of base `base` into
@@ -122,20 +121,26 @@ bigint_base_string_length(const BigInt *b, int base);
  *  not be resized.
  */
 const char *
-bigint_to_base_lstring(const BigInt *b, const Allocator *a, int base,
-    size_t *len);
+bigint_to_base_lstring(const BigInt *b,
+    int       base,
+    size_t   *len,
+    Allocator allocator);
 
 
 /** @brief Writes the integer nul-terminated string `s`, of base `b`, into
  *  `b` to be initialized with the Allocator `a`.
  *
- * @param b     BigInt *
- * @param s     const char *        - Read-only, nul-terminated string.
- * @param base  int                 - Base to interpret `s` in.
- * @param a     const Allocator *
+ * @param b         BigInt *
+ * @param s         const char *    - Read-only, nul-terminated string.
+ * @param base      int             - Base to interpret `s` in.
+ * @param allocator Allocator
  */
-#define bigint_init_base_string(b, s, base, a) \
-    bigint_init_base_lstring(b, s, strlen(s), base, a)
+#define bigint_init_base_string(b, s, base, allocator)                         \
+    bigint_init_base_lstring(b,                                                \
+        /*s=*/        s,                                                       \
+        /*n=*/        strlen(s),                                               \
+        /*base=*/     base,                                                    \
+        /*allocator=*/allocator)
 
 
 /** @brief Write integer string `s` (bounded by `n`), of unknown base, into
@@ -143,24 +148,31 @@ bigint_to_base_lstring(const BigInt *b, const Allocator *a, int base,
  *
  * If the base cannot be determined, it will default to 10.
  *
- * @param b BigInt *
- * @param s const char *        - Read-only string, may not be nul-terminated.
- * @param n size_t              - Number of characters in `s`.
- * @param a const Allocator *   - Allocates the digit array used by `b`.
+ * @param b         BigInt *
+ * @param s         const char * - Read-only string, may not be nul-terminated.
+ * @param n         size_t       - Number of characters in `s`.
+ * @param allocator Allocator    - Allocates the digit array used by `b`.
  */
-#define bigint_init_lstring(b, s, n, a) \
-    bigint_init_base_lstring(b, s, n, /*base=*/0, a)
+#define bigint_init_lstring(b, s, n, allocator) \
+    bigint_init_base_lstring(b,                                                \
+        /*s=*/          s,                                                     \
+        /*n=*/          n,                                                     \
+        /*base=*/       0,                                                     \
+        /*allocator=*/  allocator)
 
 
 /** @brief Write integer in the nul-terminated string `s`, of unknown base
  *  into the BigInt `b`.
  *
- * @param b BigInt *
- * @param s const char *        - A nul-terminated string.
- * @param a const Allocator *   - Allocates the digit array used by `b`.
+ * @param b         BigInt *
+ * @param s         const char * - A nul-terminated string.
+ * @param allocator Allocator    - Allocates the digit array used by `b`.
  */
-#define bigint_init_string(b, s, a) \
-    bigint_init_lstring(b, s, strlen(s), a)
+#define bigint_init_string(b, s, allocator)                                    \
+    bigint_init_lstring(b,                                                     \
+        /*s=*/          s,                                                     \
+        /*n=*/          strlen(s),                                             \
+        /*allocator=*/  allocator)
 
 
 /** @brief Get the string length of the would-be base-10 representation.
@@ -173,31 +185,34 @@ bigint_to_base_lstring(const BigInt *b, const Allocator *a, int base,
 
 /** @brief Write the base-`base` representation of `b`.
  *
- * @param b    BigInt *
- * @param a    const Allocator *    - Allocates the string buffer.
- * @param base int                  - What base to write the output string in.
+ * @param b         BigInt *
+ * @param base      int        - What base to write the output string in.
+ * @param allocator Allocator  - Allocates the string buffer.
  */
-#define bigint_to_base_string(b, a, base) \
-    bigint_to_base_lstring(b, a, base, /*len=*/NULL)
+#define bigint_to_base_string(b, base, allocator) \
+    bigint_to_base_lstring(b, base, /*len=*/NULL, allocator)
 
 
 /** @brief Write the base-10 representation of `b`
  *
- * @param b     BigInt *
- * @param a     const Allocator *   - Allocates the string buffer.
- * @param len   size_t *            - Optional out parameter for string length.
+ * @param b         BigInt *
+ * @param len       size_t *    - Optional out parameter for string length.
+ * @param allocator Allocator   - Allocates the string buffer.
  */
-#define bigint_to_lstring(b, a, len) \
-    bigint_to_base_lstring(b, a, /*base=*/10, len)
+#define bigint_to_lstring(b, len, allocator) \
+    bigint_to_base_lstring(b, /*base=*/10, len, allocator)
 
 
 /** @brief Write the base-10 representation of `b`.
  *
- * @param b BigInt *
- * @param a const Allocator *   - Allocates the string buffer.
+ * @param b         BigInt *
+ * @param allocator Allocator    - Allocates the string buffer.
  */
-#define bigint_to_string(b, a) \
-    bigint_to_lstring(b, a, NULL)
+#define bigint_to_string(b, allocator)                                         \
+    bigint_to_lstring(b,                                                       \
+        /*len=*/      NULL,                                                    \
+        /*allocator=*/allocator)
+
 
 void
 bigint_destroy(BigInt *b);

@@ -10,6 +10,7 @@ typedef struct {
 } String;
 
 #define string_expand(s)    (int)(s).len, (s).data
+#define string_literal(s)   {(s), sizeof(s) - 1}
 
 typedef struct {
     String *data;
@@ -29,6 +30,22 @@ typedef struct {
     size_t cap;
     Allocator allocator;
 } String_Builder;
+
+bool
+is_digit(char ch);
+
+bool
+is_upper(char ch);
+
+bool
+is_lower(char ch);
+
+bool
+is_alnum(char ch);
+
+bool
+is_space(char ch);
+
 
 String
 string_sub(String s, size_t start, size_t stop);

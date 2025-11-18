@@ -180,7 +180,7 @@ parser_parse_precedence(Parser *p, Precedence prec, BigInt *left)
     bigint_init(right, left->allocator);
 
     for (;;) {
-        Binary_Op  op     = BIN_NONE;
+        Binary_Op  op      = BIN_NONE;
         Precedence op_prec = parser_binary_rule(p->lookahead.type, &op);
         if (prec > op_prec || op == BIN_NONE) {
             break;

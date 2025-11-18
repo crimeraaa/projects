@@ -1,9 +1,13 @@
 # https://taskfile.dev
+
 version: '3'
+
+vars:
+  GREETING: Hello, World!
 
 tasks:
   run:
-    desc: Run `{{.OUT}}`.
+    desc: Run the `bigint` executable, building it unconditionally.
     deps:
       - task: build
     cmds:
@@ -11,10 +15,9 @@ tasks:
     interactive: true
 
   build:
-    desc: Re-build `{{.OUT}}` if needed.
+    desc: Build the `bigint` executable unconditionally.
     cmds:
-      - mkdir -p bin
       - '{{.CC}} {{.CC_FLAGS}} -o {{.OUT}} ./main.c'
     sources:
       - ./*.[ch]
-      - ../common.h
+      - ./{utils,mem}/*.[ch]

@@ -1,12 +1,49 @@
 #include "strings.h"
 
+bool
+is_digit(char ch)
+{
+    return '0' <= ch && ch <= '9';
+}
+
+bool
+is_upper(char ch)
+{
+    return 'A' <= ch && ch <= 'Z';
+}
+
+bool
+is_lower(char ch)
+{
+    return 'a' <= ch && ch <= 'z';
+}
+
+bool
+is_alnum(char ch)
+{
+    return is_digit(ch) || is_upper(ch) || is_lower(ch);
+}
+
+bool
+is_space(char ch)
+{
+    switch (ch) {
+    case ' ':
+    case '\t':
+    case '\n':
+    case '\v':
+    case '\r':
+        return true;
+    }
+    return false;
+}
+
+
 String
 string_sub(String s, size_t start, size_t stop)
 {
     assert(start <= stop);
-    const char *data = s.data + start;
-    size_t len = stop - start;
-    String t = {data, len};
+    String t = {s.data + start, stop - start};
     return t;
 }
 

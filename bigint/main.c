@@ -1,45 +1,51 @@
-#include <stdio.h>  // fputs, fprintf, printf
-#include <string.h> // strcspn
+#include <stdio.h>  // fgets, fputc, printf, fprintf
+#include <string.h> // strlen, strcspn
 #include <stdlib.h> // realloc, free
 
-#include "lstring.h"
-#include "bigint.h"
-#include "parser.h"
-#include "stack.h"
+#include "../mem/arena.c"
+
+#include "bigint.c"
+#include "lexer.c"
+#include "parser.c"
 
 static void *
-stdc_allocator_fn(void *ptr, size_t old_size, size_t new_size, void *context)
+stdc_allocator_fn(void *context,
+    Allocator_Mode      mode,
+    void               *old_memory,
+    size_t              old_size,
+    size_t              new_size,
+    size_t              align)
 {
     // Not needed; the malloc family already tracks this for us.
-    unused(old_size);
     unused(context);
+    unused(old_size);
+    unused(align);
 
-    // Free request?
-    if (new_size == 0) {
-        free(ptr);
-        return NULL;
+    switch (mode) {
+    case ALLOCATOR_ALLOC:
+    case ALLOCATOR_RESIZE:
+        return realloc(old_memory, new_size);
+    case ALLOCATOR_FREE:
+        free(old_memory);
+    case ALLOCATOR_FREE_ALL:
+        break;
     }
-
-    // New allocation or resize request?
-    return realloc(ptr, new_size);
+    return NULL;
 }
 
 static const Allocator
 stdc_allocator = {stdc_allocator_fn, NULL};
 
-static Stack
-stack;
-
-static const Allocator
-stack_allocator = {stack_allocator_fn, &stack};
+static Arena
+arena;
 
 static void
 bigint_print(const BigInt *b, char c)
 {
     size_t n = 0;
 
-    const char *s = bigint_to_lstring(b, &stack_allocator, &n);
-    printf("%c: '%s' (%zu / %zu chars written)\n",
+    const char *s = bigint_to_lstring(b, &n, arena_allocator(&arena));
+    printfln("%c: '%s' (%zu / %zu chars written)",
         c, s, n, bigint_string_length(b));
 }
 
@@ -48,9 +54,9 @@ unary(const char *op, const char *arg)
 {
     BigInt b;
     int err = 0;
-    bigint_init_string(&b, arg, &stdc_allocator);
+    bigint_init_string(&b, arg, stdc_allocator);
     if (op != NULL) {
-        eprintfln("Invalid unary operation '%s'\n", op);
+        eprintfln("Invalid unary operation '%s'", op);
         err = 1;
         goto cleanup;
     }
@@ -64,9 +70,11 @@ cleanup:
 static void
 print_compare(const BigInt *a, const char *op, const BigInt *b, bool cmp)
 {
-    printf("%s %s %s => %s\n",
-        bigint_to_string(a, &stack_allocator), op,
-        bigint_to_string(b, &stack_allocator), (cmp) ? "true" : "false");
+    printfln("%s %s %s => %s",
+        bigint_to_string(a, arena_allocator(&arena)),
+        op,
+        bigint_to_string(b, arena_allocator(&arena)),
+        (cmp) ? "true" : "false");
 }
 
 static int
@@ -74,9 +82,9 @@ binary(const char *arg_a, const char *op, const char *arg_b)
 {
     BigInt a, b, c;
     int err = 0;
-    bigint_init_string(&a, arg_a, &stdc_allocator);
-    bigint_init_string(&b, arg_b, &stdc_allocator);
-    bigint_init(&c, &stdc_allocator);
+    bigint_init_string(&a, arg_a, stdc_allocator);
+    bigint_init_string(&b, arg_b, stdc_allocator);
+    bigint_init(&c, stdc_allocator);
 
     // The following is absolutely abysmal
     switch (strlen(op)) {
@@ -106,7 +114,7 @@ binary(const char *arg_a, const char *op, const char *arg_b)
     default:
 error:
         err = 1;
-        fprintf(stderr, "Invalid binary operation '%s'.\n", op);
+        eprintfln("Invalid binary operation '%s'.", op);
         goto cleanup;
     }
 
@@ -137,7 +145,7 @@ repl(void)
 {
     char buf[256];
     BigInt ans;
-    bigint_init(&ans, &stdc_allocator);
+    bigint_init(&ans, stdc_allocator);
     for (;;) {
         String s;
         printf(">");
@@ -150,7 +158,7 @@ repl(void)
 
         bigint_clear(&ans);
         evaluate(s, &ans);
-        stack_free_all(&stack);
+        arena_free_all(&arena);
     }
     bigint_destroy(&ans);
     return 0;
@@ -159,6 +167,8 @@ repl(void)
 int
 main(int argc, char *argv[])
 {
+    static char buf[BUFSIZ];
+    arena_init(&arena, buf, sizeof(buf));
     switch (argc) {
     case 1:
         return repl();
@@ -169,8 +179,7 @@ main(int argc, char *argv[])
     case 4:
         return binary(/*arg_a=*/argv[1], /*op=*/argv[2], /*arg_b=*/argv[3]);
     default:
-        fprintf(stderr, "Usage: %s [<integer> [<operation> <integer>]]\n",
-            argv[0]);
+        eprintfln("Usage: %s [<integer> [<operation> <integer>]]\n", argv[0]);
         return 1;
     }
 }
