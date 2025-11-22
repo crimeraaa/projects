@@ -37,6 +37,12 @@ bigint_init_len_cap(BigInt *b, int len, int cap, Allocator allocator)
     return BIGINT_OK;
 }
 
+static BigInt_Error
+bigint_init_len(BigInt *b, int len, Allocator allocator)
+{
+    return bigint_init_len_cap(b, len, len, allocator);
+}
+
 
 /** @brief Count the number of base-`base` digits in `value`.
  *  Assumes that the original value was positive to begin with. */
@@ -232,9 +238,17 @@ bigint_copy(BigInt *dst, const BigInt *src)
 }
 
 static void
-bigint_swap(const BigInt **a, const BigInt **b)
+bigint_swap_ptr(const BigInt **a, const BigInt **b)
 {
     const BigInt *tmp = *a;
+    *a = *b;
+    *b = tmp;
+}
+
+static void
+bigint_swap(BigInt *a, BigInt *b)
+{
+    BigInt tmp = *a;
     *a = *b;
     *b = tmp;
 }
@@ -421,7 +435,7 @@ bigint_to_base_lstring(const BigInt *src,
     string_builder_init(&sb, allocator);
 
     // No digits to work with?
-    if (src->len == 0) {
+    if (bigint_is_zero(src)) {
         if (!string_append_char(&sb, '0')) {
             goto fail;
         }
@@ -484,7 +498,7 @@ bigint_add_unsigned(BigInt *dst, const BigInt *a, const BigInt *b)
 {
     // Swap so we can assume a >= b (loosely)
     if (a->len < b->len) {
-        bigint_swap(&a, &b);
+        bigint_swap_ptr(&a, &b);
     }
 
     int max_used = a->len;
@@ -539,7 +553,7 @@ bigint_sub_unsigned(BigInt *dst, const BigInt *a, const BigInt *b)
         return BIGINT_ERROR_MEMORY;
     }
 
-    BigInt_Digit borrow = 0;
+    BigInt_Word borrow = 0;
     int i = 0;
 
     // Subtract the digit places common to both `a` and `b`, propagating the
@@ -547,7 +561,7 @@ bigint_sub_unsigned(BigInt *dst, const BigInt *a, const BigInt *b)
     for (; i < min_used; i += 1) {
         BigInt_Word diff = cast(BigInt_Word)a->data[i]
                     - cast(BigInt_Word)b->data[i]
-                    - cast(BigInt_Word)borrow;
+                    - borrow;
         // Need to borrow?
         if (diff < 0) {
             // Recall when borrowing we only ever "cross out" 1 at a time.
@@ -565,7 +579,7 @@ bigint_sub_unsigned(BigInt *dst, const BigInt *a, const BigInt *b)
 
     // Copy over the digit places in `a` that are not in `b`.
     for (; i < max_used; i += 1) {
-        BigInt_Word diff = cast(BigInt_Word)a->data[i] - cast(BigInt_Word)borrow;
+        BigInt_Word diff = cast(BigInt_Word)a->data[i] - borrow;
         if (diff < 0) {
             borrow = 1;
             diff += BIGINT_DIGIT_BASE;
@@ -575,7 +589,7 @@ bigint_sub_unsigned(BigInt *dst, const BigInt *a, const BigInt *b)
         dst->data[i] = diff;
     }
 
-    dst->data[max_used] = borrow;
+    dst->data[max_used] = cast(BigInt_Digit)borrow;
     return bigint_clamp(dst);
 }
 
@@ -592,7 +606,7 @@ bigint_add(BigInt *dst, const BigInt *a, const BigInt *b)
         //  where |a| < |b|
         if (bigint_lt_abs(a, b)) {
             dst->sign = b->sign;
-            bigint_swap(&a, &b);
+            bigint_swap_ptr(&a, &b);
         }
 
         // 1.3.)  a  + (-b) >= 0 ; Concept check:   12  + (-3) =  9
@@ -641,7 +655,7 @@ bigint_sub(BigInt *dst, const BigInt *a, const BigInt *b)
         } else {
             dst->sign = BIGINT_POSITIVE;
         }
-        bigint_swap(&a, &b);
+        bigint_swap_ptr(&a, &b);
     }
 
     // 3.) a - b >= 0
@@ -657,18 +671,40 @@ bigint_sub(BigInt *dst, const BigInt *a, const BigInt *b)
 BigInt_Error
 bigint_mul(BigInt *dst, const BigInt *a, const BigInt *b)
 {
+
+    if (a->len < b->len) {
+        bigint_swap_ptr(&a, &b);
+    }
+
+    int max_used = a->len;
+    int min_used = b->len;
+
+    // Use a temporary to avoid aliasing issues as we iterate both `a` and `b`
+    // multiple times.
+    BigInt tmp;
+    BigInt_Error err = bigint_init_len(&tmp, max_used + min_used, dst->allocator);
+    if (err) return err;
+
     // 1.1.) +a * +b >= 0
     // 1.2.) +a * -b <  0
     // 1.3.) -a * -b <  0
     // 1.4.) -a * -b >= 0
-    dst->sign = (a->sign == b->sign) ? BIGINT_POSITIVE : BIGINT_NEGATIVE;
+    tmp.sign = (a->sign == b->sign) ? BIGINT_POSITIVE : BIGINT_NEGATIVE;
 
-    if (a->len < b->len) {
-        bigint_swap(&a, &b);
+    // long multiplication
+    for (int b_i = 0; b_i < min_used; b_i += 1) {
+        BigInt_Word carry = 0;
+        BigInt_Word mult = cast(BigInt_Word)b->data[b_i];
+        for (int a_i = 0; a_i < max_used; a_i += 1) {
+            BigInt_Word prod = mult * cast(BigInt_Word)a->data[a_i] + carry;
+            carry = prod / BIGINT_DIGIT_BASE;
+            tmp.data[b_i + a_i] += cast(BigInt_Digit)(prod % BIGINT_DIGIT_BASE);
+        }
+        tmp.data[b_i + max_used] += carry;
     }
-
-    stub();
-    return BIGINT_OK;
+    bigint_swap(&tmp, dst);
+    bigint_destroy(&tmp);
+    return bigint_clamp(dst);
 }
 
 /** @brief `dst = |a| + |b|` */
@@ -819,20 +855,20 @@ bigint_mul_digit_unsigned(BigInt *dst, const BigInt *a, BigInt_Digit b)
 
     // Multiplication by a single digit is simple: we multiple each digit
     // of `a` with `b`.
-    BigInt_Digit carry = 0;
+    BigInt_Word carry = 0;
     for (int i = 0; i < used; i++) {
         BigInt_Word prod = cast(BigInt_Word)a->data[i] * cast(BigInt_Word)b;
         // Adjust for any previous carries.
-        prod += cast(BigInt_Word)carry;
+        prod += carry;
 
         // New carry is the overflow from this product.
         // Unlike addition and subtraction, this may be > 1.
-        carry = cast(BigInt_Digit)(prod / BIGINT_DIGIT_BASE);
+        carry = prod / BIGINT_DIGIT_BASE;
 
         // Actual result digit is the portion that fits in the given base.
         dst->data[i] = cast(BigInt_Digit)(prod % BIGINT_DIGIT_BASE);
     }
-    dst->data[used] = carry;
+    dst->data[used] = cast(BigInt_Digit)carry;
     return bigint_clamp(dst);
 }
 

@@ -31,8 +31,8 @@ align_forward(uintptr_t ptr, size_t align)
 void
 arena_init(Arena *a, void *backing_buffer, size_t backing_buffer_length)
 {
-    a->buf = cast(unsigned char *)backing_buffer;
-    a->buf_len = backing_buffer_length;
+    a->buf         = cast(unsigned char *)backing_buffer;
+    a->buf_len     = backing_buffer_length;
     a->curr_offset = 0;
     a->prev_offset = 0;
 }
@@ -57,7 +57,7 @@ arena_alloc_align(Arena *a, size_t size, size_t align)
 
     // Backing memory has space remaining?
     if (offset + size <= a->buf_len) {
-        void *ptr = &a->buf[offset];
+        void *ptr      = &a->buf[offset];
         a->prev_offset = offset;
         a->curr_offset = offset + size;
         // Zero new memory by default
@@ -76,13 +76,14 @@ arena_resize(Arena *a, void *old_memory, size_t old_size, size_t new_size)
 
 void *
 arena_resize_align(Arena *a,
-    void *old_memory,
-    size_t old_size,
-    size_t new_size,
-    size_t align)
+    void                 *old_memory,
+    size_t                old_size,
+    size_t                new_size,
+    size_t                align)
 {
     unsigned char *old_mem = cast(unsigned char *)old_memory;
     assert(is_power_of_two(align));
+
     // Requesting for a new block?
     if (old_mem == NULL || old_size == 0) {
         return arena_alloc_align(a, new_size, align);
@@ -121,11 +122,11 @@ arena_free_all(Arena *a)
 
 static void *
 arena_allocator_fn(void *context,
-    Allocator_Mode mode,
-    void *old_memory,
-    size_t old_size,
-    size_t new_size,
-    size_t align)
+    Allocator_Mode       mode,
+    void                *old_memory,
+    size_t               old_size,
+    size_t               new_size,
+    size_t               align)
 {
     Arena *a = cast(Arena *)context;
     switch (mode) {

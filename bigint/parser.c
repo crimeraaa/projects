@@ -200,6 +200,7 @@ parser_arith(Parser *p, const Parser_Rule *rule, Value *left, Value *right)
     switch (rule->op) {
     case BIN_ADD: err = bigint_add(dst, a, b); break;
     case BIN_SUB: err = bigint_sub(dst, a, b); break;
+    case BIN_MUL: err = bigint_mul(dst, a, b); break;
     default:
         parser_syntax_error_at(p, "Unsupported binary arithmetic operation", &t);
         break;

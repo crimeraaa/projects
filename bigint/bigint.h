@@ -91,10 +91,10 @@ bigint_init_int(BigInt *b, int i, Allocator allocator);
  */
 BigInt_Error
 bigint_init_base_lstring(BigInt *dst,
-    const char *data,
-    size_t      len,
-    int         base,
-    Allocator   allocator);
+    const char                  *data,
+    size_t                       len,
+    int                          base,
+    Allocator                    allocator);
 
 
 void
@@ -133,9 +133,9 @@ bigint_base_string_length(const BigInt *src, int base);
  */
 const char *
 bigint_to_base_lstring(const BigInt *src,
-    int       base,
-    size_t   *len,
-    Allocator allocator);
+    int                              base,
+    size_t                          *len,
+    Allocator                        allocator);
 
 
 /** @brief Writes the integer nul-terminated string `cstring`, of base `base`,
@@ -148,10 +148,10 @@ bigint_to_base_lstring(const BigInt *src,
  */
 #define bigint_init_base_string(dst, cstring, base, allocator)                 \
     bigint_init_base_lstring(dst,                                              \
-        /*data=*/     cstring,                                                 \
-        /*len=*/      strlen(cstring),                                         \
-        /*base=*/     base,                                                    \
-        /*allocator=*/allocator)
+        /*data=*/            cstring,                                          \
+        /*len=*/             strlen(cstring),                                  \
+        /*base=*/            base,                                             \
+        /*allocator=*/       allocator)
 
 
 /** @brief Write integer string `data` (bounded by `len`), of unknown base,
