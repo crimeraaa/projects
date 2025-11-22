@@ -24,26 +24,23 @@ typedef void *
 
 typedef struct {
     Allocator_Fn fn;
-    void *context;
+    void        *context;
 } Allocator;
 
 #define array_make(T, count, allocator)                                        \
-    (T *)mem_alloc_align(                                                      \
-        /*size=*/       sizeof(T) * (count),                                   \
-        /*align=*/      alignof(T),                                            \
-        /*allocator=*/  allocator)
+    (T *)mem_alloc_align(/*size=*/sizeof(T) * (count),                         \
+        /*align=*/                alignof(T),                                  \
+        /*allocator=*/            allocator)
 
 #define array_resize(T, ptr, old_len, new_len, allocator)                      \
-    (T *)mem_resize_align(                                                     \
-        /*old_memory=*/ ptr,                                                   \
-        /*old_size=*/   sizeof(T) * (old_len),                                 \
-        /*new_size=*/   sizeof(T) * (new_len),                                 \
-        /*align=*/      alignof(T),                                            \
-        /*allocator=*/  allocator)
+    (T *)mem_resize_align(/*old_memory=*/ptr,                                  \
+        /*old_size=*/                    sizeof(T) * (old_len),                \
+        /*new_size=*/                    sizeof(T) * (new_len),                \
+        /*align=*/                       alignof(T),                           \
+        /*allocator=*/                   allocator)
 
 #define array_delete(ptr, len, allocator)                                      \
-    mem_free(                                                                  \
-        /*memory=*/     ptr,                                                   \
+    mem_free(/*memory=*/ptr,                                                   \
         /*size=*/       sizeof(*(ptr)) * (len),                                \
         /*allocator*/   allocator)
 

@@ -36,6 +36,11 @@
 typedef BIGINT_DIGIT_TYPE           BigInt_Digit;
 typedef BIGINT_WORD_TYPE            BigInt_Word;
 
+typedef enum {
+    BIGINT_POSITIVE,
+    BIGINT_NEGATIVE,
+} BigInt_Sign;
+
 typedef struct {
     // Digits are stored in a little-endian fashion; the least significant
     // digit is stored at the 0th index. E.g. 1234 is stored as {4,3,2,1}.
@@ -47,12 +52,10 @@ typedef struct {
     // How many digits are allocated for in `data`.
     int cap;
 
+    BigInt_Sign sign;
+
     // Each BigInt remembers its allocator.
     Allocator allocator;
-
-    // `true` indicates negative (e.g. sign bit toggled) while `false`
-    // indicates positive.
-    bool sign;
 } BigInt;
 
 typedef enum {
@@ -67,11 +70,6 @@ typedef enum {
     // We failed to (re)allocate something.
     BIGINT_ERROR_MEMORY,
 } BigInt_Error;
-
-typedef enum {
-    BIGINT_POSITIVE = false,
-    BIGINT_NEGATIVE = true,
-} BigInt_Sign;
 
 typedef enum {
     BIGINT_LESS     = -1,
@@ -140,12 +138,12 @@ bigint_to_base_lstring(const BigInt *src,
     Allocator allocator);
 
 
-/** @brief Writes the integer nul-terminated string `s`, of base `b`, into
- *  `b` to be initialized with the Allocator `a`.
+/** @brief Writes the integer nul-terminated string `cstring`, of base `base`,
+ *  into `dst`.
  *
  * @param dst       BigInt *
  * @param cstring   const char *    - Read-only, nul-terminated string.
- * @param base      int             - Base to interpret `s` in.
+ * @param base.
  * @param allocator Allocator
  */
 #define bigint_init_base_string(dst, cstring, base, allocator)                 \
@@ -168,10 +166,10 @@ bigint_to_base_lstring(const BigInt *src,
  */
 #define bigint_init_lstring(dst, data, len, allocator)                         \
     bigint_init_base_lstring(dst,                                              \
-        /*data=*/       data,                                                  \
-        /*len=*/        len,                                                   \
-        /*base=*/       0,                                                     \
-        /*allocator=*/  allocator)
+        /*data=*/            data,                                             \
+        /*len=*/             len,                                              \
+        /*base=*/            0,                                                \
+        /*allocator=*/       allocator)
 
 
 /** @brief Write integer in the nul-terminated string `string`, of unknown
@@ -260,25 +258,25 @@ bigint_sub(BigInt *dst, const BigInt *a, const BigInt *b);
  *
  * @param dst
  *  Must already be initialized with an allocator.
- *  May NOT alias either `a` nor `b`.
+ *  May alias either `a` and/or `b`.
  */
 BigInt_Error
-bigint_mul(BigInt *restrict dst, const BigInt *a, const BigInt *b);
+bigint_mul(BigInt *dst, const BigInt *a, const BigInt *b);
 
 
 /** @brief `dst = a / b`
  *
  * @param dst
  *  Must already be initialized with an allocator.
- *  May NOT alias either `a` nor `b`.
+ *  May alias either `a` nor `b`.
  */
 BigInt_Error
-bigint_div(BigInt *restrict dst, const BigInt *a, const BigInt *b);
+bigint_div(BigInt *dst, const BigInt *a, const BigInt *b);
 
 
 /** @brief `dst = a % b` */
 BigInt_Error
-bigint_mod(BigInt *restrict dst, const BigInt *a, const BigInt *b);
+bigint_mod(BigInt *dst, const BigInt *a, const BigInt *b);
 
 BigInt_Error
 bigint_add_digit(BigInt *dst, const BigInt *a, BigInt_Digit b);

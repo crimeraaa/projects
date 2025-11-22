@@ -2,19 +2,23 @@
 #include <string.h> // strlen, strcspn
 #include <stdlib.h> // realloc, free
 
-#include "../mem/arena.c"
-
+// bigint
+#include "../mem/allocator.c"
+#include "../utils/strings.c"
 #include "bigint.c"
+
+// main
+#include "../mem/arena.c"
 #include "lexer.c"
 #include "parser.c"
 
 static void *
 default_allocator_fn(void *context,
-    Allocator_Mode      mode,
-    void               *old_memory,
-    size_t              old_size,
-    size_t              new_size,
-    size_t              align)
+    Allocator_Mode         mode,
+    void                  *old_memory,
+    size_t                 old_size,
+    size_t                 new_size,
+    size_t                 align)
 {
     // Not needed; the malloc family already tracks this for us.
     unused(context);
@@ -129,13 +133,20 @@ cleanup:
 }
 
 static void
-evaluate(String input, BigInt *ans)
+evaluate(String input, Value *ans)
 {
     Parser p;
-    parser_init(&p, input);
+    parser_init(&p, input, temp_allocator);
     Parser_Error err = parser_parse(&p, ans);
     if (err == PARSER_OK) {
-        bigint_print(ans, 'a');
+        switch (value_type(*ans)) {
+        case VALUE_INTEGER:
+            bigint_print(ans->integer, 'a');
+            break;
+        case VALUE_BOOLEAN:
+            println(ans->boolean ? "true" : "false");
+            break;
+        }
     }
 }
 
@@ -143,8 +154,8 @@ static int
 repl(void)
 {
     char buf[256];
-    BigInt ans;
-    bigint_init(&ans, default_allocator);
+    BigInt b;
+    bigint_init(&b, default_allocator);
     for (;;) {
         String s;
         printf(">");
@@ -155,11 +166,14 @@ repl(void)
         }
         s.len = strcspn(s.data, "\r\n");
 
-        bigint_clear(&ans);
+        bigint_clear(&b);
+        Value ans;
+        ans.type    = VALUE_INTEGER;
+        ans.integer = &b;
         evaluate(s, &ans);
         mem_free_all(temp_allocator);
     }
-    bigint_destroy(&ans);
+    bigint_destroy(&b);
     return 0;
 }
 

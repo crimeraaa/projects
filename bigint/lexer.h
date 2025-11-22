@@ -9,6 +9,9 @@
 typedef enum {
     TOKEN_UNKNOWN,
 
+    // Keywords
+    TOKEN_AND, TOKEN_OR,
+
     // Balanced pairs
     TOKEN_PAREN_OPEN, TOKEN_PAREN_CLOSE, // ( )
 

@@ -66,6 +66,48 @@ lexer_make_token(Lexer *x, Token_Type t)
     return k;
 }
 
+static Token
+lexer_make_number(Lexer *x)
+{
+    char ch = lexer_peek(x);
+    while (is_alnum(ch) || ch == ',' || ch == '_') {
+        lexer_advance(x);
+        ch = lexer_peek(x);
+    }
+    return lexer_make_token(x, TOKEN_NUMBER);
+}
+
+static Token_Type
+lexer_check_keyword(String s)
+{
+    switch (s.len) {
+    case 2:
+        if (s.data[0] == 'o' && s.data[1] == 'r') {
+            return TOKEN_OR;
+        }
+    case 3:
+        if (s.data[0] == 'a' && s.data[1] == 'n' && s.data[2] == 'd') {
+            return TOKEN_AND;
+        }
+    default:
+        break;
+    }
+    return TOKEN_UNKNOWN;
+}
+
+static Token
+lexer_make_keyword(Lexer *x)
+{
+    char ch = lexer_peek(x);
+    while (is_alnum(ch)) {
+        lexer_advance(x);
+        ch = lexer_peek(x);
+    }
+    String s = string_slice(x->input, x->start, x->cursor);
+    Token  t = {lexer_check_keyword(s), s};
+    return t;
+}
+
 Token
 lexer_lex(Lexer *x)
 {
@@ -78,12 +120,9 @@ lexer_lex(Lexer *x)
     char ch = lexer_peek(x);
     lexer_advance(x);
     if (is_digit(ch)) {
-        ch = lexer_peek(x);
-        while (is_alnum(ch) || ch == ',' || ch == '_') {
-            lexer_advance(x);
-            ch = lexer_peek(x);
-        }
-        return lexer_make_token(x, TOKEN_NUMBER);
+        return lexer_make_number(x);
+    } else if (is_lower(ch)) {
+        return lexer_make_keyword(x);
     }
 
     Token_Type t = TOKEN_UNKNOWN;
@@ -101,8 +140,8 @@ lexer_lex(Lexer *x)
             t = TOKEN_EQUALS;
         }
         break;
-    case '<': t = lexer_match(x, '=') ? TOKEN_LESS_EQUAL    : TOKEN_GREATER_EQUAL; break;
-    case '>': t = lexer_match(x, '=') ? TOKEN_GREATER_EQUAL : TOKEN_GREATER_THAN;  break;
+    case '<': t = lexer_match(x, '=') ? TOKEN_LESS_EQUAL    : TOKEN_LESS_THAN;    break;
+    case '>': t = lexer_match(x, '=') ? TOKEN_GREATER_EQUAL : TOKEN_GREATER_THAN; break;
     case '!':
         if (lexer_match(x, '=')) {
             t = TOKEN_NOT_EQUAL;
@@ -118,6 +157,8 @@ lexer_lex(Lexer *x)
 const String
 token_lstrings[TOKEN_COUNT] = {
     /* TOKEN_UNKNOWN */         s_("<unknown>"),
+    /* TOKEN_AND */             s_("and"),
+    /* TOKEN_OR */              s_("or"),
     /* TOKEN_PAREN_OPEN */      s_("("),
     /* TOKEN_PAREN_CLOSE */     s_(")"),
     /* TOKEN_PLUS */            s_("+"),
