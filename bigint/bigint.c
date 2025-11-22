@@ -390,7 +390,7 @@ bigint_string_append_digit(String_Builder *sb, BigInt_Digit digit, int base)
     for (;;) {
         // Get the leftmost digit (MSD), e.g. 1 in 1234.
         BigInt_Digit msd = digit / pv;
-        if (!string_append_char(sb, cast(char)msd + '0')) {
+        if (!string_write_char(sb, cast(char)msd + '0')) {
             return false;
         }
 
@@ -410,16 +410,16 @@ bigint_string_append_base_prefix(String_Builder *sb, int base)
 {
     switch (base) {
     case 2:
-        if (!string_append_char(sb, '0')) return false;
-        if (!string_append_char(sb, 'b')) return false;
+        if (!string_write_char(sb, '0')) return false;
+        if (!string_write_char(sb, 'b')) return false;
         break;
     case 8:
-        if (!string_append_char(sb, '0')) return false;
-        if (!string_append_char(sb, 'o')) return false;
+        if (!string_write_char(sb, '0')) return false;
+        if (!string_write_char(sb, 'o')) return false;
         break;
     case 16:
-        if (!string_append_char(sb, '0')) return false;
-        if (!string_append_char(sb, 'x')) return false;
+        if (!string_write_char(sb, '0')) return false;
+        if (!string_write_char(sb, 'x')) return false;
         break;
     }
     return true;
@@ -427,23 +427,23 @@ bigint_string_append_base_prefix(String_Builder *sb, int base)
 
 const char *
 bigint_to_base_lstring(const BigInt *src,
-    int       base,
-    size_t   *len,
-    Allocator allocator)
+    int                              base,
+    size_t                          *len,
+    Allocator                        allocator)
 {
     String_Builder sb;
     string_builder_init(&sb, allocator);
 
     // No digits to work with?
     if (bigint_is_zero(src)) {
-        if (!string_append_char(&sb, '0')) {
+        if (!string_write_char(&sb, '0')) {
             goto fail;
         }
         goto nul_terminate;
     }
 
     if (bigint_is_neg(src)) {
-        if (!string_append_char(&sb, '-')) {
+        if (!string_write_char(&sb, '-')) {
             goto fail;
         }
     }
@@ -467,7 +467,7 @@ bigint_to_base_lstring(const BigInt *src,
         BigInt_Word tmp = cast(BigInt_Word)digit;
         // E.g. in base-100, we want to pad '1' with 1 zero to get 01 in 1801.
         while (tmp * cast(BigInt_Word)base < BIGINT_DIGIT_BASE) {
-            if (!string_append_char(&sb, '0')) {
+            if (!string_write_char(&sb, '0')) {
                 goto fail;
             }
             tmp *= cast(BigInt_Word)base;
@@ -481,7 +481,7 @@ nul_terminate:
     if (len != NULL) {
         *len = cast(size_t)sb.len;
     }
-    if (!string_append_char(&sb, '\0')) {
+    if (!string_write_char(&sb, '\0')) {
 fail:
         return NULL;
     }

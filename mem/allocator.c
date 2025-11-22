@@ -13,9 +13,9 @@ mem_alloc(size_t size, Allocator allocator)
 
 void *
 mem_resize(void *old_memory,
-    size_t old_size,
-    size_t new_size,
-    Allocator allocator)
+    size_t       old_size,
+    size_t       new_size,
+    Allocator    allocator)
 {
     return allocator.fn(allocator.context,
         ALLOCATOR_RESIZE,
@@ -38,10 +38,10 @@ mem_alloc_align(size_t size, size_t align, Allocator allocator)
 
 void *
 mem_resize_align(void *old_memory,
-    size_t old_size,
-    size_t new_size,
-    size_t align,
-    Allocator allocator)
+    size_t             old_size,
+    size_t             new_size,
+    size_t             align,
+    Allocator          allocator)
 {
     return allocator.fn(allocator.context,
         ALLOCATOR_RESIZE,
@@ -71,4 +71,10 @@ mem_free_all(Allocator allocator)
         /*old_size=  */ 0,
         /*new_size=  */ 0,
         /*align=     */ 0);
+}
+
+bool
+mem_is_power_of_two(uintptr_t x)
+{
+    return (x & (x - 1)) == 0;
 }

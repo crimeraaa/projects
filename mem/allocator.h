@@ -79,4 +79,8 @@ mem_free(void *memory, size_t size, Allocator allocator);
 void
 mem_free_all(Allocator allocator);
 
+// Useful for alignment.
+bool
+mem_is_power_of_two(uintptr_t x);
+
 #endif /* MEM_ALLOCATOR_H */

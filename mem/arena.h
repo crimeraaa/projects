@@ -36,10 +36,10 @@ arena_resize(Arena *a, void *old_memory, size_t old_size, size_t new_size);
 
 void *
 arena_resize_align(Arena *a,
-    void *old_memory,
-    size_t old_size,
-    size_t new_size,
-    size_t align);
+    void                 *old_memory,
+    size_t                old_size,
+    size_t                new_size,
+    size_t                align);
 
 void
 arena_free_all(Arena *a);

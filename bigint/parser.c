@@ -83,7 +83,7 @@ parser_syntax_error_consumed(Parser *p, const char *info)
 static void
 parser_advance(Parser *p)
 {
-    Token t = lexer_lex(&p->lexer);
+    Token t      = lexer_lex(&p->lexer);
     p->consumed  = p->lookahead;
     p->lookahead = t;
     if (t.type == TOKEN_UNKNOWN) {

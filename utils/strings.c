@@ -1,3 +1,5 @@
+#include <string.h>
+
 #include "strings.h"
 
 bool
@@ -48,30 +50,23 @@ string_sub(String s, size_t start, size_t stop)
 }
 
 String_Slice
-string_split(String s, Allocator a)
+string_split(String s, Allocator allocator)
 {
     String_Dynamic d;
-    string_dynamic_init(&d, a);
+    string_dynamic_init(&d, allocator);
 
     size_t start = 0;
     for (size_t stop = 0; stop < s.len; stop += 1) {
         char c = s.data[stop];
-        // Skip whitespace
-        switch (c) {
-        case ' ':
-        case '\r':
-        case '\n':
-        case '\t':
-            // Mark substring (if any) before skipping the whitespace.
+        // Split on whitespaces.
+        if (is_space(c)) {
+            // Mark substring (if any) before splitting the whitespace.
             if (start != stop) {
                 if (!string_dynamic_append(&d, string_sub(s, start, stop))) {
                     goto fail;
                 }
             }
             start = stop + 1;
-            break;
-        default:
-            break;
         }
     }
 
@@ -89,15 +84,33 @@ fail:
     return (String_Slice){d.data, d.len};
 }
 
+String
+string_concat(String_Slice list, Allocator allocator)
+{
+    String_Builder sb;
+    string_builder_init(&sb, allocator);
+
+    for (size_t i = 0; i < list.len; i += 1) {
+        String s = list.data[i];
+        string_write_string(&sb, s.data, s.len);
+    }
+    string_write_char(&sb, '\0');
+    string_pop_char(&sb);
+
+    String res;
+    res.data = string_to_string(&sb, &res.len);
+    return res;
+}
+
 // STRING DYNAMIC ========================================================== {{{
 
 void
-string_dynamic_init(String_Dynamic *d, Allocator a)
+string_dynamic_init(String_Dynamic *d, Allocator allocator)
 {
     d->data = NULL;
     d->len  = 0;
     d->cap  = 0;
-    d->allocator = a;
+    d->allocator = allocator;
 }
 
 bool
@@ -137,58 +150,84 @@ string_dynamic_delete(String_Dynamic *d)
 // STRING BUILDER ========================================================== {{{
 
 void
-string_builder_init(String_Builder *b, Allocator a)
+string_builder_init(String_Builder *sb, Allocator allocator)
 {
-    b->data = NULL;
-    b->len  = 0;
-    b->cap  = 0;
-    b->allocator = a;
+    sb->data = NULL;
+    sb->len  = 0;
+    sb->cap  = 0;
+    sb->allocator = allocator;
 }
 
 void
-string_builder_destroy(String_Builder *b)
+string_builder_destroy(String_Builder *sb)
 {
-    array_delete(b->data, b->cap, b->allocator);
+    array_delete(sb->data, sb->cap, sb->allocator);
 }
 
 bool
-string_append_char(String_Builder *b, char c)
+string_write_string(String_Builder *sb, const char *data, size_t len)
 {
+    size_t new_len = sb->len + len;
+
     // Ensure append is within bounds.
-    if (b->len + 1 > b->cap) {
-        size_t new_cap = (b->cap < 8) ? 8 : (b->cap * 2);
-        char *tmp = array_resize(char, b->data, b->cap, new_cap, b->allocator);
+    if (new_len > sb->cap) {
+        size_t new_cap = sb->cap * 2;
+        if (new_cap < 8) {
+            new_cap = 8;
+        } else if (new_len > new_cap) {
+            new_cap = new_len;
+        }
+
+        char *tmp = array_resize(char, sb->data, sb->cap, new_cap, sb->allocator);
         if (tmp == NULL) {
             return false;
         }
-        b->data = tmp;
-        b->cap  = new_cap;
+        sb->data = tmp;
+        sb->cap  = new_cap;
+    }
+    memcpy(&sb->data[sb->len], data, len);
+    sb->len = new_len;
+    return true;
+}
+
+bool
+string_write_char(String_Builder *sb, char c)
+{
+    // Ensure append is within bounds.
+    if (sb->len + 1 > sb->cap) {
+        size_t new_cap = (sb->cap < 8) ? 8 : (sb->cap * 2);
+        char *tmp = array_resize(char, sb->data, sb->cap, new_cap, sb->allocator);
+        if (tmp == NULL) {
+            return false;
+        }
+        sb->data = tmp;
+        sb->cap  = new_cap;
     }
 
-    b->data[b->len] = c;
-    b->len += 1;
+    sb->data[sb->len] = c;
+    sb->len += 1;
     return true;
 }
 
 char
-string_pop_char(String_Builder *b)
+string_pop_char(String_Builder *sb)
 {
-    if (b->len == 0) {
+    if (sb->len == 0) {
         return '\0';
     }
 
-    char c = b->data[b->len - 1];
-    b->len -= 1;
+    char c = sb->data[sb->len - 1];
+    sb->len -= 1;
     return c;
 }
 
 const char *
-string_to_string(String_Builder *b, size_t *n)
+string_to_string(String_Builder *sb, size_t *n)
 {
     if (n != NULL) {
-        *n = b->len;
+        *n = sb->len;
     }
-    return b->data;
+    return sb->data;
 }
 
 // === }}} =====================================================================

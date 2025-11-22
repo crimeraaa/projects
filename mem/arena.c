@@ -1,31 +1,22 @@
 #include "arena.h"
 
-// Useful for alignment.
-static bool
-is_power_of_two(uintptr_t x)
-{
-    return (x & (x - 1)) == 0;
-}
-
 static uintptr_t
 align_forward(uintptr_t ptr, size_t align)
 {
-    uintptr_t p, a, modulo;
+    uintptr_t modulo;
 
     // Required for modulo via bit-and to work.
-    assert(is_power_of_two(align));
+    assert(mem_is_power_of_two(align));
 
-    p = ptr;
-    a = cast(uintptr_t)align;
     // Same as `p % a` but faster when `a` is a power of 2.
-    modulo = p & (a - 1);
+    modulo = ptr & (align - 1);
 
     // Address is not aligned?
     if (modulo != 0) {
         // `p` is not yet aligned, push it to the next aligned address.
-        p += a - modulo;
+        ptr += align - modulo;
     }
-    return p;
+    return ptr;
 }
 
 void
@@ -82,7 +73,7 @@ arena_resize_align(Arena *a,
     size_t                align)
 {
     unsigned char *old_mem = cast(unsigned char *)old_memory;
-    assert(is_power_of_two(align));
+    assert(mem_is_power_of_two(align));
 
     // Requesting for a new block?
     if (old_mem == NULL || old_size == 0) {

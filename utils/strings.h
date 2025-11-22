@@ -51,10 +51,13 @@ String
 string_sub(String s, size_t start, size_t stop);
 
 String_Slice
-string_split(String s, Allocator a);
+string_split(String s, Allocator allocator);
+
+String
+string_concat(String_Slice list, Allocator allocator);
 
 void
-string_dynamic_init(String_Dynamic *d, Allocator a);
+string_dynamic_init(String_Dynamic *d, Allocator allocator);
 
 bool
 string_dynamic_resize(String_Dynamic *d, size_t n);
@@ -66,18 +69,21 @@ void
 string_dynamic_delete(String_Dynamic *d);
 
 void
-string_builder_init(String_Builder *b, Allocator a);
+string_builder_init(String_Builder *sb, Allocator allocator);
 
 void
-string_builder_destroy(String_Builder *b);
+string_builder_destroy(String_Builder *sb);
 
 bool
-string_append_char(String_Builder *b, char c);
+string_write_string(String_Builder *sb, const char *data, size_t len);
+
+bool
+string_write_char(String_Builder *sb, char c);
 
 char
-string_pop_char(String_Builder *b);
+string_pop_char(String_Builder *sb);
 
 const char *
-string_to_string(String_Builder *b, size_t *n);
+string_to_string(String_Builder *sb, size_t *n);
 
 #endif /* UTILS_STRINGS_H */
