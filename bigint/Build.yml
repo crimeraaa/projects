@@ -20,4 +20,4 @@ tasks:
       - '{{.CC}} {{.CC_FLAGS}} -o {{.OUT}} ./main.c'
     sources:
       - ./*.[ch]
-      - ./{utils,mem}/*.[ch]
+      - ../{utils,mem}/*.[ch]

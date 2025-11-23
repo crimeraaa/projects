@@ -16,7 +16,6 @@ typedef enum {
 } Binary_Op;
 
 typedef struct Parser_Rule Parser_Rule;
-
 struct Parser_Rule {
     Precedence prec;
     Binary_Op  op;
@@ -63,7 +62,7 @@ parser_syntax_error_at(Parser *p, const char *info, const Token *where)
     if (s.len == 0) {
         s = token_lstrings[where->type];
     }
-    eprintfln("%s at '%.*s'.", info, string_expand(s));
+    eprintfln("%s at " STRING_QFMTSPEC ".", info, string_expand(s));
     parser_throw(p, PARSER_ERROR_SYNTAX);
 }
 
@@ -131,7 +130,7 @@ static void
 parser_check_integer_unary(Parser *p, const Value *a, String act)
 {
     if (!value_is_integer(*a)) {
-        printfln("Expected <integer> in '%.*s' (got '%s')",
+        printfln("Expected <integer> in " STRING_QFMTSPEC " (got '%s')",
             string_expand(act),
             a->boolean ? "true" : "false");
         parser_throw(p, PARSER_ERROR_TYPE);
@@ -148,7 +147,8 @@ parser_check_integer_binary(Parser *p, const Value *a, const Value *b, String ac
 static void
 parser_parse_unary(Parser *p, Value *left)
 {
-    Token t = p->consumed;
+    Token  t = p->consumed;
+    String s = t.lexeme;
     // Check the consumed prefix operand/operator
     switch (t.type) {
     // Essentially a no-op, but we do care if it's an integer.
@@ -165,13 +165,11 @@ parser_parse_unary(Parser *p, Value *left)
         break;
 
     // Number literals
-    case TOKEN_NUMBER: {
-        String s = p->consumed.lexeme;
+    case TOKEN_NUMBER:
         // Default type is integer anyway
         parser_check_integer_unary(p, left, t.lexeme);
         bigint_set_base_lstring(left->integer, s.data, s.len, /*base=*/0);
         break;
-    }
 
     // Groupings
     case TOKEN_PAREN_OPEN:
@@ -244,7 +242,7 @@ parser_logical(Parser *p, const Parser_Rule *rule, Value *left, Value *right)
     Token t = p->consumed;
     parser_parse_precedence(p, rule->prec + 1, right);
     if (!value_is_boolean(*left) || !value_is_boolean(*right)) {
-        printfln("Expected <boolean> at '%.*s', got '<integer>'",
+        printfln("Expected <boolean> at " STRING_QFMTSPEC ", got '<integer>'",
             string_expand(t.lexeme));
         parser_throw(p, PARSER_ERROR_TYPE);
     }

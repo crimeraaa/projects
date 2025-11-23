@@ -10,8 +10,8 @@
 static Allocator
 temp_allocator;
 
-static const char *
-file_read_string(FILE *f, String_Builder *sb, size_t *n)
+static String
+file_read_string(FILE *f, String_Builder *sb)
 {
     for (;;) {
         int ch = fgetc(f);
@@ -27,12 +27,8 @@ file_read_string(FILE *f, String_Builder *sb, size_t *n)
     }
 
     // Ensure nul-termination.
-    if (!string_write_char(sb, '\0')) {
 cleanup:
-        return NULL;
-    }
-    string_pop_char(sb);
-    return string_to_string(sb, n);
+    return string_to_string(sb);
 }
 
 int
@@ -48,26 +44,26 @@ main(void)
     temp_allocator = stack_allocator(&s);
 
     for (;;) {
-        String_Builder sb;
-        String line;
-
         printf(">");
+
+        String_Builder sb;
         string_builder_init(&sb, temp_allocator);
-        line.data = file_read_string(stdin, &sb, &line.len);
+
+        String line = file_read_string(stdin, &sb);
         if (line.data == NULL) {
             printf("\n");
             string_builder_destroy(&sb);
             break;
         }
-        printfln("'%s'", line.data);
+        printfln(STRING_QFMTSPEC, string_expand(line));
 
         String_Slice list = string_split(line, temp_allocator);
         for (size_t i = 0; i < list.len; i += 1) {
-            printfln("=> '%.*s'", string_expand(list.data[i]));
+            printfln("=> " STRING_QFMTSPEC, string_expand(list.data[i]));
         }
 
         String lol = string_concat(list, temp_allocator);
-        printfln("'%.*s'", string_expand(lol));
+        printfln(STRING_FMTSPEC, string_expand(lol));
 
         printfln("Before (%zu / %zu bytes)", s.curr_offset, s.buf_len);
         array_delete(cast(char *)lol.data, lol.len, temp_allocator);

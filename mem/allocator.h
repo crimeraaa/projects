@@ -22,22 +22,23 @@ typedef void *
     size_t            new_size,
     size_t            align);
 
-typedef struct {
+typedef struct Allocator Allocator;
+struct Allocator {
     Allocator_Fn fn;
     void        *context;
-} Allocator;
+};
 
 #define array_make(T, count, allocator)                                        \
-    (T *)mem_alloc_align(/*size=*/sizeof(T) * (count),                         \
-        /*align=*/                alignof(T),                                  \
-        /*allocator=*/            allocator)
+    (T *)mem_alloc_align(sizeof(T) * (count),                                  \
+        /*align=*/       alignof(T),                                           \
+        /*allocator=*/   allocator)
 
 #define array_resize(T, ptr, old_len, new_len, allocator)                      \
-    (T *)mem_resize_align(/*old_memory=*/ptr,                                  \
-        /*old_size=*/                    sizeof(T) * (old_len),                \
-        /*new_size=*/                    sizeof(T) * (new_len),                \
-        /*align=*/                       alignof(T),                           \
-        /*allocator=*/                   allocator)
+    (T *)mem_resize_align(ptr,                                                 \
+        /*old_size=*/     sizeof(T) * (old_len),                               \
+        /*new_size=*/     sizeof(T) * (new_len),                               \
+        /*align=*/        alignof(T),                                          \
+        /*allocator=*/    allocator)
 
 #define array_delete(ptr, len, allocator)                                      \
     mem_free(/*memory=*/ptr,                                                   \
@@ -45,13 +46,15 @@ typedef struct {
         /*allocator*/   allocator)
 
 
-/** @brief Allocate `size` bytes using the default alignment. */
+/** @brief Allocate `size` bytes using the default alignment.
+ *  The resulting memory block is fully intialized to zero. */
 void *
 mem_alloc(size_t size, Allocator allocator);
 
 
 /** @brief Reallocate `old_memory` from `old_size` bytes to `new_size` bytes,
- * using the default alignment. */
+ *  using the default alignment. The new region, if growing, is fully
+ *  initialized to zero. */
 void *
 mem_resize(void *old_memory,
     size_t       old_size,
@@ -59,13 +62,15 @@ mem_resize(void *old_memory,
     Allocator    allocator);
 
 
-/** @brief Allocate `size` bytes using the given alignment `align`. */
+/** @brief Allocate `size` bytes using the given alignment `align`.
+ *  The resulting memory block is fully initialized to zero. */
 void *
 mem_alloc_align(size_t size, size_t align, Allocator allocator);
 
 
 /** @brief Reallocate `old_memory` from `old_size` bytes to `new_size` bytes,
- * using the given alignment `align`. */
+ *  using the given alignment `align`. The new memory region, if growing,
+ *  is fully initialized to zero. */
 void *
 mem_resize_align(void *old_memory,
     size_t             old_size,

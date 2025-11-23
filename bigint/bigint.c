@@ -1,5 +1,5 @@
 #include <stdio.h>  // fprintf
-#include <string.h> // strlen, memset
+#include <string.h> // strlen
 
 #include "bigint.h"
 #include "../utils/strings.h"
@@ -14,14 +14,6 @@ bigint_init(BigInt *b, Allocator allocator)
     b->sign      = BIGINT_POSITIVE;
 }
 
-static void
-bigint_fill_zero(BigInt *b, int start, int stop)
-{
-    BigInt_Digit *data = &b->data[start];
-    size_t len  = cast(size_t)(stop - start);
-    memset(data, 0, sizeof(data[0]) * len);
-}
-
 static BigInt_Error
 bigint_init_len_cap(BigInt *b, int len, int cap, Allocator allocator)
 {
@@ -33,7 +25,6 @@ bigint_init_len_cap(BigInt *b, int len, int cap, Allocator allocator)
     b->len       = len;
     b->cap       = cap;
     b->sign      = BIGINT_POSITIVE;
-    bigint_fill_zero(b, 0, cap);
     return BIGINT_OK;
 }
 
@@ -104,14 +95,12 @@ bigint_string_get_sign(String *s)
     BigInt_Sign sign = BIGINT_POSITIVE;
     for (; s->len > 1; s->data += 1, s->len -= 1) {
         char ch = s->data[0];
-        if (ch == '+') {
+        if (is_space(ch) || ch == '+') {
             // Unary plus does nothing, e.g. +2, -+2
             continue;
         } else if (ch == '-') {
             // Unary minus flips the sign, e.g. -2, +-2, --2, -+-2, ---2
             sign = (sign == BIGINT_NEGATIVE) ? BIGINT_POSITIVE : BIGINT_NEGATIVE;
-        } else if (is_space(ch)) {
-            continue;
         } else {
             break;
         }
@@ -208,8 +197,7 @@ bigint_resize(BigInt *b, int n)
             return false;
         }
         b->data = ptr;
-        bigint_fill_zero(b, /*start=*/b->cap, /*stop=*/n);
-        b->cap = n;
+        b->cap  = n;
     }
     // Resizing always changes the user-facing length.
     b->len = n;
@@ -671,7 +659,6 @@ bigint_sub(BigInt *dst, const BigInt *a, const BigInt *b)
 BigInt_Error
 bigint_mul(BigInt *dst, const BigInt *a, const BigInt *b)
 {
-
     if (a->len < b->len) {
         bigint_swap_ptr(&a, &b);
     }
@@ -706,6 +693,29 @@ bigint_mul(BigInt *dst, const BigInt *a, const BigInt *b)
     bigint_destroy(&tmp);
     return bigint_clamp(dst);
 }
+
+BigInt_Error
+bigint_div(BigInt *dst, const BigInt *a, const BigInt *b)
+{
+    // 1.1.) +a // +b >= 0
+    // 1.2.) -a // -b >= 0
+    // 1.3.) +a // -b <  0
+    // 1.4.) -a // +b <  0
+    dst->sign = (a->sign == b->sign) ? BIGINT_POSITIVE : BIGINT_NEGATIVE;
+    stub();
+    return BIGINT_OK;
+}
+
+BigInt_Error
+bigint_mod(BigInt *dst, const BigInt *a, const BigInt *b)
+{
+    unused(dst);
+    unused(a);
+    unused(b);
+    stub();
+    return BIGINT_OK;
+}
+
 
 /** @brief `dst = |a| + |b|` */
 static BigInt_Error
@@ -853,8 +863,6 @@ bigint_mul_digit_unsigned(BigInt *dst, const BigInt *a, BigInt_Digit b)
         return BIGINT_ERROR_MEMORY;
     }
 
-    // Multiplication by a single digit is simple: we multiple each digit
-    // of `a` with `b`.
     BigInt_Word carry = 0;
     for (int i = 0; i < used; i++) {
         BigInt_Word prod = cast(BigInt_Word)a->data[i] * cast(BigInt_Word)b;
@@ -903,40 +911,9 @@ bigint_neg(BigInt *dst, const BigInt *src)
     if (bigint_is_zero(src) || bigint_is_neg(src)) {
         sign = BIGINT_POSITIVE;
     }
-
-    // 3.) `dst = -src`
-    if (dst == src) {
-        dst->sign = sign;
-        return BIGINT_OK;
-    }
-
-    // 4.) `dst = -src` where `dst` does not alias `src`
-    // Need to copy `src` into `dst` with its sign flipped.
     BigInt_Error err = bigint_copy(dst, src);
-    if (err) return err;
-    return bigint_neg(dst, dst);
-}
-
-BigInt_Error
-bigint_div(BigInt *dst, const BigInt *a, const BigInt *b)
-{
-    // 1.1.) +a // +b >= 0
-    // 1.2.) -a // -b >= 0
-    // 1.3.) +a // -b <  0
-    // 1.4.) -a // +b <  0
-    dst->sign = (a->sign == b->sign) ? BIGINT_POSITIVE : BIGINT_NEGATIVE;
-    stub();
-    return BIGINT_OK;
-}
-
-BigInt_Error
-bigint_mod(BigInt *dst, const BigInt *a, const BigInt *b)
-{
-    unused(dst);
-    unused(a);
-    unused(b);
-    stub();
-    return BIGINT_OK;
+    dst->sign = sign;
+    return err;
 }
 
 bool
@@ -955,15 +932,16 @@ bigint_is_neg(const BigInt *b)
 BigInt_Comparison
 bigint_compare(const BigInt *a, const BigInt *b)
 {
+    bool a_is_negative = bigint_is_neg(a);
+
     // 1.) One is positive while the other is negative?
     if (a->sign != b->sign) {
         // 1.1.) -a < +b
         // 1.2.) +a > -b
-        return bigint_is_neg(a) ? BIGINT_LESS : BIGINT_GREATER;
+        return a_is_negative ? BIGINT_LESS : BIGINT_GREATER;
     }
 
     // 2.) Same signs but differing lengths.
-    bool a_is_negative = bigint_is_neg(a);
     if (a->len != b->len) {
         // 2.1.) -a < -b where #a > #b
         //  else -a > -b where #a < #b

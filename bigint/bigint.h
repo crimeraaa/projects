@@ -41,7 +41,8 @@ typedef enum {
     BIGINT_NEGATIVE,
 } BigInt_Sign;
 
-typedef struct {
+typedef struct BigInt BigInt;
+struct BigInt {
     // Digits are stored in a little-endian fashion; the least significant
     // digit is stored at the 0th index. E.g. 1234 is stored as {4,3,2,1}.
     BigInt_Digit *data;
@@ -56,7 +57,7 @@ typedef struct {
 
     // Each BigInt remembers its allocator.
     Allocator allocator;
-} BigInt;
+};
 
 typedef enum {
     BIGINT_OK,

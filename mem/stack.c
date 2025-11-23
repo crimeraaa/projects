@@ -43,7 +43,8 @@ calc_padding_with_header(uintptr_t ptr, uintptr_t align)
     needed_space = cast(uintptr_t)sizeof(Stack_Allocation_Header);
 
     // Would-be padding does yet not account for the header?
-    // May occur when `align > sizeof(header)` and `ptr` is not aligned.
+    // May skip when `align > sizeof(header)` as padding might already give us
+    // enough space for the header, e.g. align of 128 or 256.
     if (padding < needed_space) {
         // User-facing allocation will not include the header size.
         needed_space -= padding;
@@ -65,6 +66,14 @@ calc_padding_with_header(uintptr_t ptr, uintptr_t align)
 void *
 stack_alloc_align(Stack *s, size_t size, size_t align)
 {
+    /*
+    |prev=0,   padding=16|"hi mom lol"|prev=0,   padding=16|[]string|
+    |0.................15|16........31|32................47|48....95|
+    =================================================================
+    |prev=32,  padding=16|"himomlol"  |
+    |96...............111|112......127|
+    ===================================
+     */
     uintptr_t curr_addr, next_addr;
     size_t padding;
     Stack_Allocation_Header *header;
@@ -137,7 +146,7 @@ stack_resize_align(Stack *s,
     prev_offset = cast(size_t)(curr_addr - cast(uintptr_t)header->padding - start);
 
     // Can resize in-place?
-    if (/* prev_offset == header->prev_offset && */ prev_offset == s->prev_offset) {
+    if (prev_offset == s->prev_offset) {
         // Resized allocation would be out of bounds in the stack?
         if (prev_offset + header->padding + new_size > s->buf_len) {
             return NULL;
@@ -188,7 +197,7 @@ stack_free(Stack *s, void *ptr)
     // Calculate previous offset from header and its address.
     prev_offset = cast(size_t)(curr_addr - cast(uintptr_t)header->padding - start);
     if (prev_offset != s->prev_offset) {
-        assert(0 && "Out of order stack allocator free");
+        // assert(0 && "Out of order stack allocator free");
         return;
     }
 

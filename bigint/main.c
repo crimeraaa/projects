@@ -9,28 +9,36 @@
 
 // main
 #include "../mem/arena.c"
+#include "../mem/stack.c"
 #include "lexer.c"
 #include "parser.c"
 
 static void *
 default_allocator_fn(void *context,
     Allocator_Mode         mode,
-    void                  *old_memory,
+    void                  *old_ptr,
     size_t                 old_size,
     size_t                 new_size,
     size_t                 align)
 {
     // Not needed; the malloc family already tracks this for us.
     unused(context);
-    unused(old_size);
     unused(align);
 
     switch (mode) {
     case ALLOCATOR_ALLOC:
-    case ALLOCATOR_RESIZE:
-        return realloc(old_memory, new_size);
+    case ALLOCATOR_RESIZE: {
+        void *tmp = realloc(old_ptr, new_size);
+        // Have a new region to zero out?
+        if (tmp != NULL && old_size < new_size) {
+            size_t growth  = new_size - old_size;
+            char  *old_top = cast(char *)tmp + old_size;
+            memset(old_top, 0, growth);
+        }
+        return tmp;
+    }
     case ALLOCATOR_FREE:
-        free(old_memory);
+        free(old_ptr);
     case ALLOCATOR_FREE_ALL:
         break;
     }
@@ -167,11 +175,16 @@ repl(void)
         s.len = strcspn(s.data, "\r\n");
 
         bigint_clear(&b);
+
         Value ans;
         ans.type    = VALUE_INTEGER;
         ans.integer = &b;
         evaluate(s, &ans);
+        
+        Stack *st = cast(Stack *)temp_allocator.context;
+        printfln("(%zu / %zu bytes)", st->curr_offset, st->buf_len);
         mem_free_all(temp_allocator);
+        printfln("(%zu / %zu bytes)", st->curr_offset, st->buf_len);
     }
     bigint_destroy(&b);
     return 0;
@@ -181,9 +194,13 @@ int
 main(int argc, char *argv[])
 {
     static char buf[BUFSIZ];
-    static Arena arena;
-    arena_init(&arena, buf, sizeof(buf));
-    temp_allocator = arena_allocator(&arena);
+    // static Arena arena;
+    // arena_init(&arena, buf, sizeof(buf));
+    // temp_allocator = arena_allocator(&arena);
+    
+    static Stack stack;
+    stack_init(&stack, buf, sizeof(buf));
+    temp_allocator = stack_allocator(&stack);
     switch (argc) {
     case 1:
         return repl();

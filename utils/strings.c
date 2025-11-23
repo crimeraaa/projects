@@ -98,7 +98,7 @@ string_concat(String_Slice list, Allocator allocator)
     string_pop_char(&sb);
 
     String res;
-    res.data = string_to_string(&sb, &res.len);
+    res.data = string_to_cstring(&sb, &res.len);
     return res;
 }
 
@@ -221,13 +221,27 @@ string_pop_char(String_Builder *sb)
     return c;
 }
 
-const char *
-string_to_string(String_Builder *sb, size_t *n)
+String
+string_to_string(const String_Builder *sb)
 {
+    String s = {sb->data, sb->len};
+    return s;
+}
+
+const char *
+string_to_cstring(String_Builder *sb, size_t *n)
+{
+    // Retain NULL on failure to nul-terminate.
+    char *res = NULL;
+    if (string_write_char(sb, '\0')) {
+        string_pop_char(sb);
+        res = sb->data;
+    }
+
     if (n != NULL) {
         *n = sb->len;
     }
-    return sb->data;
+    return res;
 }
 
 // === }}} =====================================================================

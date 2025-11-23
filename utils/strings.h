@@ -4,32 +4,39 @@
 #include "../common.h"
 #include "../mem/allocator.h"
 
-typedef struct {
+typedef struct String String;
+struct String {
     const char *data;
     size_t len;
-} String;
+};
 
 #define string_expand(s)    (int)(s).len, (s).data
 #define string_literal(s)   {(s), sizeof(s) - 1}
 
-typedef struct {
-    String *data;
-    size_t len;
-} String_Slice;
+#define STRING_FMTSPEC      "%.*s"
+#define STRING_QFMTSPEC     "'" STRING_FMTSPEC "'"
 
-typedef struct {
+typedef struct String_Slice String_Slice;
+struct String_Slice {
     String *data;
-    size_t len;
-    size_t cap;
-    Allocator allocator;
-} String_Dynamic;
+    size_t  len;
+};
 
-typedef struct {
-    char *data;
-    size_t len;
-    size_t cap;
+typedef struct String_Dynamic String_Dynamic;
+struct String_Dynamic {
+    String   *data;
+    size_t    len;
+    size_t    cap;
     Allocator allocator;
-} String_Builder;
+};
+
+typedef struct String_Builder String_Builder;
+struct String_Builder {
+    char     *data;
+    size_t    len;
+    size_t    cap;
+    Allocator allocator;
+};
 
 bool
 is_digit(char ch);
@@ -45,7 +52,6 @@ is_alnum(char ch);
 
 bool
 is_space(char ch);
-
 
 String
 string_sub(String s, size_t start, size_t stop);
@@ -83,7 +89,10 @@ string_write_char(String_Builder *sb, char c);
 char
 string_pop_char(String_Builder *sb);
 
+String
+string_to_string(const String_Builder *sb);
+
 const char *
-string_to_string(String_Builder *sb, size_t *n);
+string_to_cstring(String_Builder *sb, size_t *n);
 
 #endif /* UTILS_STRINGS_H */
