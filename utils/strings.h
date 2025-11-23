@@ -12,6 +12,10 @@ struct String {
 
 #define string_expand(s)    (int)(s).len, (s).data
 #define string_literal(s)   {(s), sizeof(s) - 1}
+#define string_delete(string, allocator)                                       \
+    array_delete((char *)(string).data,                                        \
+        /*len=*/         (string).len,                                         \
+        /*allocator=*/   allocator)
 
 #define STRING_FMTSPEC      "%.*s"
 #define STRING_QFMTSPEC     "'" STRING_FMTSPEC "'"

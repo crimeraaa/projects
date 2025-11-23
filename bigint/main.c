@@ -9,7 +9,6 @@
 
 // main
 #include "../mem/arena.c"
-#include "../mem/stack.c"
 #include "lexer.c"
 #include "parser.c"
 
@@ -28,17 +27,18 @@ default_allocator_fn(void *context,
     switch (mode) {
     case ALLOCATOR_ALLOC:
     case ALLOCATOR_RESIZE: {
-        void *tmp = realloc(old_ptr, new_size);
+        void *new_ptr = realloc(old_ptr, new_size);
         // Have a new region to zero out?
-        if (tmp != NULL && old_size < new_size) {
+        if (new_ptr != NULL && old_size < new_size) {
             size_t growth  = new_size - old_size;
-            char  *old_top = cast(char *)tmp + old_size;
+            char  *old_top = cast(char *)new_ptr + old_size;
             memset(old_top, 0, growth);
         }
-        return tmp;
+        return new_ptr;
     }
     case ALLOCATOR_FREE:
         free(old_ptr);
+        break;
     case ALLOCATOR_FREE_ALL:
         break;
     }
@@ -49,6 +49,7 @@ static Allocator
 default_allocator = {default_allocator_fn, NULL},
 temp_allocator;
 
+static Arena arena;
 
 static void
 bigint_print(const BigInt *b, char c)
@@ -180,11 +181,10 @@ repl(void)
         ans.type    = VALUE_INTEGER;
         ans.integer = &b;
         evaluate(s, &ans);
-        
-        Stack *st = cast(Stack *)temp_allocator.context;
-        printfln("(%zu / %zu bytes)", st->curr_offset, st->buf_len);
+
+        printfln("(%zu / %zu bytes)", arena.curr_offset, arena.buf_len);
         mem_free_all(temp_allocator);
-        printfln("(%zu / %zu bytes)", st->curr_offset, st->buf_len);
+        printfln("(%zu / %zu bytes)", arena.curr_offset, arena.buf_len);
     }
     bigint_destroy(&b);
     return 0;
@@ -193,14 +193,9 @@ repl(void)
 int
 main(int argc, char *argv[])
 {
-    static char buf[BUFSIZ];
-    // static Arena arena;
-    // arena_init(&arena, buf, sizeof(buf));
-    // temp_allocator = arena_allocator(&arena);
-    
-    static Stack stack;
-    stack_init(&stack, buf, sizeof(buf));
-    temp_allocator = stack_allocator(&stack);
+    static char arena_buf[BUFSIZ];
+    arena_init(&arena, arena_buf, sizeof(arena_buf));
+    temp_allocator = arena_allocator(&arena);
     switch (argc) {
     case 1:
         return repl();

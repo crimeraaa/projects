@@ -11,8 +11,10 @@ static Allocator
 temp_allocator;
 
 static String
-file_read_string(FILE *f, String_Builder *sb)
+file_read_string(FILE *f, Allocator allocator)
 {
+    String_Builder sb;
+    string_builder_init(&sb, allocator);
     for (;;) {
         int ch = fgetc(f);
         if (ch == EOF) {
@@ -21,14 +23,14 @@ file_read_string(FILE *f, String_Builder *sb)
             break;
         }
 
-        if (!string_write_char(sb, cast(char)ch)) {
+        if (!string_write_char(&sb, cast(char)ch)) {
             goto cleanup;
         }
     }
 
     // Ensure nul-termination.
 cleanup:
-    return string_to_string(sb);
+    return string_to_string(&sb);
 }
 
 int
@@ -46,13 +48,9 @@ main(void)
     for (;;) {
         printf(">");
 
-        String_Builder sb;
-        string_builder_init(&sb, temp_allocator);
-
-        String line = file_read_string(stdin, &sb);
+        String line = file_read_string(stdin, temp_allocator);
         if (line.data == NULL) {
             printf("\n");
-            string_builder_destroy(&sb);
             break;
         }
         printfln(STRING_QFMTSPEC, string_expand(line));
@@ -66,9 +64,9 @@ main(void)
         printfln(STRING_FMTSPEC, string_expand(lol));
 
         printfln("Before (%zu / %zu bytes)", s.curr_offset, s.buf_len);
-        array_delete(cast(char *)lol.data, lol.len, temp_allocator);
+        string_delete(lol, temp_allocator);
         array_delete(list.data, list.len, temp_allocator);
-        string_builder_destroy(&sb);
+        string_delete(line, temp_allocator);
         printfln("After (%zu / %zu bytes)", s.curr_offset, s.buf_len);
     }
     return 0;

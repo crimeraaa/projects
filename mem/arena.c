@@ -67,36 +67,38 @@ arena_resize(Arena *a, void *old_memory, size_t old_size, size_t new_size)
 
 void *
 arena_resize_align(Arena *a,
-    void                 *old_memory,
+    void                 *old_ptr,
     size_t                old_size,
     size_t                new_size,
     size_t                align)
 {
-    unsigned char *old_mem = cast(unsigned char *)old_memory;
+    unsigned char *old_addr = cast(unsigned char *)old_ptr;
     assert(mem_is_power_of_two(align));
 
     // Requesting for a new block?
-    if (old_mem == NULL || old_size == 0) {
+    if (old_addr == NULL || (old_size == 0 && new_size > 0)) {
         return arena_alloc_align(a, new_size, align);
     // Resizing an existing block?
-    } else if (a->buf <= old_mem && old_mem < a->buf + a->buf_len) {
+    } else if (a->buf <= old_addr && old_addr < a->buf + a->buf_len) {
         // `old_mem` is exactly the last allocation?
         // This means it can be resized in-place.
-        if (a->buf + a->prev_offset == old_mem) {
-            if (new_size > old_size) {
-                // Zero the new memory by default.
-                memset(&a->buf[a->curr_offset], 0, new_size - old_size);
+        if (a->buf + a->prev_offset == old_addr) {
+            // Growing the allocation?
+            if (old_size < new_size) {
+                size_t growth = new_size - old_size;
+                memset(&a->buf[a->curr_offset], 0, growth);
+                a->curr_offset += growth;
             }
-            a->curr_offset = a->prev_offset + new_size;
-            return old_memory;
+            else {
+                a->curr_offset -= old_size - new_size;
+            }
+            return old_ptr;
         }
         // `old_mem` is NOT exactly the last allocation.
         else {
-            void *new_memory = arena_alloc_align(a, new_size, align);
+            void *new_ptr = arena_alloc_align(a, new_size, align);
             size_t copy_size = (old_size < new_size) ? old_size : new_size;
-            // Copy across old memory region to the new memory region.
-            memmove(new_memory, old_memory, copy_size);
-            return new_memory;
+            return memmove(new_ptr, old_ptr, copy_size);
         }
     } else {
         assert(0 && "Memory is out of bounds of the buffer in this arena");
@@ -114,7 +116,7 @@ arena_free_all(Arena *a)
 static void *
 arena_allocator_fn(void *context,
     Allocator_Mode       mode,
-    void                *old_memory,
+    void                *old_ptr,
     size_t               old_size,
     size_t               new_size,
     size_t               align)
@@ -124,7 +126,7 @@ arena_allocator_fn(void *context,
     case ALLOCATOR_ALLOC:
         return arena_alloc_align(a, new_size, align);
     case ALLOCATOR_RESIZE:
-        return arena_resize_align(a, old_memory, old_size, new_size, align);
+        return arena_resize_align(a, old_ptr, old_size, new_size, align);
     case ALLOCATOR_FREE:
         break;
     case ALLOCATOR_FREE_ALL:

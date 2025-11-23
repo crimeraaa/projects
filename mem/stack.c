@@ -197,7 +197,7 @@ stack_free(Stack *s, void *ptr)
     // Calculate previous offset from header and its address.
     prev_offset = cast(size_t)(curr_addr - cast(uintptr_t)header->padding - start);
     if (prev_offset != s->prev_offset) {
-        // assert(0 && "Out of order stack allocator free");
+        assert(0 && "Out of order stack allocator free");
         return;
     }
 
@@ -210,7 +210,7 @@ void
 stack_free_all(Stack *s)
 {
     s->prev_offset = 0;
-    s->curr_offset      = 0;
+    s->curr_offset = 0;
 }
 
 static void *

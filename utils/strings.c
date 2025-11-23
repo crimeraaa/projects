@@ -94,9 +94,8 @@ string_concat(String_Slice list, Allocator allocator)
         String s = list.data[i];
         string_write_string(&sb, s.data, s.len);
     }
-    string_write_char(&sb, '\0');
-    string_pop_char(&sb);
 
+    // Must be nul-terminated.
     String res;
     res.data = string_to_cstring(&sb, &res.len);
     return res;

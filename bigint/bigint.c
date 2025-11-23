@@ -466,15 +466,10 @@ bigint_to_base_lstring(const BigInt *src,
     }
 
 nul_terminate:
-    if (len != NULL) {
-        *len = cast(size_t)sb.len;
-    }
-    if (!string_write_char(&sb, '\0')) {
-fail:
-        return NULL;
-    }
-    return sb.data;
+    return string_to_cstring(&sb, len);
 
+fail:
+    return NULL;
 }
 
 // === ARITHMETIC ========================================================== {{{
