@@ -1,112 +1,225 @@
 #include <stdio.h>  // printf
-#include <stdlib.h> // abort
+#include <stdlib.h> // malloc, realloc, free, abort
+#include <string.h> // memset
 
 #include "bigint.h"
-#include "string_builder.h"
+
+static bool
+bigint_is_zero(const BigInt *bi)
+{
+    return bi->len == 0;
+}
+
+static bool
+bigint_is_neg(const BigInt *bi)
+{
+    return bi->sign == BIGINT_NEGATIVE;
+}
+
+static int
+count_digits(uintmax_t value, Digit base)
+{
+    int count;
+    if (value == 0) {
+        return 1;
+    }
+
+    count = 0;
+    while (value > 0) {
+        value /= cast(uintmax_t)base;
+        count += 1;
+    }
+    return count;
+}
+
+static BigInt *
+bigint_make(lua_State *L, int digit_count)
+{
+    BigInt *bi;
+    size_t  array_size = sizeof(bi->digits[0]) * cast(size_t)digit_count;
+
+    // -> (..., bi: BigInt *)
+    bi = cast(BigInt *)lua_newuserdata(L, sizeof(*bi) + array_size);
+    bi->sign = BIGINT_POSITIVE;
+    bi->len  = cast(size_t)digit_count;
+    memset(bi->digits, 0, array_size);
+
+    luaL_getmetatable(L, BIGINT_MTNAME); // -> (..., bi, mt: {})
+    lua_setmetatable(L, -2);             // -> (..., bi) ; setmetatable(bi, mt)
+    return bi;
+}
+
+static BigInt *
+bigint_make_from_integer(lua_State *L, lua_Integer value)
+{
+    Sign sign = (value >= 0) ? BIGINT_POSITIVE : BIGINT_NEGATIVE;
+    if (sign == BIGINT_NEGATIVE) {
+        value = -value;
+    }
+
+    int digit_count = count_digits(cast(uintmax_t)value, BIGINT_DIGIT_BASE);
+    BigInt *bi = bigint_make(L, digit_count);
+    bi->sign = sign;
+
+    // Write `value` from LSD to MSD.
+    for (size_t i = 0; i < bi->len; i += 1) {
+        bi->digits[i] = cast(Digit)(value % BIGINT_DIGIT_BASE);
+        value /= BIGINT_DIGIT_BASE;
+    }
+
+    return bi;
+}
+
+static int
+bigint_ctor_at(lua_State *L, int bigint_index)
+{
+    lua_Number n = lua_tonumber(L, bigint_index);
+    if (n != 0 || lua_isnumber(L, bigint_index)) {
+        lua_Integer i = cast(lua_Number)n;
+        // Ensure `n` can be represented as an integer without truncation.
+        if (cast(lua_Number)i == n) {
+            bigint_make_from_integer(L, i);
+            return 1;
+        }
+    }
+    return luaL_typerror(L, bigint_index, "integer");
+}
+
+static int
+bigint_ctor(lua_State *L)
+{
+    return bigint_ctor_at(L, 1);
+}
+
+
+/** @brief `bigint(...) => bigint.__call(bigint, ...)` */
+static int
+bigint_call(lua_State *L)
+{
+    return bigint_ctor_at(L, 2);
+}
+
+static BigInt *
+bigint_ensure(lua_State *L, int arg)
+{
+    return luaL_checkudata(L, arg, BIGINT_MTNAME);
+}
+
+static Digit
+place_value(Digit digit, Digit base)
+{
+    if (digit == 0) {
+        return 0;
+    }
+
+    // Use intermediate type in case of overflow from multiplication.
+    Word place = 1;
+    while (place * cast(Word)base <= cast(Word)digit) {
+        place *= cast(Word)base;
+    }
+    return cast(Digit)place;
+}
 
 static void
-string_append(String_Builder *sb, char ch)
+write_digit(luaL_Buffer *sb, Digit digit, Digit base)
 {
-    if (sb->len + 1 < sb->cap) {
-        sb->len += 1;
-        sb->data[sb->len - 1] = ch;
-        return;
-    }
-    fprintf(stderr, "[FATAL] Out of bounds index %zu / %zu", sb->len, sb->cap);
-    abort();
-}
-
-static const char *
-string_reverse(String_Builder *sb)
-{
-    size_t left  = 0;
-    size_t right = sb->len;
-    for (; left < right; left += 1, right -= 1) {
-        char tmp = sb->data[left];
-        sb->data[left] = sb->data[right - 1];
-        sb->data[right - 1] = tmp;
-    }
-    return sb->data;
-}
-
-static char
-string_pop(String_Builder *sb)
-{
-    char ch = sb->data[sb->len - 1];
-    sb->len -= 1;
-    return ch;
-}
-
-static void
-digit_slice_print(Digit_Slice d, size_t offset)
-{
-    static int counter = 0;
-    printf("%2i [%zu:] = {", counter++, offset);
-    for (size_t i = 0; i < d.len; i += 1) {
-        if (i > 0) {
-            printf(", ");
-        }
-        printf("%10u", d.data[i]);
-    }
-    printf("}\n");
-}
-
-// Form a decimal string.
-// https://stackoverflow.com/questions/71143129/is-there-a-way-to-convert-a-base-264-number-to-its-base10-value-in-string-form
-// https://stackoverflow.com/a/71144161
-static const char *
-convert(Digit_Slice d, String_Builder *sb)
-{
-    // Skip leading zeroes
-    size_t offset = 0;
-    while (offset < d.len && d.data[offset] == 0) {
-        offset += 1;
-    }
-
-    // Still have digits to process?
-    while (offset < d.len) {
-        unsigned char carry = 0;
-
-        digit_slice_print(d, offset);
-
-        // Repeately mod-10 the array the find the next least-significant-digit
-        // (LSD) then divide by 10. Repeat as needed because base-2 to base-10
-        // conversion is quite costly.
-        for (size_t i = offset; i < d.len; i += 1) {
-            Word sum = d.data[i] + (cast(Word)carry * BIGINT_DIGIT_BASE);
-
-            d.data[i] = cast(Digit)(sum / 10u);
-            carry = cast(unsigned char)(sum % 10u);
-
-            // Continue: keep going as we propagate `rem`.
+    Digit pv = place_value(digit, base);
+    for (;;) {
+        // Get the left-most digit, e.g. '1' in "1234".
+        Digit msd = digit / pv;
+        if (base <= 10) {
+            luaL_addchar(sb, cast(char)msd + '0');
+        } else if (base <= 36) {
+            luaL_addchar(sb, cast(char)msd + 'a' - 10);
         }
 
-        string_append(sb, cast(char)(carry + '0'));
-        // Current MSD has been exhausted, so we know there is no more
-        // "overflow" from it.
-        if (d.data[offset] == 0) {
-            offset += 1;
+        // 'Trim off' the MSD's magnitude.
+        digit -= msd * pv;
+        pv /= base;
+        // No more digits to process? Also avoids division by zero.
+        if (pv == 0) {
+            break;
         }
     }
-    string_append(sb, '\0');
-    string_pop(sb);
-    // Account for data being written LSD to MSD.
-    return string_reverse(sb);
 }
 
-int
-main(void)
+static int
+bigint_tostring(lua_State *L)
 {
-    // Base 2^64: uint64_t big_num[] = {77748, 656713, 872};
-    // Base 2^32: (below)
-    // Base 10: 26_364_397_224_300_470_284_329_554_475_476_558_257_587_048
-    Digit big_num[] = {0, 77478, 0, 656713, 0, 872};
+    const BigInt *bi = bigint_ensure(L, 1);
+    Digit base = cast(Digit)luaL_optinteger(L, /*narg=*/2, /*def=*/10);
+    luaL_argcheck(L, 2 <= base && base <= 36, /*numarg=*/2, /*extramsg=*/"Invalid base");
 
-    char buf[256];
-    String_Builder sb = {buf, 0, sizeof(buf)};
-    Digit_Slice digits = {big_num, count_of(big_num)};
-    printf("<%s>\n", convert(digits, &sb));
-    // Unreversed: <84078575285567457445592348207400342279346362>
-    // Reversed     26364397224300470284329554475476558257587048
-    return 0;
+    if (bigint_is_zero(bi)) {
+        lua_pushliteral(L, "0");
+        return 1;
+    }
+
+    luaL_Buffer sb;
+    luaL_buffinit(L, &sb);
+
+    if (bigint_is_neg(bi)) {
+        luaL_addchar(&sb, '-');
+    }
+
+    switch (base) {
+    case 2:  luaL_addstring(&sb, "0b"); break;
+    case 8:  luaL_addstring(&sb, "0o"); break;
+    case 16: luaL_addstring(&sb, "0x"); break;
+    }
+
+    // Write the MSD which will never have leading zeroes.
+    size_t msd_index = bi->len - 1;
+    write_digit(&sb, bi->digits[msd_index], base);
+
+    // Write from MSD - 1 to LSD.
+    // Don't subtract 1 immediately due to unsigned overflow.
+    for (size_t i = msd_index; i > 0; i -= 1) {
+        Digit digit = bi->digits[i - 1];
+
+        // Convert base-`BASE` to base-`base` with leading zeroes as needed.
+        Word tmp = cast(Word)digit;
+        while (tmp * cast(Word)base < BIGINT_DIGIT_BASE) {
+            luaL_addchar(&sb, '0');
+            tmp *= cast(Word)base;
+        }
+        write_digit(&sb, digit, base);
+    }
+    luaL_pushresult(&sb);
+    return 1;
+}
+
+static const luaL_Reg
+bigint_fns[] = {
+    {"new",      bigint_ctor},
+    {"tostring", bigint_tostring},
+    {"__call",   bigint_call},
+    {NULL,       NULL},
+};
+
+static const luaL_Reg
+bigint_mt[] = {
+    {"__tostring", bigint_tostring},
+    {NULL, NULL},
+};
+
+LUALIB_API int
+luaopen_bigint(lua_State *L)
+{
+    // bigint library
+    luaL_register(L, "bigint", bigint_fns);
+    lua_pushvalue(L, -1);
+    lua_setmetatable(L, -2);
+
+    // bigint main metatable
+    // -> bigint, mt
+    luaL_newmetatable(L, BIGINT_MTNAME);
+    luaL_register(L, NULL, bigint_mt);
+
+    // -> bigint, mt, mt
+    lua_pushvalue(L, -1);
+
+    // -> bigint, mt ; mt.__index = mt
+    lua_setfield(L, -2, "__index");
+    return 1;
 }

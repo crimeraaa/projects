@@ -1,0 +1,16 @@
+# https://taskfile.dev
+
+version: '3'
+
+tasks:
+  run:
+    desc: Run Lua with bigint loaded.
+    deps:
+      - task: build
+    cmds:
+      - lua -l bigint {{.CLI_ARGS}}
+
+  build:
+    desc: Build lua-bigint unconditionally.
+    cmds:
+      - '{{.CC}} {{.CC_FLAGS}} -shared -fPIC -o {{.OUT}} ./bigint.c'

@@ -7,8 +7,9 @@
 #include <stddef.h>     // NULL, size_t, ptrdiff_t, max_align_t
 #include <stdint.h>     // u?int[\d]+_t, uintptr_t
 
-#define cast(T)         (T)
-#define unused(expr)    ((void)(expr))
+#define cast(T)             (T)
+#define unused(expr)        ((void)(expr))
+#define count_of(array)     (sizeof(array) / sizeof((array)[0]))
 
 #define printfln(fmt, ...)  printf(fmt "\n", __VA_ARGS__)
 #define println(s)          printfln("%s", s)

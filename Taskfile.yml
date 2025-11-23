@@ -11,7 +11,7 @@ vars:
     -Wextra
     -Werror
     -pedantic
-    -fsanitize=address
+  # -fsanitize=address
   # -I{{.TASKFILE_DIR}}
 
   # OUT: bin/bigint
@@ -22,6 +22,12 @@ includes:
     vars:
       OUT: ./bin/bigint
     dir: ./bigint
+  
+  lua-bigint:
+    taskfile: ./lua-bigint/Build.yml
+    vars:
+      OUT: ./bigint.so
+    dir: ./lua-bigint
 
   mem:
     taskfile: ./mem/Build.yml
