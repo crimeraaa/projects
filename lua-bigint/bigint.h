@@ -8,22 +8,47 @@
 #include "../common.h"
 
 typedef uint32_t Digit;
-typedef uint64_t Word;
+typedef int64_t  Word;
 
 #define BIGINT_DIGIT_BASE   1000000000
+#define BIGINT_DIGIT_MAX    (BIGINT_DIGIT_BASE - 1)
 #define BIGINT_MTNAME       "bigint.BigInt"
 
-enum BigInt_Sign {
-    BIGINT_POSITIVE,
-    BIGINT_NEGATIVE,
+enum Sign {
+    POSITIVE,
+    NEGATIVE,
 };
-typedef enum BigInt_Sign Sign;
+typedef enum Sign Sign;
+
+enum Comparison {
+    LESS    = -1,
+    EQUAL   = 0,
+    GREATER = 1,
+};
+
+typedef enum Comparison Comparison;
 
 typedef struct BigInt BigInt;
 struct BigInt {
     Sign   sign;
     size_t len;
     Digit  digits[];
+};
+
+enum Arg_Type {
+    ARG_INVALID,
+    ARG_INTEGER,
+    ARG_BIGINT,
+};
+typedef enum Arg_Type Arg_Type;
+
+typedef struct Arg Arg;
+struct Arg {
+    Arg_Type type;
+    union {
+        lua_Integer integer;
+        BigInt     *bigint;
+    };
 };
 
 LUALIB_API int
