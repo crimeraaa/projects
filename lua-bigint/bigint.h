@@ -11,7 +11,6 @@ typedef uint32_t Digit;
 typedef int64_t  Word;
 
 #define BIGINT_DIGIT_BASE   1000000000
-#define BIGINT_DIGIT_MAX    (BIGINT_DIGIT_BASE - 1)
 #define BIGINT_MTNAME       "bigint.BigInt"
 
 enum Sign {
@@ -40,11 +39,10 @@ enum Arg_Type {
     ARG_INTEGER,
     ARG_BIGINT,
 };
-typedef enum Arg_Type Arg_Type;
 
 typedef struct Arg Arg;
 struct Arg {
-    Arg_Type type;
+    enum Arg_Type type;
     union {
         lua_Integer integer;
         BigInt     *bigint;
