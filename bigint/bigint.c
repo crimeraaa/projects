@@ -375,7 +375,8 @@ static bool
 bigint_string_append_digit(String_Builder *sb, BigInt_Digit digit, int base)
 {
     BigInt_Digit pv = bigint_digit_place_value(digit, base);
-    for (;;) {
+    // Have digits to process and won't divide by zero?
+    while (pv > 0) {
         // Get the leftmost digit (MSD), e.g. 1 in 1234.
         BigInt_Digit msd = digit / pv;
         if (!string_write_char(sb, cast(char)msd + '0')) {
@@ -385,10 +386,6 @@ bigint_string_append_digit(String_Builder *sb, BigInt_Digit digit, int base)
         // "Trim" the MSD's magnitude, e.g. remove 1000 from 1234.
         digit -= msd * pv;
         pv /= cast(BigInt_Digit)base;
-        // No more digits to process? (Would also cause division by zero!)
-        if (pv == 0) {
-            break;
-        }
     }
     return true;
 }
