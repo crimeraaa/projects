@@ -35,7 +35,7 @@ typedef int64_t  Word;
 
 #define BIGINT_MTNAME       "bigint.BigInt"
 
-#define STUB(L, msg)    luaL_error(L, "%s:%i: %s", __FILE__, __LINE__, msg)
+#define STUB(L, msg)    luaL_error(L, "%s:%d: %s", __FILE__, __LINE__, msg)
 
 enum Sign {
     POSITIVE,

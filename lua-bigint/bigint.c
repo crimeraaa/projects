@@ -29,8 +29,8 @@ bigint_compare(lua_State *L, Compare_Fn cmp_bigint)
     // comparing with a `number` for example.
     //
     // See: https://www.lua.org/pil/13.2.html
-    const BigInt *a = cast(BigInt *)lua_touserdata(L, 1);
-    const BigInt *b = cast(BigInt *)lua_touserdata(L, 2);
+    const BigInt *a = internal_get_bigint(L, 1);
+    const BigInt *b = internal_get_bigint(L, 2);
     bool res = cmp_bigint(a, b);
     lua_pushboolean(L, res);
     return 1;
@@ -315,7 +315,7 @@ bigint_sub_integer(lua_State *L, const BigInt *a, lua_Integer b)
 static int
 bigint_unm(lua_State *L)
 {
-    const BigInt *src = cast(BigInt *)lua_touserdata(L, 1);
+    const BigInt *src = internal_get_bigint(L, 1);
     BigInt *dst = internal_make_copy(L, src);
     internal_neg(dst);
     return 1;
@@ -324,7 +324,8 @@ bigint_unm(lua_State *L)
 static int
 bigint_tostring(lua_State *L)
 {
-    const BigInt *bi = cast(BigInt *)lua_touserdata(L, 1);
+    // Could call `bigint.tostring(bigint)` via `bigint:tostring()`.
+    const BigInt *a = internal_ensure_bigint(L, 1);
     Digit base = cast(Digit)luaL_optinteger(L, /*narg=*/2, /*def=*/10);
 
     // Conversion to base-2, base-8 and base-16 strings doesn't work yet.
@@ -336,7 +337,7 @@ bigint_tostring(lua_State *L)
         /*numarg=*/2,
         /*extramsg=*/"Invalid base");
 
-    if (internal_is_zero(bi)) {
+    if (internal_is_zero(a)) {
         lua_pushliteral(L, "0");
         return 1;
     }
@@ -344,38 +345,16 @@ bigint_tostring(lua_State *L)
     luaL_Buffer sb;
     luaL_buffinit(L, &sb);
 
-    if (internal_is_neg(bi)) {
+    if (internal_is_neg(a)) {
         luaL_addchar(&sb, '-');
     }
 
     switch (base) {
-    case 2:  luaL_addstring(&sb, "0b"); break;
-    case 8:  luaL_addstring(&sb, "0o"); break;
-    case 16: luaL_addstring(&sb, "0x"); break;
-    }
-
-    // Write the MSD which will never have leading zeroes.
-    size_t msd_index = bi->len - 1;
-    internal_write_digit(&sb, bi->digits[msd_index], base);
-
-    // Write from MSD - 1 to LSD.
-    // Don't subtract 1 immediately due to unsigned overflow.
-    for (size_t i = msd_index; i > 0; i -= 1) {
-        Digit digit = bi->digits[i - 1];
-
-        // Convert base-`BASE` to base-`base` with leading zeroes as needed.
-        Word tmp = cast(Word)digit;
-
-        // Avoid infinite loops when multiplying by zero.
-        if (tmp == 0) {
-            tmp = 1;
-        }
-
-        while (tmp * cast(Word)base < BIGINT_DIGIT_BASE) {
-            luaL_addchar(&sb, '0');
-            tmp *= cast(Word)base;
-        }
-        internal_write_digit(&sb, digit, base);
+    case 2:
+    case 8:
+    case 16: internal_write_binary_string(&sb, a, base); break;
+    case 10: internal_write_decimal_string(&sb, a);      break;
+    default: return luaL_error(L, "Unsupported base (%d)", cast(int)base);
     }
     luaL_pushresult(&sb);
     return 1;
