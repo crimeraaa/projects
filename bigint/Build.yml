@@ -2,10 +2,11 @@
 
 version: '3'
 
-vars:
-  GREETING: Hello, World!
-
 tasks:
+  default:
+    cmds:
+      - task: run
+
   run:
     desc: Run the `bigint` executable, building it unconditionally.
     deps:

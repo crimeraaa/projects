@@ -1,7 +1,10 @@
 local BigInt = require "bigint"
 
-a = BigInt(" -1_234_567_890")
-b = BigInt("-101_112_131_415")
-c = a * b
+-- a = BigInt(" -1_234_567_890")
+-- b = BigInt("-101_112_131_415")
+-- c = a * b
 
-print(a, "*", b, "=", c)
+-- print(a, "*", b, "=", c)
+
+local a = BigInt("13")
+print(BigInt.tostring(a, 2))

@@ -41,7 +41,6 @@ enum Sign {
     POSITIVE,
     NEGATIVE,
 };
-typedef enum Sign Sign;
 
 enum Comparison {
     LESS    = -1,
@@ -49,9 +48,10 @@ enum Comparison {
     GREATER = 1,
 };
 
+typedef enum Sign Sign;
 typedef enum Comparison Comparison;
-
 typedef struct BigInt BigInt;
+
 struct BigInt {
     size_t len;
     Sign   sign;

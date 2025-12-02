@@ -3,7 +3,7 @@
 #include "bigint.h"
 
 LUAI_FUNC BigInt *
-internal_make_lstring(lua_State *L, const char *s, size_t s_len);
+internal_make_lstring(lua_State *L, const char *s, size_t s_len, Digit base);
 
 LUAI_FUNC BigInt *
 internal_get_bigint(lua_State *L, int arg_i)
@@ -34,16 +34,9 @@ count_digits(uintmax_t value, Digit base)
 }
 
 
-LUAI_FUNC lua_Integer
-internal_integer_abs(lua_Integer value)
-{
-    return (value >= 0) ? value : -value;
-}
-
-
 /** @brief `|value|` which also works for `value == min(type)`. */
 LUAI_FUNC uintmax_t
-internal_integer_abs_unsigned(lua_Integer value)
+internal_integer_abs(lua_Integer value)
 {
     return (value >= 0) ? cast(uintmax_t)value : -cast(uintmax_t)value;
 }
@@ -118,7 +111,7 @@ internal_make_integer(lua_State *L, lua_Integer value)
     uintmax_t value_abs;
     int       digit_count;
 
-    value_abs   = internal_integer_abs_unsigned(value);
+    value_abs   = internal_integer_abs(value);
     digit_count = count_digits(value_abs, BIGINT_DIGIT_BASE);
 
     dst = internal_make(L, cast(size_t)digit_count);
@@ -133,7 +126,7 @@ internal_make_integer(lua_State *L, lua_Integer value)
     return dst;
 }
 
-LUAI_FUNC BigInt *
+LUAI_FUNC void
 internal_clamp(BigInt *dst)
 {
     // Trim leading zeroes
@@ -146,7 +139,6 @@ internal_clamp(BigInt *dst)
     if (internal_is_zero(dst)) {
         dst->sign = POSITIVE;
     }
-    return dst;
 }
 
 LUAI_FUNC Arg
@@ -201,16 +193,24 @@ internal_arg_is_bigint(Arg arg)
 LUAI_FUNC int
 internal_ctor(lua_State *L, int first_arg)
 {
-    Arg arg = internal_arg_get(L, first_arg);
+    Arg arg;
+    Digit base;
+
+    arg  = internal_arg_get(L, first_arg);
+    base = cast(Digit)luaL_optinteger(L, first_arg + 1, /*def=*/0);
     switch (arg.type) {
     case ARG_BIGINT:
+        luaL_argcheck(L, base == 0 || base == 10, first_arg + 1, "Don't.");
         internal_make_copy(L, arg.bigint);
         break;
     case ARG_INTEGER:
+        // Don't follow `tonumber()` where you can pass a number and read it
+        // in another base...
+        luaL_argcheck(L, base == 0 || base == 10, first_arg + 1, "Don't.");
         internal_make_integer(L, arg.integer);
         break;
     case ARG_STRING:
-        internal_make_lstring(L, arg.lstring.data, arg.lstring.len);
+        internal_make_lstring(L, arg.lstring.data, arg.lstring.len, base);
         break;
     default:
         return luaL_typerror(L, first_arg, "BigInt|integer|string");
@@ -342,7 +342,7 @@ internal_cmp_integer_abs(const BigInt *a, lua_Integer b)
     }
 
     // `b >= DIGIT_BASE` and `#b > 1`
-    uintmax_t b_abs = internal_integer_abs_unsigned(b);
+    uintmax_t b_abs = internal_integer_abs(b);
     Digit     b_digits[sizeof(b_abs) / sizeof(a->digits[0])];
     size_t    b_len = count_of(b_digits);
     if (a->len != b_len) {
@@ -376,9 +376,11 @@ internal_lt_integer_abs(const BigInt *a, lua_Integer b)
 }
 
 static Digit
-arith_add_carry(Digit a, Digit b, Digit *carry)
+arith_add_carry(Digit *carry, Digit a, Digit b)
 {
-    Digit sum = a + b + *carry;
+    Digit sum;
+
+    sum    = a + b + *carry;
     *carry = cast(Digit)(sum >= BIGINT_DIGIT_BASE);
     if (*carry == 1) {
         sum -= BIGINT_DIGIT_BASE;
@@ -386,37 +388,33 @@ arith_add_carry(Digit a, Digit b, Digit *carry)
     return sum;
 }
 
-/** @brief `|a| + |b|` */
-LUAI_FUNC BigInt *
-internal_add_bigint_unsigned(lua_State *L, const BigInt *a, const BigInt *b)
+/** @brief `|a| + |b|` where #a >= #b. */
+LUAI_FUNC void
+internal_add_bigint_unsigned(BigInt *dst, const BigInt *a, const BigInt *b)
 {
-    BigInt *dst;
     size_t max_used;
     size_t min_used;
     Digit carry = 0;
 
-    if (a->len < b->len) {
-        internal_swap_ptr(&a, &b);
-    }
     max_used = a->len;
     min_used = b->len;
-    // May overallocate by 1 digit, which is acceptable.
-    dst = internal_make(L, max_used + 1);
     for (size_t i = 0; i < min_used; i += 1) {
-        dst->digits[i] = arith_add_carry(a->digits[i], b->digits[i], &carry);
+        dst->digits[i] = arith_add_carry(&carry, a->digits[i], b->digits[i]);
     }
 
     for (size_t i = min_used; i < max_used; i += 1) {
-        dst->digits[i] = arith_add_carry(a->digits[i], /*b=*/0, &carry);
+        dst->digits[i] = arith_add_carry(&carry, a->digits[i], /*b=*/0);
     }
     dst->digits[max_used] = carry;
-    return internal_clamp(dst);
+    internal_clamp(dst);
 }
 
 static Digit
-arith_sub_borrow(Digit a, Digit b, Word *borrow)
+arith_sub_borrow(Word *borrow, Digit a, Digit b)
 {
-    Word diff = cast(Word)a - cast(Word)b - *borrow;
+    Word diff;
+
+    diff    = cast(Word)a - cast(Word)b - *borrow;
     *borrow = cast(Word)(diff < 0);
     if (*borrow == 1) {
         diff += BIGINT_DIGIT_BASE;
@@ -425,80 +423,70 @@ arith_sub_borrow(Digit a, Digit b, Word *borrow)
 }
 
 
-/** @brief `|a| - |b|` where `|a| >= |b|`. */
-LUAI_FUNC BigInt *
-internal_sub_bigint_unsigned(lua_State *L, const BigInt *a, const BigInt *b)
+/** @brief `|a| - |b|` where `|a| >= |b|` and `#a >= #b`. */
+LUAI_FUNC void
+internal_sub_bigint_unsigned(BigInt *dst, const BigInt *a, const BigInt *b)
 {
-    BigInt *dst;
     size_t max_used, min_used, i = 0;
     Word borrow = 0;
 
-    if (a->len < b->len) {
-        internal_swap_ptr(&a, &b);
-    }
-
     max_used = a->len;
     min_used = b->len;
-    dst      = internal_make(L, max_used + 1);
     for (; i < min_used; i += 1) {
-        dst->digits[i] = arith_sub_borrow(a->digits[i], b->digits[i], &borrow);
+        dst->digits[i] = arith_sub_borrow(&borrow, a->digits[i], b->digits[i]);
     }
 
     for (; i < max_used; i += 1) {
-        dst->digits[i] = arith_sub_borrow(a->digits[i], /*b=*/0, &borrow);
+        dst->digits[i] = arith_sub_borrow(&borrow, a->digits[i], /*b=*/0);
     }
     dst->digits[i] = cast(Digit)borrow;
-    return internal_clamp(dst);
+    internal_clamp(dst);
 }
 
 
 /** @brief `|a| + |b|` where `b >= 0` and `b` fits in a `Digit`. */
-LUAI_FUNC BigInt *
-internal_add_digit_unsigned(lua_State *L, const BigInt *a, Digit b)
+LUAI_FUNC void
+internal_add_digit_unsigned(BigInt *dst, const BigInt *a, Digit b)
 {
-    BigInt *dst;
-    size_t  used;
-    Digit   carry;
+    size_t used;
+    Digit carry;
 
     used  = a->len;
-    // May overallocate by 1 digit, which is acceptable.
-    dst   = internal_make(L, used + 1);
     carry = b;
     for (size_t i = 0; i < used; i += 1) {
-        dst->digits[i] = arith_add_carry(a->digits[i], /*b=*/0, &carry);
+        dst->digits[i] = arith_add_carry(&carry, a->digits[i], /*b=*/0);
     }
     dst->digits[used] = carry;
-    return internal_clamp(dst);
+    internal_clamp(dst);
 }
 
 
 /** @brief `a - b` where a >= b and b >= 0 */
-LUAI_FUNC BigInt *
-internal_sub_digit_unsigned(lua_State *L, const BigInt *a, Digit b)
+LUAI_FUNC void
+internal_sub_digit_unsigned(BigInt *dst, const BigInt *a, Digit b)
 {
-    BigInt *dst;
     size_t used;
     Word borrow;
 
     used   = a->len;
-    dst    = internal_make(L, used + 1);
     borrow = cast(Word)b;
 
     for (size_t i = 0; i < used; i += 1) {
-        dst->digits[i] = arith_sub_borrow(a->digits[i], /*b=*/0, &borrow);
+        dst->digits[i] = arith_sub_borrow(&borrow, a->digits[i], /*b=*/0);
     }
     dst->digits[used] = cast(Digit)borrow;
-    return internal_clamp(dst);
+    internal_clamp(dst);
 }
 
 
 static Digit
-arith_mul_carry(Digit a, Digit b, Word *carry)
+arith_mul_carry(Word *carry, Digit a, Digit b)
 {
-    Word prod = (cast(Word)a * cast(Word)b) + *carry;
+    Word prod;
 
     // New carry is the 'overflow' from the product, e.g. 1000 in 1234
     // for base-1000.
+    prod   = (cast(Word)a * cast(Word)b) + *carry;
     *carry = prod / BIGINT_DIGIT_BASE;
 
     // Only the portion of the product that fits in `Digit` will be written.
@@ -507,97 +495,83 @@ arith_mul_carry(Digit a, Digit b, Word *carry)
 
 
 /** @brief `|a| * |b|` */
-LUAI_FUNC BigInt *
-internal_mul_digit_unsigned(lua_State *L, const BigInt *a, Digit b)
+LUAI_FUNC void
+internal_mul_digit_unsigned(BigInt *dst, const BigInt *a, Digit b)
 {
-    BigInt *dst;
     size_t used;
     Word carry = 0;
 
     used = a->len;
-    dst  = internal_make(L, used);
-
     for (size_t i = 0; i < used; i += 1) {
-        dst->digits[i] = arith_mul_carry(a->digits[i], b, &carry);
+        dst->digits[i] = arith_mul_carry(&carry, a->digits[i], b);
     }
     dst->digits[used] = cast(Digit)carry;
-    return dst;
 }
 
-LUAI_FUNC BigInt *
-internal_mul_bigint_unsigned(lua_State *L, const BigInt *a, const BigInt *b)
+
+/** @brief `|a| * |b|` where #a >= #b.
+ * @param dst Should alias neither `a` nor `b`.
+ */
+LUAI_FUNC void
+internal_mul_bigint_unsigned(BigInt *dst, const BigInt *a, const BigInt *b)
 {
-    BigInt *dst;
     size_t max_used, min_used;
-
-    if (a->len < b->len) {
-        internal_swap_ptr(&a, &b);
-    }
-
     max_used = a->len;
     min_used = b->len;
-    dst      = internal_make(L, min_used + max_used + 1);
 
     for (size_t b_i = 0; b_i < min_used; b_i += 1) {
         Word prod = 0, carry = 0;
         for (size_t a_i = 0; a_i < max_used; a_i += 1) {
-            prod = arith_mul_carry(a->digits[a_i], b->digits[b_i], &carry);
+            prod = arith_mul_carry(&carry, a->digits[a_i], b->digits[b_i]);
             dst->digits[a_i + b_i] += prod;
         }
         dst->digits[b_i + max_used] += carry;
     }
-    return internal_clamp(dst);
+    internal_clamp(dst);
 }
 
-
-/** @brief `|a| + |b|` where `DIGIT_BASE <= b` */
-LUAI_FUNC BigInt *
-internal_add_integer_unsigned(lua_State *L, const BigInt *a, lua_Integer b)
+/** @brief `dst, mod = |a| / |b|, |a| % |b|`
+ *  where |a| > 0
+ *    and |b| > 0
+ *
+ * @param mod Optional out-parameter for the remainder. We know that
+ *          `a % b` will always have at most `#b` digits.
+ */
+LUAI_FUNC void
+internal_divmod_digit_unsigned(BigInt *dst, Digit *mod, const BigInt *a, Digit b)
 {
-    size_t used;
-    BigInt *dst;
-    uintmax_t carry;
-    size_t i = 0, b_len = 2;
+    Word carry = 0;
 
-    carry = internal_integer_abs_unsigned(b);
-    assert(carry >= BIGINT_DIGIT_BASE);
+    // Divide MSD to LSD.
+    for (size_t i = a->len; i > 0; i -= 1) {
+        size_t a_i;
+        Digit quot = 0, rem = 0;
 
-    used = (a->len < b_len) ? b_len : a->len;
-    dst  = internal_make(L, used + 1);
-
-    // Add up digit places common to both `a` and `b`.
-    for (; i < a->len; i += 1) {
-        Digit lsd = cast(Digit)(carry % BIGINT_DIGIT_BASE);
-        Digit sum = a->digits[i] + lsd;
-        if (sum >= BIGINT_DIGIT_BASE) {
-            sum -= BIGINT_DIGIT_BASE;
+        a_i    = i - 1;
+        carry += cast(Word)a->digits[a_i];
+        // Need to carry AND we can actually carry? If we can't carry, just
+        // skip this block because div-mod ends up as 0 anyway.
+        if (carry < cast(Word)b && a_i > 0) {
+            carry *= BIGINT_DIGIT_BASE;
+            assert(carry > cast(Word)b);
+            dst->digits[a_i] = 0;
+            continue;
         }
-        dst->digits[i] = cast(Digit)sum;
-        carry /= BIGINT_DIGIT_BASE;
+
+        quot = cast(Digit)(carry / cast(Word)b);
+        rem  = cast(Digit)(carry % cast(Word)b); // <=> carry - b*quot
+
+        dst->digits[a_i] = quot;
+        carry = cast(Word)rem; // Reset carry because we didn't propagate.
     }
 
-    // `b` was larger, copy over its higher digits.
-    for (; i < b_len; i += 1) {
-        dst->digits[i] = cast(Digit)(carry % BIGINT_DIGIT_BASE);
-        carry /= BIGINT_DIGIT_BASE;
+    internal_clamp(dst);
+    if (mod != NULL) {
+        assert(0 <= carry && carry < BIGINT_DIGIT_BASE);
+        *mod = cast(Digit)carry;
     }
-
-    dst->digits[i] = cast(Digit)carry;
-    return internal_clamp(dst);
 }
 
-
-/** @brief `|a| - |b|` where `|b| >= BIGINT_DIGIT_BASE` */
-LUAI_FUNC BigInt *
-internal_sub_integer_unsigned(lua_State *L, const BigInt *a, lua_Integer b)
-{
-    uintmax_t b_abs = internal_integer_abs_unsigned(b);
-    assert(b_abs >= BIGINT_DIGIT_BASE);
-    unused(a);
-    unused(b_abs);
-    luaL_error(L, "subtracting large `integer` not yet supported");
-    return NULL;
-}
 
 static Digit
 digit_place_value(Digit digit, Digit base)
@@ -608,34 +582,6 @@ digit_place_value(Digit digit, Digit base)
         place *= cast(Word)base;
     }
     return cast(Digit)place;
-}
-
-/** @brief Assumes `2 <= base and base <= 36`. */
-static void
-string_write_digit(luaL_Buffer *sb, Digit digit, Digit base)
-{
-    if (digit == 0) {
-        luaL_addchar(sb, '0');
-        return;
-    }
-
-    Digit pv = digit_place_value(digit, base);
-    while (pv > 0) {
-        // Get the left-most digit, e.g. '1' in "1234".
-        Digit msd = digit / pv;
-        // Binary, Octal, Decimal: 0-9
-        if (msd < 10) {
-            luaL_addchar(sb, cast(char)msd + '0');
-        }
-        // Dozenal, Hexadecimal, Base-36: a-z (lowercase only for simpicity)
-        else if (msd < 36) {
-            luaL_addchar(sb, cast(char)msd - 10 + 'a');
-        }
-
-        // 'Trim off' the MSD's magnitude.
-        digit -= msd * pv;
-        pv /= base;
-    }
 }
 
 static bool
@@ -753,24 +699,34 @@ digit_length_base(Digit base)
 
 
 LUAI_FUNC BigInt *
-internal_make_lstring(lua_State *L, const char *s, size_t s_len)
+internal_make_lstring(lua_State *L, const char *s, size_t s_len, Digit base)
 {
     BigInt *dst;
     Sign   sign;
-    Digit  base;
     size_t used, n_digits = 0;
 
     sign = string_get_sign(&s, &s_len);
-    base = string_get_base(&s, &s_len);
+
+    // Skip base prefix.
+    {
+        Digit tmp = string_get_base(&s, &s_len);
+        // Didn't know the base beforehand, we do now.
+        if (base == 0) {
+            base = tmp;
+        }
+    }
 
     // Count number of base-`base` digits in the string
     for (size_t i = 0; i < s_len; i += 1) {
-        char ch = s[i];
+        int digit;
+        char ch;
+
+        ch = s[i];
         if (ch == ',' || ch == '_') {
             continue;
         }
 
-        int digit = char_to_digit(ch, base);
+        digit = char_to_digit(ch, base);
         if (digit == INVALID_DIGIT) {
             luaL_error(L, "Invalid base-%d digit '%c'", cast(int)base, ch);
             return NULL;
@@ -798,75 +754,102 @@ internal_make_lstring(lua_State *L, const char *s, size_t s_len)
 
         // dst *= base
         for (size_t mul_i = 0; mul_i < used; mul_i += 1) {
-            dst->digits[mul_i] = arith_mul_carry(dst->digits[mul_i], base, &mul_carry);
+            dst->digits[mul_i] = arith_mul_carry(&mul_carry, dst->digits[mul_i], base);
         }
         dst->digits[used] = cast(Digit)mul_carry;
 
         // dst += digit
         add_carry = digit;
         for (size_t add_i = 0; add_i < used; add_i += 1) {
-            dst->digits[add_i] = arith_add_carry(dst->digits[add_i], /*b=*/0, &add_carry);
+            dst->digits[add_i] = arith_add_carry(&add_carry, dst->digits[add_i], /*b=*/0);
         }
         dst->digits[used] = add_carry;
     }
-    return internal_clamp(dst);
+    internal_clamp(dst);
+    return dst;
 }
 
-static size_t
-digit_write_binary(Digit digit, char buf[], Digit base)
+__attribute__((__unused__))
+static void
+dump_stack(lua_State *L)
 {
-    size_t end = 0;
-    if (digit == 0) {
-        buf[0] = '0';
-        buf[1] = '\0';
-        return 1;
-    }
-    for (; digit != 0; end += 1) {
-        Digit lsd = digit % base;
-        char ch = cast(char)lsd + ((lsd < 10) ? '0' : 'a' - 10);
-        buf[end] = ch;
-        digit /= base;
-    }
-    buf[end] = '\0';
+    int n = lua_gettop(L);
 
-    // Reverse the string.
-    for (size_t left = 0, right = end - 1; left < right; left += 1, right -= 1) {
-        char tmp   = buf[left];
-        buf[left]  = buf[right];
-        buf[right] = tmp;
+    lua_getglobal(L, "tostring");
+    println("*** STACK DUMP ***");
+    for (int i = 1; i <= n; i += 1) {
+        lua_pushvalue(L, -1);
+        lua_pushvalue(L, i);
+        lua_call(L, /*nargs=*/1, /*nresults=*/1);
+        printfln("[%i]: %s = %s", i, luaL_typename(L, i), lua_tostring(L, -1));
+        lua_pop(L, 1); // ..., tostring
     }
-    return end;
+    println("******************\n");
+    lua_pop(L, 1);
+}
+
+
+/** @brief Assumes `2 <= base and base <= 36`. */
+static void
+string_write_digit(luaL_Buffer *sb, Digit digit, Digit base)
+{
+    if (digit == 0) {
+        luaL_addchar(sb, '0');
+        return;
+    }
+
+    Digit pv = digit_place_value(digit, base);
+    while (pv > 0) {
+        // Get the left-most digit, e.g. '1' in "1234".
+        Digit msd = digit / pv;
+        // Binary, Octal, Decimal: 0-9
+        if (msd < 10) {
+            luaL_addchar(sb, cast(char)msd + '0');
+        }
+        // Dozenal, Hexadecimal, Base-36: a-z (lowercase only for simpicity)
+        else if (msd < 36) {
+            luaL_addchar(sb, cast(char)msd - 10 + 'a');
+        }
+
+        // 'Trim off' the MSD's magnitude.
+        digit -= msd * pv;
+        pv /= base;
+    }
 }
 
 LUAI_FUNC void
 internal_write_binary_string(luaL_Buffer *sb, const BigInt *a, Digit base)
 {
-    size_t d_len, used;
-    BigInt *tmp;
     lua_State *L;
+    BigInt *tmp;
+    luaL_Buffer rev_buf; // Holds the currently reverse binary string.
 
-    L = sb->L;
+    L   = sb->L;
+    tmp = internal_make_copy(L, a);
+    luaL_buffinit(L, &rev_buf);
+
     switch (base) {
     case 2:  luaL_addstring(sb, "0b"); break;
     case 8:  luaL_addstring(sb, "0o"); break;
     case 16: luaL_addstring(sb, "0x"); break;
     default: luaL_error(L, "non-binary base %d", cast(int)base); return;
     }
-    STUB(L, "unimplemented");
-
-    // Convert base-`BASE` array to a base-{2,8,16} array.
-    d_len = cast(size_t)digit_length_base(base);
-    used  = a->len * d_len;
-    tmp   = internal_make(L, used);
-    unused(tmp);
 
     // Write from MSD to LSD.
-    for (size_t i = a->len; i > 0; i -= 1) {
-        // Convert base-`BASE` to a decimal integer representing base-{2,8,16}.
-        char buf[BIGINT_DIGIT_BASE2_LENGTH + 1];
-        size_t buf_used = digit_write_binary(a->digits[i], buf, base);
-        unused(buf_used);
+    while (!internal_is_zero(tmp)) {
+        Digit lsd = 0;
+        internal_divmod_digit_unsigned(tmp, &lsd, tmp, base);
+        string_write_digit(&rev_buf, lsd, base);
     }
+
+    // Correct the arrangement of the binary string.
+    luaL_pushresult(&rev_buf);
+    lua_getfield(L, -1, "reverse");
+    lua_pushvalue(L, -2);
+    lua_call(L, /*nargs=*/1, /*nresults=*/1);
+
+    // Ensure the original string builder knows about the now-correct string.
+    luaL_addvalue(sb);
 }
 
 LUAI_FUNC void
@@ -881,16 +864,19 @@ internal_write_decimal_string(luaL_Buffer *sb, const BigInt *a)
     // Write from MSD - 1 to LSD.
     // Don't subtract 1 immediately due to unsigned overflow.
     for (size_t i = msd_index; i > 0; i -= 1) {
-        Digit digit = a->digits[i - 1];
+        // Convert base-`BASE` to base-`base`.
+        Word tmp;
+        Digit digit;
 
-        // Convert base-`BASE` to base-`base` with leading zeroes as needed.
-        Word tmp = cast(Word)digit;
+        digit = a->digits[i - 1];
+        tmp   = cast(Word)digit;
 
         // Avoid infinite loops when multiplying by zero.
         if (tmp == 0) {
             tmp = 1;
         }
 
+        // Add leading zeroes as needed.
         while (tmp * cast(Word)10 < BIGINT_DIGIT_BASE) {
             luaL_addchar(sb, '0');
             tmp *= cast(Word)10;

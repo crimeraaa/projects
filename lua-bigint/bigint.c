@@ -54,131 +54,6 @@ bigint_le(lua_State *L)
     return bigint_compare(L, internal_le_bigint);
 }
 
-static int
-bigint_add_bigint(lua_State *L, const BigInt *a, const BigInt *b)
-{
-    // 1.)   a  +   b
-    // 2.) (-a) + (-b) == -(a + b)
-    if (a->sign == b->sign) {
-        bool    both_neg = internal_is_neg(a);
-        BigInt *dst      = internal_add_bigint_unsigned(L, a, b);
-        if (both_neg) {
-            internal_neg(dst);
-        }
-        return 1;
-    }
-
-    // 3.) (-a) +   b  == -(a - b)
-    // 4.)   a  + (-b) ==   a - b
-    bool a_is_neg  = internal_is_neg(a);
-    bool a_is_less = internal_lt_bigint_abs(a, b);
-    if (a_is_less) {
-        internal_swap_ptr(&a, &b);
-    }
-
-    BigInt *dst = internal_sub_bigint_unsigned(L, a, b);
-    // 3.1.) (-a) + b > 0 when |a| < |b|
-    // 3.2.) (-a) + b < 0 when |a| > |b|
-    //
-    // 4.1)  a - b <  0 when |a| <  |b|
-    // 4.2.) a - b >= 0 when |a| >= |b|
-    if ((a_is_neg && !a_is_less) || a_is_less) {
-        internal_neg(dst);
-    }
-    return 1;
-}
-
-static int
-bigint_sub_bigint(lua_State *L, const BigInt *a, const BigInt *b)
-{
-    BigInt *dst;
-    Sign sign;
-    bool a_is_neg;
-
-    a_is_neg = internal_is_neg(a);
-    if (a->sign != b->sign) {
-        // 1.) (-a) -   b  == -(a + b)
-        // 2.)   a  - (-b) ==   a + b
-        dst = internal_add_bigint_unsigned(L, a, b);
-        if (a_is_neg) {
-            internal_neg(dst);
-        }
-        return 1;
-    }
-
-    sign = a->sign;
-    if (internal_lt_bigint_abs(a, b)) {
-        sign = (sign == POSITIVE) ? NEGATIVE : POSITIVE;
-        internal_swap_ptr(&a, &b);
-    }
-
-    dst = internal_sub_bigint_unsigned(L, a, b);
-    if (!internal_is_zero(dst)) {
-        dst->sign = sign;
-    }
-    return 1;
-}
-
-/** @brief `|a| + b` where 0 <= b and b < DIGIT_BASE. */
-static int
-bigint_add_digit(lua_State *L, const BigInt *a, Digit b)
-{
-    // 1.) (-a) + b == -(a - b)
-    if (internal_is_neg(a)) {
-        // 1.1.) -(a - b) >= 0
-        //  where |a| < |b|
-        if (internal_lt_digit_abs(a, b)) {
-            internal_make_integer(L, cast(lua_Integer)(b - a->digits[0]));
-        }
-        // 1.2.) -(a - b) < 0
-        //  where |a| > |b|
-        else {
-            BigInt *dst = internal_sub_digit_unsigned(L, a, b);
-            internal_neg(dst);
-        }
-        return 1;
-    }
-    // 2.) a + b
-    internal_add_digit_unsigned(L, a, b);
-    return 1;
-}
-
-
-/** @brief `|a| - b` where 0 <= b and b < DIGIT_BASE. */
-static int
-bigint_sub_digit(lua_State *L, const BigInt *a, Digit b)
-{
-    BigInt *dst;
-    Sign sign = a->sign;
-
-    // 1.) (-a) - b == -(a + b)
-    if (internal_is_neg(a)) {
-        dst = internal_add_digit_unsigned(L, a, b);
-        dst->sign = sign;
-        return 1;
-    }
-
-    // 2.) a - b < 0 == -(b - a)
-    //  where a < b
-    //    and a >= 0
-    //    and b >= 0
-    if (internal_lt_digit_abs(a, b)) {
-        dst = internal_make(L, 1);
-        dst->digits[0] = b - a->digits[0];
-        internal_neg(dst);
-        internal_clamp(dst);
-        return 1;
-    }
-
-    // 3.) a - b >= 0
-    //  where a >= b
-    //    and a >= 0
-    //    and b >= 0
-    dst = internal_sub_digit_unsigned(L, a, b);
-    dst->sign = sign;
-    return 1;
-}
-
 
 static int
 bigint_add_integer(lua_State *L, const BigInt *a, lua_Integer b);
@@ -225,35 +100,144 @@ bigint_arith(lua_State *L, Arith_Fn1 bigint_fn, Arith_Fn2 integer_fn)
 }
 
 static int
+bigint_add_bigint(lua_State *L, const BigInt *a, const BigInt *b)
+{
+    BigInt *dst;
+    size_t max_used;
+    bool a_is_neg, a_is_less;
+
+    // 1.)   a  +   b
+    // 2.) (-a) + (-b) == -(a + b)
+    a_is_neg = internal_is_neg(a);
+    if (a->sign == b->sign) {
+        max_used = (a->len >= b->len) ? a->len : b->len;
+        dst      = internal_make(L, max_used + 1);
+        internal_add_bigint_unsigned(dst, a, b);
+        // Both negative?
+        if (a_is_neg) {
+            internal_neg(dst);
+        }
+        return 1;
+    }
+
+    // 3.) (-a) +   b  == -(a - b)
+    // 4.)   a  + (-b) ==   a - b
+    a_is_less = internal_lt_bigint_abs(a, b);
+    if (a_is_less) {
+        internal_swap_ptr(&a, &b);
+    }
+
+    max_used = a->len;
+    dst      = internal_make(L, max_used + 1);
+    internal_sub_bigint_unsigned(dst, a, b);
+
+    // 3.1.) (-a) + b > 0 when |a| < |b|
+    // 3.2.) (-a) + b < 0 when |a| > |b|
+    //
+    // 4.1)  a - b <  0 when |a| <  |b|
+    // 4.2.) a - b >= 0 when |a| >= |b|
+    if ((a_is_neg && !a_is_less) || a_is_less) {
+        internal_neg(dst);
+    }
+    return 1;
+}
+
+static int
 bigint_add(lua_State *L)
 {
     return bigint_arith(L, bigint_add_bigint, bigint_add_integer);
 }
 
+
+/** @brief `|a| + b` where 0 <= b and b < DIGIT_BASE. */
+static int
+bigint_add_digit(lua_State *L, const BigInt *a, Digit b)
+{
+    BigInt *dst;
+    size_t max_used;
+
+    // May overallocate by 1 digit, which is acceptable.
+    max_used = a->len;
+    dst      = internal_make(L, max_used + 1);
+
+    // 1.) (-a) + b == -(a - b)
+    if (internal_is_neg(a)) {
+        // 1.1.) -(a - b) >= 0
+        //  where |a| < |b|
+        if (internal_lt_digit_abs(a, b)) {
+            dst->digits[0] = b - a->digits[0];
+        }
+        // 1.2.) -(a - b) < 0
+        //  where |a| > |b|
+        else {
+            internal_sub_digit_unsigned(dst, a, b);
+            internal_neg(dst);
+        }
+        return 1;
+    }
+    // 2.) a + b
+    internal_add_digit_unsigned(dst, a, b);
+    return 1;
+}
+
+static int
+bigint_sub_digit(lua_State *L, const BigInt *a, Digit b);
+
 static int
 bigint_add_integer(lua_State *L, const BigInt *a, lua_Integer b)
 {
     // 1.) a + b where 0 <= b and b < DIGIT_BASE
-    if (integer_fits_digit(b)) {
-        return bigint_add_digit(L, a, cast(Digit)b);
+    if (integer_fits_digit_unsigned(b)) {
+        Digit b_abs = internal_integer_abs(b);
+        // 1.1.) a +   b
+        // 1.2.) a + (-b) == a - |b|
+        return (b >= 0 ? bigint_add_digit : bigint_sub_digit)(L, a, b_abs);
     }
     // 2.) (-a) + b == -(a - b)
-    else if (internal_is_neg(a)) {
-        BigInt *dst;
-        // 2.1.) (-a) + (-b) == -(a + |b|)
-        if (b < 0) {
-            dst = internal_add_integer_unsigned(L, a, b);
+    // 3.) a + b where 0 < a and DIGIT_BASE <= b
+    BigInt *b_tmp = internal_make_integer(L, b);
+    return bigint_add_bigint(L, a, b_tmp);
+}
+
+static int
+bigint_sub_bigint(lua_State *L, const BigInt *a, const BigInt *b)
+{
+    BigInt *dst;
+    size_t max_used;
+    Sign sign;
+    bool a_is_neg;
+
+    a_is_neg = internal_is_neg(a);
+    if (a->sign != b->sign) {
+        if (a->len < b->len) {
+            internal_swap_ptr(&a, &b);
         }
-        // 2.2.) (-a) + b == -(|a| - b)
-        else {
-            dst = internal_sub_integer_unsigned(L, a, b);
+        max_used = a->len;
+
+        // May overallocate by 1 digit, which is acceptable.
+        dst = internal_make(L, max_used + 1);
+
+        // 1.) (-a) -   b  == -(a + b)
+        // 2.)   a  - (-b) ==   a + b
+        internal_add_bigint_unsigned(dst, a, b);
+        if (a_is_neg) {
+            internal_neg(dst);
         }
-        internal_neg(dst);
         return 1;
     }
 
-    // 3.) a + b where 0 < a and DIGIT_BASE <= b
-    internal_add_integer_unsigned(L, a, b);
+    sign = a->sign;
+    if (internal_lt_bigint_abs(a, b)) {
+        sign = (sign == POSITIVE) ? NEGATIVE : POSITIVE;
+        internal_swap_ptr(&a, &b);
+    }
+
+    max_used = a->len;
+    dst = internal_make(L, max_used + 1);
+    internal_sub_bigint_unsigned(dst, a, b);
+    if (!internal_is_zero(dst)) {
+        dst->sign = sign;
+    }
     return 1;
 }
 
@@ -264,55 +248,72 @@ bigint_sub(lua_State *L)
 }
 
 
+/** @brief `|a| - b` where 0 <= b and b < DIGIT_BASE. */
+static int
+bigint_sub_digit(lua_State *L, const BigInt *a, Digit b)
+{
+    BigInt *dst;
+    Sign sign;
+
+    dst  = internal_make(L, a->len);
+    sign = a->sign;
+
+    // 1.) (-a) - b == -(a + b)
+    if (internal_is_neg(a)) {
+        internal_add_digit_unsigned(dst, a, b);
+        dst->sign = sign;
+        return 1;
+    }
+
+    // 2.) a - b < 0 == -(b - a)
+    //  where a < b
+    //    and a >= 0
+    //    and b >= 0
+    if (internal_lt_digit_abs(a, b)) {
+        dst->digits[0] = b - a->digits[0];
+        internal_neg(dst);
+        internal_clamp(dst);
+        return 1;
+    }
+
+    // 3.) a - b >= 0
+    //  where a >= b
+    //    and a >= 0
+    //    and b >= 0
+    internal_sub_digit_unsigned(dst, a, b);
+    dst->sign = sign;
+    return 1;
+}
+
 static int
 bigint_sub_integer(lua_State *L, const BigInt *a, lua_Integer b)
 {
     // 1.) a - b where 0 <= b and b < DIGIT_BASE
-    if (integer_fits_digit(b)) {
-        return bigint_sub_digit(L, a, cast(Digit)b);
+    if (integer_fits_digit_unsigned(b)) {
+        Digit b_abs = internal_integer_abs(b);
+        // 1.1.) a -   b
+        // 1.2.) a - (-b) == a + |b|
+        return (b >= 0 ? bigint_sub_digit : bigint_add_digit)(L, a, b_abs);
     }
-    // 2.) a - (-b) == a + |b|
-    else if (b < 0) {
-        // 1.1.) (-a) + |b| == -(|a| - |b|)
-        //  where a < 0
-        //    and b < 0
-        // 1.1.1) -(|a| - |b|) > 0 where |a| < |b|
-        // 1.1.2) -(|a| - |b|) < 0 where |a| > |b|
-        if (internal_is_neg(a)) {
-            BigInt *dst = internal_sub_integer_unsigned(L, a, b);
-            internal_neg(dst);
-        }
-        // 1.3.) a + |b|
-        //  where a >= 0
-        //    and b <  0
-        else {
-            internal_add_integer_unsigned(L, a, b);
-        }
-        return 1;
-    }
-    // 3.) (-a) - b == -(a + b)
-    //  where a <  0
-    //    and b >= 0
-    else if (internal_is_neg(a)) {
-        BigInt *dst = internal_add_integer_unsigned(L, a, b);
-        internal_neg(dst);
-        return 1;
-    }
-
-    // 3.) a - b where DIGIT_BASE <= b
-    internal_sub_integer_unsigned(L, a, b);
-    return 1;
+    BigInt *b_tmp = internal_make_integer(L, b);
+    return bigint_sub_bigint(L, a, b_tmp);
 }
 
 static int
 bigint_mul_bigint(lua_State *L, const BigInt *a, const BigInt *b)
 {
-    Sign sign;
+    size_t max_used, min_used;
     BigInt *dst;
 
-    sign = (a->sign == b->sign) ? POSITIVE : NEGATIVE;
-    dst  = internal_mul_bigint_unsigned(L, a, b);
-    dst->sign = sign;
+    if (a->len < b->len) {
+        internal_swap_ptr(&a, &b);
+    }
+
+    max_used  = a->len;
+    min_used  = b->len;
+    dst       = internal_make(L, min_used + max_used + 1);
+    dst->sign = (a->sign == b->sign) ? POSITIVE : NEGATIVE;
+    internal_mul_bigint_unsigned(dst, a, b);
     return 1;
 }
 
@@ -321,21 +322,63 @@ static int
 bigint_mul_integer(lua_State *L, const BigInt *a, lua_Integer b)
 {
     if (integer_fits_digit_unsigned(b)) {
-        Digit b_abs;
         BigInt *dst;
+        size_t used;
+        Digit b_abs;
 
-        b_abs     = cast(Digit)internal_integer_abs(b);
-        dst       = internal_mul_digit_unsigned(L, a, b_abs);
+        used  = a->len;
+        dst   = internal_make(L, used);
+        b_abs = cast(Digit)internal_integer_abs(b);
+
+        internal_mul_digit_unsigned(dst, a, b_abs);
         dst->sign = (internal_is_pos(a) == (b >= 0)) ? POSITIVE : NEGATIVE;
         return 1;
     }
-    return STUB(L, "unimplemented");
+
+    BigInt *b_tmp = internal_make_integer(L, b);
+    return bigint_mul_bigint(L, a, b_tmp);
 }
 
 static int
 bigint_mul(lua_State *L)
 {
     return bigint_arith(L, bigint_mul_bigint, bigint_mul_integer);
+}
+
+static int
+bigint_div_bigint(lua_State *L, const BigInt *a, const BigInt *b)
+{
+    luaL_argcheck(L, !internal_is_zero(b), 2, "Division by zero");
+    if (internal_is_zero(a)) {
+        internal_make_integer(L, 0);
+        return 1;
+    }
+    return STUB(L, "unimplemented");
+}
+
+static int
+bigint_div_integer(lua_State *L, const BigInt *a, lua_Integer b)
+{
+    if (integer_fits_digit_unsigned(b)) {
+        BigInt *dst;
+        Digit b_abs;
+
+        luaL_argcheck(L, b != 0, 2, "Division by zero");
+        b_abs     = cast(Digit)internal_integer_abs(b);
+        dst       = internal_make(L, a->len);
+        dst->sign = (internal_is_pos(a) && b >= 0) ? POSITIVE : NEGATIVE;
+        internal_divmod_digit_unsigned(dst, NULL, a, b_abs);
+        return 1;
+    }
+
+    BigInt *b_tmp = internal_make_integer(L, b);
+    return bigint_div_bigint(L, a, b_tmp);
+}
+
+static int
+bigint_div(lua_State *L)
+{
+    return bigint_arith(L, bigint_div_bigint, bigint_div_integer);
 }
 
 static int
@@ -405,6 +448,7 @@ bigint_mt[] = {
     {"__add",      bigint_add},
     {"__sub",      bigint_sub},
     {"__mul",      bigint_mul},
+    {"__div",      bigint_div},
     {"__unm",      bigint_unm},
     {"__eq",       bigint_eq},
     {"__lt",       bigint_lt},
