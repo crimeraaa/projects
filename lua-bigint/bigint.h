@@ -53,8 +53,8 @@ typedef enum Comparison Comparison;
 
 typedef struct BigInt BigInt;
 struct BigInt {
-    Sign   sign;
     size_t len;
+    Sign   sign;
     Digit  digits[];
 };
 

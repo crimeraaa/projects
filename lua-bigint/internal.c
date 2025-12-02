@@ -34,16 +34,16 @@ count_digits(uintmax_t value, Digit base)
 }
 
 
-static lua_Integer
-integer_abs(lua_Integer value)
+LUAI_FUNC lua_Integer
+internal_integer_abs(lua_Integer value)
 {
     return (value >= 0) ? value : -value;
 }
 
 
 /** @brief `|value|` which also works for `value == min(type)`. */
-static uintmax_t
-integer_abs_unsigned(lua_Integer value)
+LUAI_FUNC uintmax_t
+internal_integer_abs_unsigned(lua_Integer value)
 {
     return (value >= 0) ? cast(uintmax_t)value : -cast(uintmax_t)value;
 }
@@ -58,6 +58,12 @@ LUAI_FUNC bool
 internal_is_neg(const BigInt *a)
 {
     return a->sign == NEGATIVE;
+}
+
+LUAI_FUNC bool
+internal_is_pos(const BigInt *a)
+{
+    return !internal_is_neg(a);
 }
 
 LUAI_FUNC void
@@ -112,7 +118,7 @@ internal_make_integer(lua_State *L, lua_Integer value)
     uintmax_t value_abs;
     int       digit_count;
 
-    value_abs   = integer_abs_unsigned(value);
+    value_abs   = internal_integer_abs_unsigned(value);
     digit_count = count_digits(value_abs, BIGINT_DIGIT_BASE);
 
     dst = internal_make(L, cast(size_t)digit_count);
@@ -238,16 +244,11 @@ internal_cmp_bigint(const BigInt *a, const BigInt *b)
         }
     }
 
-    const Digit *a_ = a->digits;
-    const Digit *b_ = b->digits;
-
     // 3.) Same signs and same lengths. Compare digits from MSD to LSD.
     for (size_t i = a->len; i > 0; i -= 1) {
-        Digit a_i = a_[i - 1];
-        Digit b_i = b_[i - 1];
-        if (a_i < b_i) {
+        if (a->digits[i - 1] < b->digits[i - 1]) {
             return (a_is_neg) ? GREATER : LESS;
-        } else if (a_i > b_i) {
+        } else if (a->digits[i - 1] > b->digits[i - 1]) {
             return (a_is_neg) ? LESS : GREATER;
         }
     }
@@ -291,13 +292,11 @@ internal_cmp_bigint_abs(const BigInt *a, const BigInt *b)
         return (a->len < b->len) ? LESS : GREATER;
     }
 
-    const Digit *a_ = a->digits;
-    const Digit *b_ = b->digits;
     for (size_t i = a->len; i > 0; i -= 1) {
         size_t j = i - 1;
-        if (a_[j] < b_[j]) {
+        if (a->digits[j] < b->digits[j]) {
             return LESS;
-        } else if (a_[j] > b_[j]) {
+        } else if (a->digits[j] > b->digits[j]) {
             return GREATER;
         }
     }
@@ -339,13 +338,13 @@ LUAI_FUNC Comparison
 internal_cmp_integer_abs(const BigInt *a, lua_Integer b)
 {
     if (integer_fits_digit_unsigned(b)) {
-        return internal_cmp_digit_abs(a, cast(Digit)integer_abs(b));
+        return internal_cmp_digit_abs(a, cast(Digit)internal_integer_abs(b));
     }
 
     // `b >= DIGIT_BASE` and `#b > 1`
-    uintmax_t b_abs = integer_abs_unsigned(b);
-    Digit     b_[sizeof(b_abs) / sizeof(a->digits[0])];
-    size_t    b_len = count_of(b_);
+    uintmax_t b_abs = internal_integer_abs_unsigned(b);
+    Digit     b_digits[sizeof(b_abs) / sizeof(a->digits[0])];
+    size_t    b_len = count_of(b_digits);
     if (a->len != b_len) {
         return (a->len < b_len) ? LESS : GREATER;
     }
@@ -354,17 +353,16 @@ internal_cmp_integer_abs(const BigInt *a, lua_Integer b)
     {
         uintmax_t tmp = b_abs;
         for (size_t i = 0; i < b_len; i += 1) {
-            b_[i] = cast(Digit)(tmp % BIGINT_DIGIT_BASE);
+            b_digits[i] = cast(Digit)(tmp % BIGINT_DIGIT_BASE);
             tmp /= BIGINT_DIGIT_BASE;
         }
     }
 
     // Compare MSD to LSD.
-    const Digit *a_ = a->digits;
     for (size_t i = b_len; i > 0; i -= 1) {
-        if (a_[i] < b_[i]) {
+        if (a->digits[i] < b_digits[i]) {
             return LESS;
-        } else if (a_[i] > b_[i]) {
+        } else if (a->digits[i] > b_digits[i]) {
             return GREATER;
         }
     }
@@ -392,28 +390,26 @@ arith_add_carry(Digit a, Digit b, Digit *carry)
 LUAI_FUNC BigInt *
 internal_add_bigint_unsigned(lua_State *L, const BigInt *a, const BigInt *b)
 {
+    BigInt *dst;
+    size_t max_used;
+    size_t min_used;
+    Digit carry = 0;
+
     if (a->len < b->len) {
         internal_swap_ptr(&a, &b);
     }
-    size_t max_used = a->len;
-    size_t min_used = b->len;
+    max_used = a->len;
+    min_used = b->len;
     // May overallocate by 1 digit, which is acceptable.
-    BigInt *dst = internal_make(L, max_used + 1);
-
-    const Digit *a_   = a->digits;
-    const Digit *b_   = b->digits;
-    Digit       *dst_ = dst->digits;
-
-    size_t i     = 0;
-    Digit  carry = 0;
-    for (; i < min_used; i += 1) {
-        dst_[i] = arith_add_carry(a_[i], b_[i], &carry);
+    dst = internal_make(L, max_used + 1);
+    for (size_t i = 0; i < min_used; i += 1) {
+        dst->digits[i] = arith_add_carry(a->digits[i], b->digits[i], &carry);
     }
 
-    for (; i < max_used; i += 1) {
-        dst_[i] = arith_add_carry(a_[i], /*b=*/0, &carry);
+    for (size_t i = min_used; i < max_used; i += 1) {
+        dst->digits[i] = arith_add_carry(a->digits[i], /*b=*/0, &carry);
     }
-    dst_[i] = carry;
+    dst->digits[max_used] = carry;
     return internal_clamp(dst);
 }
 
@@ -433,28 +429,25 @@ arith_sub_borrow(Digit a, Digit b, Word *borrow)
 LUAI_FUNC BigInt *
 internal_sub_bigint_unsigned(lua_State *L, const BigInt *a, const BigInt *b)
 {
+    BigInt *dst;
+    size_t max_used, min_used, i = 0;
+    Word borrow = 0;
+
     if (a->len < b->len) {
         internal_swap_ptr(&a, &b);
     }
 
-    size_t max_used = a->len;
-    size_t min_used = b->len;
-    BigInt *dst = internal_make(L, max_used + 1);
-
-    const Digit *a_   = a->digits;
-    const Digit *b_   = b->digits;
-    Digit       *dst_ = dst->digits;
-
-    Word borrow = 0;
-    size_t i = 0;
+    max_used = a->len;
+    min_used = b->len;
+    dst      = internal_make(L, max_used + 1);
     for (; i < min_used; i += 1) {
-        dst_[i] = arith_sub_borrow(a_[i], b_[i], &borrow);
+        dst->digits[i] = arith_sub_borrow(a->digits[i], b->digits[i], &borrow);
     }
 
     for (; i < max_used; i += 1) {
-        dst_[i] = arith_sub_borrow(a_[i], /*b=*/0, &borrow);
+        dst->digits[i] = arith_sub_borrow(a->digits[i], /*b=*/0, &borrow);
     }
-    dst_[i] = cast(Digit)borrow;
+    dst->digits[i] = cast(Digit)borrow;
     return internal_clamp(dst);
 }
 
@@ -463,19 +456,18 @@ internal_sub_bigint_unsigned(lua_State *L, const BigInt *a, const BigInt *b)
 LUAI_FUNC BigInt *
 internal_add_digit_unsigned(lua_State *L, const BigInt *a, Digit b)
 {
-    size_t used = a->len;
+    BigInt *dst;
+    size_t  used;
+    Digit   carry;
 
+    used  = a->len;
     // May overallocate by 1 digit, which is acceptable.
-    BigInt *dst = internal_make(L, used + 1);
-
-    const Digit *a_   = a->digits;
-    Digit       *dst_ = dst->digits;
-
-    Digit carry = b;
+    dst   = internal_make(L, used + 1);
+    carry = b;
     for (size_t i = 0; i < used; i += 1) {
-        dst_[i] = arith_add_carry(a_[i], /*b=*/0, &carry);
+        dst->digits[i] = arith_add_carry(a->digits[i], /*b=*/0, &carry);
     }
-    dst_[used] = carry;
+    dst->digits[used] = carry;
     return internal_clamp(dst);
 }
 
@@ -484,17 +476,18 @@ internal_add_digit_unsigned(lua_State *L, const BigInt *a, Digit b)
 LUAI_FUNC BigInt *
 internal_sub_digit_unsigned(lua_State *L, const BigInt *a, Digit b)
 {
-    size_t  used = a->len;
-    BigInt *dst  = internal_make(L, used + 1);
+    BigInt *dst;
+    size_t used;
+    Word borrow;
 
-    const Digit *a_   = a->digits;
-    Digit       *dst_ = dst->digits;
+    used   = a->len;
+    dst    = internal_make(L, used + 1);
+    borrow = cast(Word)b;
 
-    Word borrow = cast(Word)b;
     for (size_t i = 0; i < used; i += 1) {
-        dst_[i] = arith_sub_borrow(a_[i], /*b=*/0, &borrow);
+        dst->digits[i] = arith_sub_borrow(a->digits[i], /*b=*/0, &borrow);
     }
-    dst_[used] = cast(Digit)borrow;
+    dst->digits[used] = cast(Digit)borrow;
     return internal_clamp(dst);
 }
 
@@ -517,18 +510,43 @@ arith_mul_carry(Digit a, Digit b, Word *carry)
 LUAI_FUNC BigInt *
 internal_mul_digit_unsigned(lua_State *L, const BigInt *a, Digit b)
 {
-    size_t  used = a->len;
-    BigInt *dst  = internal_make(L, used);
-    
-    const Digit *a_   = a->digits;
-    Digit       *dst_ = dst->digits;
-
+    BigInt *dst;
+    size_t used;
     Word carry = 0;
+
+    used = a->len;
+    dst  = internal_make(L, used);
+
     for (size_t i = 0; i < used; i += 1) {
-        dst_[i] = arith_mul_carry(a_[i], b, &carry);
+        dst->digits[i] = arith_mul_carry(a->digits[i], b, &carry);
     }
-    dst_[used] = cast(Digit)carry;
+    dst->digits[used] = cast(Digit)carry;
     return dst;
+}
+
+LUAI_FUNC BigInt *
+internal_mul_bigint_unsigned(lua_State *L, const BigInt *a, const BigInt *b)
+{
+    BigInt *dst;
+    size_t max_used, min_used;
+
+    if (a->len < b->len) {
+        internal_swap_ptr(&a, &b);
+    }
+
+    max_used = a->len;
+    min_used = b->len;
+    dst      = internal_make(L, min_used + max_used + 1);
+
+    for (size_t b_i = 0; b_i < min_used; b_i += 1) {
+        Word prod = 0, carry = 0;
+        for (size_t a_i = 0; a_i < max_used; a_i += 1) {
+            prod = arith_mul_carry(a->digits[a_i], b->digits[b_i], &carry);
+            dst->digits[a_i + b_i] += prod;
+        }
+        dst->digits[b_i + max_used] += carry;
+    }
+    return internal_clamp(dst);
 }
 
 
@@ -536,35 +554,35 @@ internal_mul_digit_unsigned(lua_State *L, const BigInt *a, Digit b)
 LUAI_FUNC BigInt *
 internal_add_integer_unsigned(lua_State *L, const BigInt *a, lua_Integer b)
 {
-    uintmax_t carry = integer_abs_unsigned(b);
-    size_t    b_len = 2;
+    size_t used;
+    BigInt *dst;
+    uintmax_t carry;
+    size_t i = 0, b_len = 2;
+
+    carry = internal_integer_abs_unsigned(b);
     assert(carry >= BIGINT_DIGIT_BASE);
 
-    size_t  used = (a->len < b_len) ? b_len : a->len;
-    BigInt *dst  = internal_make(L, used + 1);
+    used = (a->len < b_len) ? b_len : a->len;
+    dst  = internal_make(L, used + 1);
 
-    const Digit *a_   = a->digits;
-    Digit       *dst_ = dst->digits;
-    
     // Add up digit places common to both `a` and `b`.
-    size_t i = 0;
     for (; i < a->len; i += 1) {
         Digit lsd = cast(Digit)(carry % BIGINT_DIGIT_BASE);
-        Digit sum = a_[i] + lsd;
+        Digit sum = a->digits[i] + lsd;
         if (sum >= BIGINT_DIGIT_BASE) {
             sum -= BIGINT_DIGIT_BASE;
         }
-        dst_[i] = cast(Digit)sum;
+        dst->digits[i] = cast(Digit)sum;
         carry /= BIGINT_DIGIT_BASE;
     }
 
     // `b` was larger, copy over its higher digits.
     for (; i < b_len; i += 1) {
-        dst_[i] = cast(Digit)(carry % BIGINT_DIGIT_BASE);
+        dst->digits[i] = cast(Digit)(carry % BIGINT_DIGIT_BASE);
         carry /= BIGINT_DIGIT_BASE;
     }
 
-    dst_[i] = cast(Digit)carry;
+    dst->digits[i] = cast(Digit)carry;
     return internal_clamp(dst);
 }
 
@@ -573,7 +591,7 @@ internal_add_integer_unsigned(lua_State *L, const BigInt *a, lua_Integer b)
 LUAI_FUNC BigInt *
 internal_sub_integer_unsigned(lua_State *L, const BigInt *a, lua_Integer b)
 {
-    uintmax_t b_abs = integer_abs_unsigned(b);
+    uintmax_t b_abs = internal_integer_abs_unsigned(b);
     assert(b_abs >= BIGINT_DIGIT_BASE);
     unused(a);
     unused(b_abs);
@@ -737,9 +755,13 @@ digit_length_base(Digit base)
 LUAI_FUNC BigInt *
 internal_make_lstring(lua_State *L, const char *s, size_t s_len)
 {
-    Sign   sign     = string_get_sign(&s, &s_len);
-    Digit  base     = string_get_base(&s, &s_len);
-    size_t n_digits = 0;
+    BigInt *dst;
+    Sign   sign;
+    Digit  base;
+    size_t used, n_digits = 0;
+
+    sign = string_get_sign(&s, &s_len);
+    base = string_get_base(&s, &s_len);
 
     // Count number of base-`base` digits in the string
     for (size_t i = 0; i < s_len; i += 1) {
@@ -757,32 +779,35 @@ internal_make_lstring(lua_State *L, const char *s, size_t s_len)
     }
 
     // Will most likely over-allocate, but this is acceptable.
-    size_t used = (n_digits / cast(size_t)digit_length_base(base)) + 1;
-    BigInt *dst = internal_make(L, used + 1);
+    used      = (n_digits / cast(size_t)digit_length_base(base)) + 1;
+    dst       = internal_make(L, used + 1);
     dst->sign = sign;
 
-    Digit *dst_ = dst->digits;
     for (size_t s_i = 0; s_i < s_len; s_i += 1) {
-        char ch = s[s_i];
+        Word  mul_carry = 0;
+        Digit add_carry;
+        int   digit;
+        char  ch;
+
+        ch = s[s_i];
         if (ch == ',' || ch == '_') {
             continue;
         }
 
-        int digit = char_to_digit(ch, base);
+        digit = char_to_digit(ch, base);
 
         // dst *= base
-        Word mul_carry = 0;
         for (size_t mul_i = 0; mul_i < used; mul_i += 1) {
-            dst_[mul_i] = arith_mul_carry(dst_[mul_i], base, &mul_carry);
+            dst->digits[mul_i] = arith_mul_carry(dst->digits[mul_i], base, &mul_carry);
         }
-        dst_[used] = cast(Digit)mul_carry;
+        dst->digits[used] = cast(Digit)mul_carry;
 
         // dst += digit
-        Digit add_carry = digit;
+        add_carry = digit;
         for (size_t add_i = 0; add_i < used; add_i += 1) {
-            dst_[add_i] = arith_add_carry(dst_[add_i], /*b=*/0, &add_carry);
+            dst->digits[add_i] = arith_add_carry(dst->digits[add_i], /*b=*/0, &add_carry);
         }
-        dst_[used] = add_carry;
+        dst->digits[used] = add_carry;
     }
     return internal_clamp(dst);
 }
@@ -790,13 +815,12 @@ internal_make_lstring(lua_State *L, const char *s, size_t s_len)
 static size_t
 digit_write_binary(Digit digit, char buf[], Digit base)
 {
+    size_t end = 0;
     if (digit == 0) {
         buf[0] = '0';
         buf[1] = '\0';
         return 1;
     }
-
-    size_t end = 0;
     for (; digit != 0; end += 1) {
         Digit lsd = digit % base;
         char ch = cast(char)lsd + ((lsd < 10) ? '0' : 'a' - 10);
@@ -807,8 +831,8 @@ digit_write_binary(Digit digit, char buf[], Digit base)
 
     // Reverse the string.
     for (size_t left = 0, right = end - 1; left < right; left += 1, right -= 1) {
-        char tmp = buf[left];
-        buf[left] = buf[right];
+        char tmp   = buf[left];
+        buf[left]  = buf[right];
         buf[right] = tmp;
     }
     return end;
@@ -817,7 +841,11 @@ digit_write_binary(Digit digit, char buf[], Digit base)
 LUAI_FUNC void
 internal_write_binary_string(luaL_Buffer *sb, const BigInt *a, Digit base)
 {
-    lua_State *L = sb->L;
+    size_t d_len, used;
+    BigInt *tmp;
+    lua_State *L;
+
+    L = sb->L;
     switch (base) {
     case 2:  luaL_addstring(sb, "0b"); break;
     case 8:  luaL_addstring(sb, "0o"); break;
@@ -827,20 +855,16 @@ internal_write_binary_string(luaL_Buffer *sb, const BigInt *a, Digit base)
     STUB(L, "unimplemented");
 
     // Convert base-`BASE` array to a base-{2,8,16} array.
-    size_t  d_len = cast(size_t)digit_length_base(base);
-    size_t  a_len = a->len;
-    size_t  used  = a_len * d_len;
-    BigInt *tmp   = internal_make(L, used);
-
-    const Digit *a_   = a->digits;
-    Digit       *tmp_ = tmp->digits;
-    unused(tmp_);
+    d_len = cast(size_t)digit_length_base(base);
+    used  = a->len * d_len;
+    tmp   = internal_make(L, used);
+    unused(tmp);
 
     // Write from MSD to LSD.
     for (size_t i = a->len; i > 0; i -= 1) {
         // Convert base-`BASE` to a decimal integer representing base-{2,8,16}.
         char buf[BIGINT_DIGIT_BASE2_LENGTH + 1];
-        size_t buf_used = digit_write_binary(a_[i], buf, base);
+        size_t buf_used = digit_write_binary(a->digits[i], buf, base);
         unused(buf_used);
     }
 }
@@ -849,14 +873,15 @@ LUAI_FUNC void
 internal_write_decimal_string(luaL_Buffer *sb, const BigInt *a)
 {
     // Write the MSD which will never have leading zeroes.
-    size_t msd_index = a->len - 1;
-    const Digit *a_ = a->digits;
-    string_write_digit(sb, a_[msd_index], /*base=*/10);
+    size_t msd_index;
+
+    msd_index = a->len - 1;
+    string_write_digit(sb, a->digits[msd_index], /*base=*/10);
 
     // Write from MSD - 1 to LSD.
     // Don't subtract 1 immediately due to unsigned overflow.
     for (size_t i = msd_index; i > 0; i -= 1) {
-        Digit digit = a_[i - 1];
+        Digit digit = a->digits[i - 1];
 
         // Convert base-`BASE` to base-`base` with leading zeroes as needed.
         Word tmp = cast(Word)digit;
