@@ -1,10 +1,8 @@
 local BigInt = require "bigint"
 
--- a = BigInt(" -1_234_567_890")
--- b = BigInt("-101_112_131_415")
--- c = a * b
+local a = BigInt("123_456_789_101_112_131_415")
 
--- print(a, "*", b, "=", c)
-
-local a = BigInt("13")
+print(a)
 print(BigInt.tostring(a, 2))
+print(BigInt.tostring(a, 8))
+print(BigInt.tostring(a, 16))

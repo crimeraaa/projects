@@ -4,9 +4,8 @@ from ctypes import (
     sizeof,
 )
 
+DIGIT_NAILS         = 2
 DIGIT_TYPE_BITS     = sizeof(DIGIT) * 8
-DIGIT_NAILS         = 4
-
 DIGIT_BITS          = DIGIT_TYPE_BITS - DIGIT_NAILS
 WORD_BITS           = DIGIT_BITS * 2
 DIGIT_BASE          = int(2**DIGIT_BITS)
@@ -97,7 +96,7 @@ def int_count_digits(value: int, base = 10) -> int:
     
     while value > 0:
         count += 1
-        value /= base
+        value //= base
 
     return count
 

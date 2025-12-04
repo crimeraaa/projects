@@ -19,8 +19,8 @@ typedef uint64_t WORD;
 #define BIGINT_MTNAME       (BIGINT_LIBNAME "." BIGINT_TYPENAME)
 
 /** @brief How many unused bits in a `DIGIT`?
- *  Must result in `BASE` that is a power of 2, 8 AND 16. */
-#define DIGIT_NAILS         4
+ *  Using 1 is tempting, but risks overflow in some comparisons. */
+#define DIGIT_NAILS         2
 #define DIGIT_TYPE_BITS     (CHAR_BIT * sizeof(DIGIT))
 #define DIGIT_BITS          (DIGIT_TYPE_BITS - DIGIT_NAILS)
 
@@ -36,23 +36,23 @@ typedef uint64_t WORD;
 
 
 /** @brief How many base-2 digits can fit in a single base-`BASE` digit?
- *  e.g. in base-2**28: 0b00001111_11111111_11111111_11111111 */
+ *  e.g. in base-2**30: 0b00111111_11111111_11111111_11111111 */
 #define DIGIT_BASE2_LENGTH   DIGIT_BITS
 
 
 /** @brief How many base-8 digits can fit in a single base-`BASE` digit?
- *  e.g. in base-2**28: 0o001_777_777_777 */
-#define DIGIT_BASE8_LENGTH   10
+ *  e.g. in base-2**30: 0o10_000_000_000 */
+#define DIGIT_BASE8_LENGTH   11
 
 
 /** @brief How many base-10 digits can fit in a single base-`BASE` digit?
- *  e.g. in base-2**28: 0d268_435_455 */
-#define DIGIT_BASE10_LENGTH  9
+ *  e.g. in base-2**30: 0d1_073_741_824 */
+#define DIGIT_BASE10_LENGTH  10
 
 
 /** @brief How many base-16 digits can fit in a single base-`BASE` digit?
- *  e.g. in base-2**28: 0x0fff_ffff */
-#define DIGIT_BASE16_LENGTH  7
+ *  e.g. in base-2**30: 0x4000_0000 */
+#define DIGIT_BASE16_LENGTH  8
 
 #define STUB(L, msg)    luaL_error(L, "%s:%d: %s", __FILE__, __LINE__, msg)
 

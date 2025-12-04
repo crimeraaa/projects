@@ -394,11 +394,11 @@ bigint_unm(lua_State *L)
 static int
 bigint_tostring(lua_State *L)
 {
-    luaL_Buffer sb;
+    char stack_buf[LUAL_BUFFERSIZE];
     const BigInt *a;
+    Writer w;
     DIGIT base;
 
-    luaL_buffinit(L, &sb);
     // Avoid `bigint.tostring(bigint)` or `bigint:tostring()`.
     a    = internal_ensure_bigint(L, 1);
     base = cast(DIGIT)luaL_optinteger(L, /*narg=*/2, /*def=*/10);
@@ -412,25 +412,45 @@ bigint_tostring(lua_State *L)
         /*numarg=*/2,
         /*extramsg=*/"Invalid base");
 
+
     if (internal_is_zero(a)) {
         lua_pushliteral(L, "0");
         return 1;
     }
 
-
-    if (internal_is_neg(a)) {
-        luaL_addchar(&sb, '-');
+    w.L     = L;
+    w.cap   = internal_string_length(a, base);
+    w.left  = 0;
+    w.right = w.cap;
+    if (w.cap + 1 <= count_of(stack_buf)) {
+        w.data = stack_buf;
+    } else {
+        w.data = malloc(w.cap + 1);
     }
 
-    switch (base) {
-    case 2:
-    case 8:
-    case 16:
-    case 32:
-    case 64: internal_write_binary_string(&sb, a, base);    break;
-    default: internal_write_nonbinary_string(&sb, a, base); break;
+    if (internal_is_pow2(base)) {
+        internal_write_binary_string(&w, a, base);
+    } else {
+        internal_write_nonbinary_string(&w, a, base);
     }
-    luaL_pushresult(&sb);
+
+    // We overestimated the buffer?
+    if (w.left != w.right) {
+        char *dst_ptr, *src_ptr;
+
+        // Move prefix (if any) to before the integer portion.
+        // It's faster than shifting all the digits to the left.
+        dst_ptr  = (w.data + w.right) - w.left;
+        src_ptr  = w.data;
+        memmove(dst_ptr, src_ptr, w.left);
+        lua_pushlstring(L, dst_ptr, w.cap - w.right);
+    } else {
+        lua_pushlstring(L, w.data, w.cap);
+    }
+
+    if (w.data != stack_buf) {
+        free(w.data);
+    }
     return 1;
 }
 

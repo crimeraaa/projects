@@ -2,6 +2,15 @@
 
 #include "bigint.h"
 
+typedef struct Writer Writer;
+struct Writer {
+    lua_State *L;
+    char *data;
+    size_t cap;
+    size_t left;
+    size_t right;
+};
+
 LUAI_FUNC BigInt *
 internal_make_lstring(lua_State *L, const char *s, size_t s_len, DIGIT base);
 
@@ -784,13 +793,50 @@ dump_stack(lua_State *L)
     lua_pop(L, 1);
 }
 
+static void
+string_write_char(Writer *w, char ch)
+{
+    // Increasing top still fits?
+    if (w->left + 1 <= w->cap) {
+        w->data[w->left++] = ch;
+        return;
+    }
+    __builtin_trap();
+}
+
+static void
+string_write_lstring(Writer *w, const char *data, size_t len)
+{
+    // Increasing top still fits?
+    if (w->left + len <= w->cap) {
+        char *top;
+
+        top = w->data + w->left;
+        memcpy(top, data, len);
+        w->left += len;
+        return;
+    }
+    __builtin_trap();
+}
+
+#define string_write_literal(w, s)  string_write_lstring(w, s, sizeof(s) - 1)
+
+static void
+string_write_char_back(Writer *w, char ch)
+{
+    if (w->left < w->right && w->right <= w->cap) {
+        w->data[--w->right] = ch;
+        return;
+    }
+    __builtin_trap();
+}
 
 /** @brief Writes `digit` from LSD to MSD, assuming a large `base_fast`. */
 static void
-string_write_digit(luaL_Buffer *sb, DIGIT digit, DIGIT base_fast, DIGIT base_slow)
+string_write_digit(Writer *w, DIGIT digit, DIGIT base_fast, DIGIT base_slow)
 {
     if (digit == 0) {
-        luaL_addchar(sb, '0');
+        string_write_char(w, '0');
         return;
     }
 
@@ -804,7 +850,7 @@ string_write_digit(luaL_Buffer *sb, DIGIT digit, DIGIT base_fast, DIGIT base_slo
 
             right = lsd % base_slow;
             ch    = RADIX_TABLE[right];
-            luaL_addchar(sb, ch);
+            string_write_char_back(w, ch);
             lsd /= base_slow;
         }
         digit /= base_fast;
@@ -819,11 +865,9 @@ digit_get_base_fast(DIGIT base)
 {
     DIGIT base_fast = 0;
 
-    switch (base) {
-    case 2:     return DIGIT_BASE;         //  2**28
-    case 8:     return DIGIT_BASE >> 1;    //  8**9
-    case 16:    return DIGIT_BASE;         // 16**7
-    case 10:    return DIGIT_BASE_DECIMAL; // 10**9
+    // 10**9
+    if (base == 10) {
+        return DIGIT_BASE_DECIMAL;
     }
 
     base_fast = base;
@@ -833,41 +877,6 @@ digit_get_base_fast(DIGIT base)
     return base_fast;
 }
 
-/** @brief Write non-zero `|a|` as a non-binary `base` string. */
-LUAI_FUNC void
-internal_write_nonbinary_string(luaL_Buffer *sb, const BigInt *a, DIGIT base)
-{
-    lua_State *L;
-    BigInt *dst;
-    luaL_Buffer rev_buf; // Holds the currently reverse binary string.
-
-    // Help reduce the number of divmod calls.
-    DIGIT base_fast;
-
-    L   = sb->L;
-    dst = internal_make_copy(L, a);
-    luaL_buffinit(L, &rev_buf);
-    base_fast = digit_get_base_fast(base);
-
-    // Write from LSD to MSD.
-    while (!internal_is_zero(dst)) {
-        DIGIT lsd;
-        lsd = internal_divmod_digit(dst, dst, base_fast);
-        string_write_digit(&rev_buf, lsd, base_fast, base);
-    }
-
-    // Correct the arrangement of the binary string.
-    luaL_pushresult(&rev_buf);
-    lua_getfield(L, -1, "reverse");
-    lua_pushvalue(L, -2);
-    lua_call(L, /*nargs=*/1, /*nresults=*/1);
-
-    // Ensure the original string builder knows about the now-correct string.
-    luaL_addvalue(sb);
-}
-
-
-__attribute__((__unused__))
 static int
 count_bits(const BigInt *a)
 {
@@ -881,31 +890,87 @@ count_bits(const BigInt *a)
 }
 
 
-/** @brief Slice `a` in terms of bits: `a[bit_index:bit_index+bit_count]`. */
-__attribute__((__unused__))
+LUAI_FUNC bool
+internal_is_pow2(DIGIT v)
+{
+    return (v & (v - 1)) == 0;
+}
+
+/** @brief Approximate how many bytes are needed for string conversion.
+ *  May overestimate. */
+LUAI_FUNC size_t
+internal_string_length(const BigInt *a, DIGIT base)
+{
+    size_t size = 0;
+    if (!internal_is_zero(a)) {
+        // Negative requires the '-' sign.
+        size += cast(size_t)internal_is_neg(a);
+
+        // Power of 2 requires the "0\d" prefix.
+        if (internal_is_pow2(base)) {
+            size += 2;
+        }
+
+        // Determine likely size for MSD.
+        // All digits past MSD are fixed-size.
+        size += cast(size_t)(count_digits(a->digits[a->len - 1], base));
+        size += cast(size_t)(a->len - 1) * cast(size_t)digit_length_base(base);
+    }
+    return size;
+}
+
+
+/** @brief Write non-zero `|a|` as a non-binary `base` string. */
+LUAI_FUNC void
+internal_write_nonbinary_string(Writer *w, const BigInt *a, DIGIT base)
+{
+    BigInt *dst;
+
+    // Help reduce the number of divmod calls.
+    DIGIT base_fast;
+
+    if (internal_is_neg(a)) {
+        string_write_char(w, '-');
+    }
+
+    // Write from LSD to MSD.
+    dst       = internal_make_copy(w->L, a);
+    base_fast = digit_get_base_fast(base);
+    while (!internal_is_zero(dst)) {
+        DIGIT lsd;
+        lsd = internal_divmod_digit(dst, dst, base_fast);
+        string_write_digit(w, lsd, base_fast, base);
+    }
+}
+
+
+/** @brief Slice `a` in terms of bits: `a[bit_i:bit_i+bit_count]`. */
 static WORD
-bitfield_extract(const BigInt *a, int bit_index, int bit_count)
+bitfield_extract(const BigInt *a, int bit_i, int bit_count)
 {
     WORD bit_field = 0;
 
     if (bit_count == 1) {
-        DIGIT digit, mask = 1;
-        int digit_index;
+        DIGIT digit, mask;
+        int digit_i;
 
-        // Extract `bit_index+bit_count` bit and nothing more.
-        digit_index = bit_index / DIGIT_BITS;
-        mask      <<= cast(DIGIT)bit_index % DIGIT_BITS;
-        digit       = a->digits[digit_index];
+        // Index where `bit_index` can be found.
+        digit_i = bit_i / DIGIT_BITS;
+
+        // Resolve the index of the bit within *this* digit.
+        // Its position will also function as the bitmask.
+        mask  = cast(DIGIT)1 << (cast(DIGIT)bit_i % DIGIT_BITS);
+        digit = a->digits[digit_i];
 
         // Truncate result to just the 1 bit.
-        return (digit & mask) ? 1 : 0;
+        return (digit & mask) != 0 ? 1 : 0;
     }
 
     // Get MSB to LSB.
     while (bit_count > 0) {
         WORD bit;
 
-        bit = bitfield_extract(a, bit_index + bit_count - 1, /*bit_count=*/1);
+        bit = bitfield_extract(a, bit_i + bit_count - 1, /*bit_count=*/1);
 
         bit_field <<= 1;   // Propagate all current bits.
         bit_field  |= bit; // Set new LSB.
@@ -915,50 +980,70 @@ bitfield_extract(const BigInt *a, int bit_index, int bit_count)
 }
 
 
+static int
+min_int(int a, int b)
+{
+    return (a < b) ? a : b;
+}
+
 /** @brief Write `|a|` as a binary `base` string where `|a| > 0`. */
 LUAI_FUNC void
-internal_write_binary_string(luaL_Buffer *sb, const BigInt *a, DIGIT base)
+internal_write_binary_string(Writer *w, const BigInt *a, DIGIT base)
 {
     // `log2(base)` such that `base = 2**bit_shift == 1<<bit_shift`.
-    int __attribute__((__unused__)) bit_shift, bit_count, bit_index;
+    int bit_shift, bit_count;
 
-    switch (base) {
-    case 2:  bit_shift = 1; luaL_addstring(sb, "0b"); break;
-    case 8:  bit_shift = 3; luaL_addstring(sb, "0o"); break;
-    case 16: bit_shift = 4; luaL_addstring(sb, "0x"); break;
-    case 32: bit_shift = 5; break;
-    case 64: bit_shift = 6; break;
-    default: luaL_error(sb->L, "non-binary base %d", cast(int)base); return;
+    if (internal_is_neg(a)) {
+        string_write_char(w, '-');
     }
 
-    // Works but is painfully slow.
-    internal_write_nonbinary_string(sb, a, base);
+    // Powers of 2
+    // | Decimal | Binary                 | Octal     | Hexadecimal  |
+    // |       2 |  0b0000_0000_0000_0010 | 0o000_002 |       0x0002 |
+    // |       4 |  0b0000_0000_0000_0100 | 0o000_004 |       0x0004 |
+    // |       8 |  0b0000_0000_0000_1000 | 0o000_010 |       0x0008 |
+    // |      16 |  0b0000_0000_0001_0000 | 0o000_020 |       0x0010 |
+    // |      32 |  0b0000_0000_0010_0000 | 0o000_040 |       0x0020 |
+    // |      64 |  0b0000_0000_0100_0000 | 0o000_100 |       0x0040 |
+    // |     128 |  0b0000_0000_1000_0000 | 0o000_200 |       0x0080 |
+    // |     256 |  0b0000_0001_0000_0000 | 0o000_400 |       0x0100 |
+    // |     512 |  0b0000_0010_0000_0000 | 0o001_000 |       0x0200 |
+    // |    1024 |  0b0000_0100_0000_0000 | 0o002_000 |       0x0400 |
+    // |    2048 |  0b0000_1000_0000_0000 | 0o004_000 |       0x0800 |
+    // |    4096 |  0b0001_0000_0000_0000 | 0o010_000 |       0x1000 |
+    // |    8192 |  0b0010_0000_0000_0000 | 0o020_000 |       0x2000 |
+    // |  16,384 |  0b0100_0000_0000_0000 | 0o040_000 |       0x4000 |
+    // |  32,768 |  0b1000_0000_0000_0000 | 0o100_000 |       0x8000 |
+    //
+    // base-8:   8=3-bit,   64=6-bits,  512=9-bits,    4096=12-bits
+    // base-16: 16=4-bits, 256=8-bits, 4096=12-bits, 65,536=16-bits
+    switch (base) {
+    case 2:  bit_shift = 1; string_write_literal(w, "0b"); break;
+    case 8:  bit_shift = 3; string_write_literal(w, "0o"); break;
+    case 16: bit_shift = 4; string_write_literal(w, "0x"); break;
+    case 32: bit_shift = 5; break;
+    case 64: bit_shift = 6; break;
+    default: __builtin_unreachable();
+    }
 
-    // // Write from MSD to LSD.
-    // bit_count = count_bits(a);
-    // bit_index = bit_count - bit_shift;
-    // for (; bit_index >= 0; bit_index -= bit_shift) {
-    //     WORD bits;
-    //     int bits_to_get;
-    //     char ch;
 
-    //     // Bit range out of bounds?
-    //     if (bit_index + bit_shift >= bit_count) {
-    //         bits_to_get = bit_count - bit_index;
-    //     } else {
-    //         bits_to_get = bit_shift;
-    //     }
+    // Write from LSD to MSD.
+    bit_count = count_bits(a);
+    for (int bit_i = 0; bit_i < bit_count; bit_i += bit_shift) {
+        WORD bits;
+        int bits_to_get;
+        char ch;
 
-    //     bits = bitfield_extract(a, bit_index, bits_to_get);
-    //     while (bits > 0) {
-    //         DIGIT digit = bits & (base - 1);
+        // When we reach MSD we might not be able to read all bits.
+        bits_to_get = min_int(bit_count - bit_i, bit_shift);
 
-    //         ch = RADIX_TABLE[digit];
-    //         luaL_addchar(sb, ch);
-    //         bits >>= cast(WORD)bit_shift;
-    //     }
-    // }
+        // We assume that the resulting bitfield can be converted.
+        bits = bitfield_extract(a, bit_i, bits_to_get);
+        ch   = RADIX_TABLE[bits];
+        string_write_char_back(w, ch);
+    }
 }
 
 // Macro cleanup
 #undef RADIX_TABLE_REVERSE_OFFSET
+#undef string_write_literal
