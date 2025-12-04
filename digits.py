@@ -5,14 +5,92 @@ from ctypes import (
 )
 
 DIGIT_TYPE_BITS     = sizeof(DIGIT) * 8
-DIGIT_NAILS         = 2
+DIGIT_NAILS         = 4
+
 DIGIT_BITS          = DIGIT_TYPE_BITS - DIGIT_NAILS
-DIGIT_BASE          = 2**DIGIT_BITS
+WORD_BITS           = DIGIT_BITS * 2
+DIGIT_BASE          = int(2**DIGIT_BITS)
 DIGIT_BASE_DECIMAL  = 10**9
 DIGIT_MASK          = DIGIT_BASE - 1
 DIGIT_MAX           = DIGIT_MASK
 
-def count_digits(value: int, base: int = 10) -> int:
+RADIX_TABLE = \
+    b"0123456789" \
+    b"ABCDEFGHIJKLMNOPQRSTUVWXYZ" \
+    b"abcdefghijklmnopqrstuvwxyz+/"
+
+RADIX_TABLE_REVERSE = {chr(char): value for value, char in enumerate(RADIX_TABLE)}
+
+def int_place_value(value: int, base = 10) -> int:
+    if value == 0:
+        return 0
+
+    place = 1
+
+    # +-----------------------+--------------------+------------------------+
+    # | Value                 | Place Value (Base) | Place Value            |
+    # |-----------------------+--------------------+------------------------|
+    # | 1234 = 0b100_11010010 |      b100_00000000 |  1024 = 0b100_00000000 |
+    # | base =           0b10 |                    |  base =           0b10 |
+    # |-----------------------+--------------------+------------------------|
+    # | 1234 =        0o2_322 |            0o1_000 |   512 =  0b10_00000000 |
+    # | base =           0o10 |                    |  base =         0b1000 |
+    # |-----------------------+--------------------+------------------------|
+    # | 1234 =          0x4d2 |              0x100 |   256 =   0b1_00000000 |
+    # | base =           0x10 |                    |  base =        0b10000 |
+    # |-----------------------+--------------------+------------------------|
+    # | 1234 = base-32:   16I |       base-32: 100 |  1024 = 0b100_00000000 |
+    # | base = base-32:    10 |                    |  base = 0b000_00100000 |
+    # |-----------------------+--------------------+------------------------|
+    # | 1234 = base-64:    JI |       base-64:  10 |    64 =      0b1000000 |
+    # | base = base-64:    10 |                    |  base =      0b1000000 |
+    # +-----------------------+--------------------+------------------------+
+    if base == 2:
+        place <<= value.bit_length() - 1 # 2**floor(log2(value))
+    else:
+        while place * base <= value:
+            place *= base
+    return place
+
+
+def __bitfield_get(digits: list[int], bit_index: int, bit_count: int) -> int:
+    if bit_count == 1:
+        # `i` where `digits[i]` holds the bit at `bit_index`.
+        digit_index = bit_index // DIGIT_BITS
+        mask  = DIGIT(1 << (bit_index % DIGIT_BITS)).value
+        digit = digits[digit_index]
+        # Truncate result to exactly 1 bit.
+        return 1 if (digit & mask) else 0
+
+    bit_field = 0
+    while bit_count > 0:
+        bit = __bitfield_get(digits, bit_index + bit_count - 1, bit_count=1)
+
+        bit_field <<= 1
+        bit_field  |= bit
+        bit_count  -= 1
+
+    return bit_field
+
+
+def int_bitfield_get(value: int|list[int], bit_index: int, bit_count = 1) -> int:
+    if isinstance(value, list):
+        # Empty list is equivalent to 0.
+        if len(value) == 0:
+            return 0
+        
+        # Ensure list items are all integers.
+        assert(isinstance(value[0], int))
+
+        digits = value
+    else:
+        digits = int_split_digits(value, DIGIT_BASE)
+    
+    assert(1 <= bit_count and bit_count <= WORD_BITS)
+    return __bitfield_get(digits, bit_index, bit_count)
+
+
+def int_count_digits(value: int, base = 10) -> int:
     count = 0
     if value < 0:
         value = abs(value)
@@ -24,19 +102,9 @@ def count_digits(value: int, base: int = 10) -> int:
     return count
 
 
-def digit_to_ascii(digit: int) -> int:
-    # binary, octal, decimal
-    if 0 <= digit and digit < 10:
-        return digit + ord('0')
-    # dozenal (base-12), hexadecimal, base-32, base-36
-    elif 10 <= digit and digit < 36:
-        return digit + ord('a') - 10
-    raise ValueError(f"Invalid digit {digit}")
-
-
-def encode_base(value: int, base: int = 10) -> str:
-    assert(2 <= base and base <= 36)
-    if value == 0:
+def int_encode_base(value: int, base = 10, min_groups = 0) -> str:
+    assert(2 <= base and base <= 64)
+    if value == 0 and min_groups == 0:
         return '0'
 
     sb = bytearray()
@@ -44,6 +112,7 @@ def encode_base(value: int, base: int = 10) -> str:
         sb += b'-'
         value = abs(value)
     
+    skip_size = 0
     match base:
         case 2:
             sb += b"0b"
@@ -56,14 +125,17 @@ def encode_base(value: int, base: int = 10) -> str:
         case 16:
             sb += b"0x"
             skip_size = 4
-        case _:
-            skip_size = 0
 
     # Write LSD to MSD.
     skip_counter = skip_size
     offset = len(sb)
     while True:
-        sb += digit_to_ascii(value % base).to_bytes()
+        digit = value % base
+        # Convert to uppercase if case-insensitive (hexadecimal, base-32).
+        if base <= 36 and digit >= 36: # digit >= RADIX_TABLE_REVERSE['a']
+            digit -= 32 # tolower(digit) = digit - ('a' - 'A')
+
+        sb += RADIX_TABLE[digit].to_bytes()
         value //= base
         skip_counter -= 1
         
@@ -72,13 +144,20 @@ def encode_base(value: int, base: int = 10) -> str:
 
         if skip_counter == 0 and skip_size > 0:
             skip_counter = skip_size
+            min_groups -= 1
             sb += b'_'
 
     # Add leading zeroes for binary, octal and hexadecimal.
     if base != 10 and skip_size > 0:
-        while skip_counter > 0:
-            skip_counter -= 1
-            sb += b'0'
+        while True:
+            while skip_counter > 0:
+                skip_counter -= 1
+                sb += b'0'
+            min_groups -= 1
+            if min_groups <= 0:
+                break
+            skip_counter = skip_size
+            sb += b'_'
             
     # sb currently reads LSD to MSD. Swap them.
     left, right = offset, len(sb) - 1
@@ -90,8 +169,8 @@ def encode_base(value: int, base: int = 10) -> str:
     return sb.decode()
 
 
-def decode_base(value: str, base: int = 0) -> int:
-    assert(base == 0 or 2 <= base and base <= 36)
+def int_decode_base(value: str, base = 0) -> int:
+    assert(base == 0 or 2 <= base and base <= 64)
 
     value = value.strip()
     sign = 0
@@ -133,7 +212,7 @@ def decode_base(value: str, base: int = 0) -> int:
             continue
         
         result *= base
-        result += int(c, base)
+        result += RADIX_TABLE_REVERSE[c]
 
     return -result if sign else result
     
@@ -145,7 +224,7 @@ def sub(a: int, b: int) -> tuple[int, int]:
     return diff, carry
 
 
-def split_digits(value: int, base: int) -> list[int]:
+def int_split_digits(value: int, base = DIGIT_BASE) -> list[int]:
     if value == 0:
         return [0]
 
@@ -157,10 +236,10 @@ def split_digits(value: int, base: int) -> list[int]:
         digits.append(lsd)
     return digits
 
-a = 1234567891011121314151617181920
+a = 123456789101112131415#1617181920
 
 
-def combine_digits(digits: list[int], base: int) -> int:
+def int_combine_digits(digits: list[int], base = DIGIT_BASE) -> int:
     value = 0
     
     # Assume little-endian, so convert to big-endian
@@ -171,7 +250,7 @@ def combine_digits(digits: list[int], base: int) -> int:
     return value
 
 
-def get_base_fast(base: int) -> int:
+def int_get_base_fast(base: int) -> int:
     base_fast = base
     while base_fast * base < DIGIT_BASE:
         base_fast *= base

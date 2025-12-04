@@ -2,6 +2,7 @@
 #define PROJECTS_COMMON_H
 
 #include <assert.h>     // assert
+#include <limits.h>     // CHAR_BIT
 #include <stdalign.h>   // alignof
 #include <stdbool.h>    // bool, true, false
 #include <stddef.h>     // NULL, size_t, ptrdiff_t, max_align_t

@@ -62,9 +62,11 @@ internal_is_pos(const BigInt *a)
 LUAI_FUNC void
 internal_swap_ptr(const BigInt **a, const BigInt **b)
 {
-    const BigInt *tmp = *a;
-    *a = *b;
-    *b = tmp;
+    const BigInt *tmp;
+
+    tmp = *a;
+    *a  = *b;
+    *b  = tmp;
 }
 
 LUAI_FUNC void
@@ -484,7 +486,7 @@ internal_mul_digit(BigInt *dst, const BigInt *a, DIGIT multiplier)
     for (int i = 0; i < used; i += 1) {
         dst->digits[i] = arith_mul_carry(&carry, a->digits[i], multiplier);
     }
-    dst->digits[used] = cast(DIGIT)carry;
+    dst->digits[used] = carry;
 }
 
 
@@ -513,10 +515,11 @@ internal_mul_bigint_unsigned(BigInt *restrict dst, const BigInt *a, const BigInt
 
 
 /** @brief `dst, mod = |a| / |b|, |a| % |b|`
- *  where |a| > 0
- *    and |b| > 0
+ *  where `|a| > 0`
+ *    and `|b| > 0`
+ *    and `(0 <= mod and mod < BASE)`
  *
- * @return mod
+ * @return `mod`
  */
 LUAI_FUNC DIGIT
 internal_divmod_digit(BigInt *dst, const BigInt *a, DIGIT denominator)
@@ -545,17 +548,6 @@ internal_divmod_digit(BigInt *dst, const BigInt *a, DIGIT denominator)
 
     internal_clamp(dst);
     return cast(DIGIT)carry;
-}
-
-static DIGIT
-digit_place_value(DIGIT digit, DIGIT base)
-{
-    // Use intermediate type in case of overflow from multiplication.
-    WORD place = 1;
-    while (place * cast(WORD)base <= cast(WORD)digit) {
-        place *= cast(WORD)base;
-    }
-    return cast(DIGIT)place;
 }
 
 static bool
@@ -589,20 +581,37 @@ char_to_upper(char ch)
     return ch;
 }
 
-#define INVALID_DIGIT   -1
+#define RADIX_TABLE_REVERSE_OFFSET  '+'
 
-// Maps digits in the range `[0,36)` to their appropriate ASCII characters.
+
+/** @brief Maps digits in the range `[0,64)` to their appropriate ASCII characters.
+ *
+ * @link https://www.rfc-editor.org/rfc/rfc4648.txt
+ */
 static const char
-RADIX_TABLE[] = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+RADIX_TABLE[] = "0123456789"                                                   \
+    "ABCDEFGHIJKLMNOPQRSTUVWXYZ"                                               \
+    "abcdefghijklmnopqrstuvwxyz"                                               \
+    "+/";
 
-// Maps ASCII digits in the range `['0'..'Z']` to their appropriate digits.
+
+/** @brief Maps ASCII digits in the range `['+'..'z']` to their appropriate
+ *  digit values.
+ *
+ * @link https://www.rfc-editor.org/rfc/rfc4648.txt
+ */
 static const uint8_t
 RADIX_TABLE_REVERSE[] = {
+    0x3e, 0xff, 0xff, 0xff, 0x3f,                               // +,-./
     0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, // 0123456789
     0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,                   // :;<=>?@
     0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f, 0x10, 0x11, 0x12, 0x13, // ABCDEFGHIJ
     0x14, 0x15, 0x16, 0x17, 0x18, 0x19, 0x1a, 0x1b, 0x1c, 0x1d, // KLMNOPQRST
-    0x1e, 0x1f, 0x20, 0x21, 0x22,                               // UVWXYZ
+    0x1e, 0x1f, 0x20, 0x21, 0x22, 0x23,                         // UVWXYZ
+    0xff, 0xff, 0xff, 0xff, 0xff, 0xff,                         // [\]^_`
+    0x24, 0x25, 0x26, 0x27, 0x28, 0x29, 0x2a, 0x2b, 0x2c, 0x2d, // abcdefghij
+    0x2e, 0x2f, 0x30, 0x31, 0x32, 0x33, 0x34, 0x35, 0x36, 0x37, // klmnopqrst
+    0x38, 0x39, 0x3a, 0x3b, 0x3c, 0x3d,                         // uvwxyz
 };
 
 static Sign
@@ -677,7 +686,9 @@ internal_make_lstring(lua_State *L, const char *s, size_t s_len, DIGIT base)
 
     // Skip base prefix.
     {
-        DIGIT tmp = string_get_base(&s, &s_len);
+        DIGIT tmp;
+
+        tmp = string_get_base(&s, &s_len);
         // Didn't know the base beforehand, we do now.
         if (base == 0) {
             base = tmp;
@@ -700,7 +711,7 @@ internal_make_lstring(lua_State *L, const char *s, size_t s_len, DIGIT base)
             ch = char_to_upper(ch);
         }
 
-        lut_index = cast(size_t)ch - cast(size_t)'0';
+        lut_index = cast(size_t)ch - cast(size_t)RADIX_TABLE_REVERSE_OFFSET;
         if (lut_index >= count_of(RADIX_TABLE_REVERSE)) {
             luaL_error(L, "Non-digit character '%c'", cast(int)base, ch);
             return NULL;
@@ -721,7 +732,6 @@ internal_make_lstring(lua_State *L, const char *s, size_t s_len, DIGIT base)
     digits    = dst->digits;
 
     for (size_t s_i = 0; s_i < s_len; s_i += 1) {
-        size_t lut_index;
         DIGIT digit, mul_carry = 0, add_carry = 0;
         char ch;
 
@@ -736,8 +746,7 @@ internal_make_lstring(lua_State *L, const char *s, size_t s_len, DIGIT base)
         }
 
         // Assumed to never fail by this point.
-        lut_index = cast(size_t)ch - cast(size_t)'0';
-        digit     = cast(DIGIT)RADIX_TABLE_REVERSE[lut_index];
+        digit = cast(DIGIT)RADIX_TABLE_REVERSE[ch - RADIX_TABLE_REVERSE_OFFSET];
 
         // dst *= base
         for (int mul_i = 0; mul_i < used; mul_i += 1) {
@@ -776,147 +785,9 @@ dump_stack(lua_State *L)
 }
 
 
-/** @brief Writes `digit` from MSD to LSD.
- *  Assumes `2 <= base and base <= 36`. */
-static void
-string_write_digit_forward(luaL_Buffer *sb, DIGIT digit, DIGIT base)
-{
-    if (digit == 0) {
-        luaL_addchar(sb, '0');
-        return;
-    }
-
-    DIGIT pv = digit_place_value(digit, base);
-    while (pv > 0) {
-        // Get the left-most digit, e.g. '1' in "1234".
-        DIGIT msd;
-        char ch;
-
-        msd = digit / pv;
-        ch  = RADIX_TABLE[msd];
-        luaL_addchar(sb, ch);
-
-        // 'Trim off' the MSD's magnitude.
-        digit -= msd * pv;
-        pv /= base;
-    }
-}
-
-
-/** @brief Extract the `count` bits from the DIGIT `src[offset]`. */
-__attribute__((__unused__))
-static WORD
-internal_bitfield_extract(const BigInt *a, int offset, int count)
-{
-    WORD digit, shift, mask, res, bits_left, num_bits;
-    int a_i, res_shift;
-
-    a_i   = offset / DIGIT_BITS;
-    shift = cast(WORD)(offset % DIGIT_BITS);
-    // Fast path if extracting just 1 bit.
-    if (count == 1) {
-        assert(0 <= a_i && a_i < a->len);
-
-        digit = cast(WORD)a->digits[a_i];
-        mask  = cast(WORD)1 << shift;
-        return (digit & mask) != 0 ? 1 : 0;
-    }
-
-    assert(1 <= count && count <= WORD_BITS);
-
-    // Case 1: Covers 1 DIGIT.
-    bits_left = cast(WORD)count;
-    num_bits  = DIGIT_BITS - shift;
-    if (bits_left < num_bits) {
-        num_bits = bits_left;
-    }
-
-    mask       = (cast(WORD)1 << num_bits) - 1;
-    res        = (cast(WORD)a->digits[a_i] >> shift) & mask;
-    bits_left -= num_bits;
-    a_i       += 1;
-
-    // End Case 1.
-    if (bits_left == 0) {
-        return res;
-    }
-
-    // Case 2: covers 2 DIGIT.
-    res_shift  = num_bits;
-    num_bits   = (bits_left < DIGIT_BITS) ? bits_left : DIGIT_BITS;
-    mask       = (cast(WORD)1 << num_bits) - 1;
-    res       |= (cast(WORD)a->digits[a_i] & mask) << cast(WORD)res_shift;
-    bits_left -= num_bits;
-    a_i       += 1;
-
-    // End Case 2.
-    if (bits_left == 0) {
-        return res;
-    }
-
-    // Case 2: covers 3 DIGIT.
-    mask       = (cast(WORD)1 << bits_left) - 1;
-    res_shift += DIGIT_BITS;
-    res       |= (cast(WORD)a->digits[a_i] & mask) << cast(WORD)res_shift;
-
-    // End Case 3.
-    return res;
-}
-
-/** @brief Write non-zero `|a|` as a binary `base` string.
- * @todo(2025-12-04) Fix when `base == 16`.
- */
-LUAI_FUNC void
-internal_write_binary_string(luaL_Buffer *sb, const BigInt *a, DIGIT base)
-{
-    // Must filfill the equation `2**bits == base`.
-    WORD bits;
-    DIGIT msd;
-    int msd_index;
-
-    switch (base) {
-    case 2:  bits = 1; luaL_addstring(sb, "0b"); break;
-    case 8:  bits = 3; luaL_addstring(sb, "0o"); break;
-    case 16: bits = 4; luaL_addstring(sb, "0x"); break;
-    default: luaL_error(sb->L, "non-binary base %d", cast(int)base); return;
-    }
-
-    msd_index = a->len - 1;
-    msd       = a->digits[msd_index];
-
-    // Only hexadecimal is problematic since its place-values can be 1 or 4.
-    //  [0] =                            0x1 = BASE**0
-    //  [1] =                    0x4000_0000 = BASE**1
-    //  [2] =          0x1000_0000_0000_0000 = BASE**2
-    //  [3] = 0x400_0000_0000_0000_0000_0000 = BASE**3
-    if (base == 16 && (msd_index % 2) == 1) {
-        string_write_digit_forward(sb, msd * 4, base);
-    } else {
-        string_write_digit_forward(sb, msd, base);
-    }
-
-    // Write from MSD - 1 to LSD.
-    for (int i = msd_index - 1; i >= 0; i -= 1) {
-        // Convert base-`BASE` to base-`base`.
-        WORD tmp;
-        DIGIT digit;
-
-        digit = a->digits[i];
-        tmp   = cast(WORD)(digit | 1); // Avoid infinite loops if digit == 0.
-
-        // Add leading zeroes as needed.
-        while ((tmp << bits) < DIGIT_BASE) {
-            luaL_addchar(sb, '0');
-            tmp <<= bits;
-        }
-        string_write_digit_forward(sb, digit, base);
-    }
-}
-
-
 /** @brief Writes `digit` from LSD to MSD, assuming a large `base_fast`. */
 static void
-string_write_digit_backward(luaL_Buffer *sb, DIGIT digit, DIGIT base_fast, DIGIT base_slow)
+string_write_digit(luaL_Buffer *sb, DIGIT digit, DIGIT base_fast, DIGIT base_slow)
 {
     if (digit == 0) {
         luaL_addchar(sb, '0');
@@ -948,10 +819,11 @@ digit_get_base_fast(DIGIT base)
 {
     DIGIT base_fast = 0;
 
-    if (base == 10) {
-        return DIGIT_BASE_DECIMAL; // 10**9
-    } else if (base == 16) {
-        return DIGIT_BASE >> 2; // 16**7
+    switch (base) {
+    case 2:     return DIGIT_BASE;         //  2**28
+    case 8:     return DIGIT_BASE >> 1;    //  8**9
+    case 16:    return DIGIT_BASE;         // 16**7
+    case 10:    return DIGIT_BASE_DECIMAL; // 10**9
     }
 
     base_fast = base;
@@ -972,10 +844,6 @@ internal_write_nonbinary_string(luaL_Buffer *sb, const BigInt *a, DIGIT base)
     // Help reduce the number of divmod calls.
     DIGIT base_fast;
 
-    if (base == 16) {
-        luaL_addstring(sb, "0x");
-    }
-
     L   = sb->L;
     dst = internal_make_copy(L, a);
     luaL_buffinit(L, &rev_buf);
@@ -985,7 +853,7 @@ internal_write_nonbinary_string(luaL_Buffer *sb, const BigInt *a, DIGIT base)
     while (!internal_is_zero(dst)) {
         DIGIT lsd;
         lsd = internal_divmod_digit(dst, dst, base_fast);
-        string_write_digit_backward(&rev_buf, lsd, base_fast, base);
+        string_write_digit(&rev_buf, lsd, base_fast, base);
     }
 
     // Correct the arrangement of the binary string.
@@ -997,3 +865,100 @@ internal_write_nonbinary_string(luaL_Buffer *sb, const BigInt *a, DIGIT base)
     // Ensure the original string builder knows about the now-correct string.
     luaL_addvalue(sb);
 }
+
+
+__attribute__((__unused__))
+static int
+count_bits(const BigInt *a)
+{
+    int count = 0;
+    if (!internal_is_zero(a)) {
+        // Count MSD digits exactly, all other digits have fixed width.
+        count += count_digits(a->digits[a->len - 1], /*base=*/2);
+        count += (a->len - 1) * DIGIT_BITS;
+    }
+    return count;
+}
+
+
+/** @brief Slice `a` in terms of bits: `a[bit_index:bit_index+bit_count]`. */
+__attribute__((__unused__))
+static WORD
+bitfield_extract(const BigInt *a, int bit_index, int bit_count)
+{
+    WORD bit_field = 0;
+
+    if (bit_count == 1) {
+        DIGIT digit, mask = 1;
+        int digit_index;
+
+        // Extract `bit_index+bit_count` bit and nothing more.
+        digit_index = bit_index / DIGIT_BITS;
+        mask      <<= cast(DIGIT)bit_index % DIGIT_BITS;
+        digit       = a->digits[digit_index];
+
+        // Truncate result to just the 1 bit.
+        return (digit & mask) ? 1 : 0;
+    }
+
+    // Get MSB to LSB.
+    while (bit_count > 0) {
+        WORD bit;
+
+        bit = bitfield_extract(a, bit_index + bit_count - 1, /*bit_count=*/1);
+
+        bit_field <<= 1;   // Propagate all current bits.
+        bit_field  |= bit; // Set new LSB.
+        bit_count  -= 1;
+    }
+    return bit_field;
+}
+
+
+/** @brief Write `|a|` as a binary `base` string where `|a| > 0`. */
+LUAI_FUNC void
+internal_write_binary_string(luaL_Buffer *sb, const BigInt *a, DIGIT base)
+{
+    // `log2(base)` such that `base = 2**bit_shift == 1<<bit_shift`.
+    int __attribute__((__unused__)) bit_shift, bit_count, bit_index;
+
+    switch (base) {
+    case 2:  bit_shift = 1; luaL_addstring(sb, "0b"); break;
+    case 8:  bit_shift = 3; luaL_addstring(sb, "0o"); break;
+    case 16: bit_shift = 4; luaL_addstring(sb, "0x"); break;
+    case 32: bit_shift = 5; break;
+    case 64: bit_shift = 6; break;
+    default: luaL_error(sb->L, "non-binary base %d", cast(int)base); return;
+    }
+
+    // Works but is painfully slow.
+    internal_write_nonbinary_string(sb, a, base);
+
+    // // Write from MSD to LSD.
+    // bit_count = count_bits(a);
+    // bit_index = bit_count - bit_shift;
+    // for (; bit_index >= 0; bit_index -= bit_shift) {
+    //     WORD bits;
+    //     int bits_to_get;
+    //     char ch;
+
+    //     // Bit range out of bounds?
+    //     if (bit_index + bit_shift >= bit_count) {
+    //         bits_to_get = bit_count - bit_index;
+    //     } else {
+    //         bits_to_get = bit_shift;
+    //     }
+
+    //     bits = bitfield_extract(a, bit_index, bits_to_get);
+    //     while (bits > 0) {
+    //         DIGIT digit = bits & (base - 1);
+
+    //         ch = RADIX_TABLE[digit];
+    //         luaL_addchar(sb, ch);
+    //         bits >>= cast(WORD)bit_shift;
+    //     }
+    // }
+}
+
+// Macro cleanup
+#undef RADIX_TABLE_REVERSE_OFFSET

@@ -408,7 +408,7 @@ bigint_tostring(lua_State *L)
     //    0d4_276_993_775 |   0b01111111_01110110_11011111_011101111
     //  = 0d4_000_000_000 | = 0b01110111_00110101_10010100_000000000
     //  + 0d0_276_993_775 | + 0b00001000_01000001_01001011_011101111
-    luaL_argcheck(L, 2 <= base && base <= 36,
+    luaL_argcheck(L, 2 <= base && base <= 64,
         /*numarg=*/2,
         /*extramsg=*/"Invalid base");
 
@@ -424,7 +424,10 @@ bigint_tostring(lua_State *L)
 
     switch (base) {
     case 2:
-    case 8:  internal_write_binary_string(&sb, a, base);    break;
+    case 8:
+    case 16:
+    case 32:
+    case 64: internal_write_binary_string(&sb, a, base);    break;
     default: internal_write_nonbinary_string(&sb, a, base); break;
     }
     luaL_pushresult(&sb);

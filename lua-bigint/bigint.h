@@ -1,14 +1,13 @@
 #ifndef BIGINT_H
 #define BIGINT_H
 
-#include <limits.h>
 #include <lua.h>
 #include <lauxlib.h>
 
 #include "../common.h"
 
 
-/** @brief Must be able to hold the range `[0, (BASE-1)*4]`. */
+/** @brief Must be able to hold the range `[0, (BASE-1)*2]`. */
 typedef uint32_t DIGIT;
 
 /** @brief Must be able to hold the range `[0, (BASE-1)**2]`. */
@@ -19,18 +18,16 @@ typedef uint64_t WORD;
 #define BIGINT_TYPENAME     "BigInt"
 #define BIGINT_MTNAME       (BIGINT_LIBNAME "." BIGINT_TYPENAME)
 
-/** @brief How many unused bits in a `DIGIT`? */
-#define DIGIT_NAILS         2
+/** @brief How many unused bits in a `DIGIT`?
+ *  Must result in `BASE` that is a power of 2, 8 AND 16. */
+#define DIGIT_NAILS         4
 #define DIGIT_TYPE_BITS     (CHAR_BIT * sizeof(DIGIT))
 #define DIGIT_BITS          (DIGIT_TYPE_BITS - DIGIT_NAILS)
 
-#define WORD_BITS           60
 
-
-/** @brief base-`2**BITS`.
-* @note `max = base - 1`.
-*/
+/** @brief base-`2**BITS`. */
 #define DIGIT_BASE          (1 << DIGIT_BITS)
+
 
 /** @brief Used to optimize conversion to base-10 strings. */
 #define DIGIT_BASE_DECIMAL  1000000000
@@ -39,23 +36,23 @@ typedef uint64_t WORD;
 
 
 /** @brief How many base-2 digits can fit in a single base-`BASE` digit?
- *  e.g. in base-2**30: 0b00111111_11111111_11111111_11111111 */
+ *  e.g. in base-2**28: 0b00001111_11111111_11111111_11111111 */
 #define DIGIT_BASE2_LENGTH   DIGIT_BITS
 
 
 /** @brief How many base-8 digits can fit in a single base-`BASE` digit?
- *  e.g. in base-2**30: 0o007_777_777_777 */
+ *  e.g. in base-2**28: 0o001_777_777_777 */
 #define DIGIT_BASE8_LENGTH   10
 
 
 /** @brief How many base-10 digits can fit in a single base-`BASE` digit?
- *  e.g. in base-2**30: 0d1_073_741_823 */
-#define DIGIT_BASE10_LENGTH  10
+ *  e.g. in base-2**28: 0d268_435_455 */
+#define DIGIT_BASE10_LENGTH  9
 
 
 /** @brief How many base-16 digits can fit in a single base-`BASE` digit?
- *  e.g. in base-2**30: 0x3fff_ffff */
-#define DIGIT_BASE16_LENGTH  8
+ *  e.g. in base-2**28: 0x0fff_ffff */
+#define DIGIT_BASE16_LENGTH  7
 
 #define STUB(L, msg)    luaL_error(L, "%s:%d: %s", __FILE__, __LINE__, msg)
 
