@@ -706,7 +706,7 @@ internal_make_lstring(lua_State *L, const char *s, size_t s_len, DIGIT base)
 
     // Count number of base-`base` digits in the string
     for (size_t i = 0; i < s_len; i += 1) {
-        size_t lut_index;
+        size_t lut_i;
         int digit;
         char ch;
 
@@ -720,13 +720,13 @@ internal_make_lstring(lua_State *L, const char *s, size_t s_len, DIGIT base)
             ch = char_to_upper(ch);
         }
 
-        lut_index = cast(size_t)ch - cast(size_t)RADIX_TABLE_REVERSE_OFFSET;
-        if (lut_index >= count_of(RADIX_TABLE_REVERSE)) {
+        lut_i = cast(size_t)ch - cast(size_t)RADIX_TABLE_REVERSE_OFFSET;
+        if (lut_i >= count_of(RADIX_TABLE_REVERSE)) {
             luaL_error(L, "Non-digit character '%c'", cast(int)base, ch);
             return NULL;
         }
 
-        digit = cast(DIGIT)RADIX_TABLE_REVERSE[lut_index];
+        digit = cast(DIGIT)RADIX_TABLE_REVERSE[lut_i];
         if (digit == 0xff) {
             luaL_error(L, "Invalid base-%d digit '%c'", cast(int)base, ch);
             return NULL;
@@ -943,55 +943,74 @@ internal_write_nonbinary_string(Writer *w, const BigInt *a, DIGIT base)
     }
 }
 
-
-/** @brief Slice `a` in terms of bits: `a[bit_i:bit_i+bit_count]`. */
-static WORD
-bitfield_extract(const BigInt *a, int bit_i, int bit_count)
-{
-    WORD bit_field = 0;
-
-    if (bit_count == 1) {
-        DIGIT digit, mask;
-        int digit_i;
-
-        // Index where `bit_index` can be found.
-        digit_i = bit_i / DIGIT_BITS;
-
-        // Resolve the index of the bit within *this* digit.
-        // Its position will also function as the bitmask.
-        mask  = cast(DIGIT)1 << (cast(DIGIT)bit_i % DIGIT_BITS);
-        digit = a->digits[digit_i];
-
-        // Truncate result to just the 1 bit.
-        return (digit & mask) != 0 ? 1 : 0;
-    }
-
-    // Get MSB to LSB.
-    while (bit_count > 0) {
-        WORD bit;
-
-        bit = bitfield_extract(a, bit_i + bit_count - 1, /*bit_count=*/1);
-
-        bit_field <<= 1;   // Propagate all current bits.
-        bit_field  |= bit; // Set new LSB.
-        bit_count  -= 1;
-    }
-    return bit_field;
-}
-
-
 static int
 min_int(int a, int b)
 {
     return (a < b) ? a : b;
 }
 
+/** @brief Slice `a` in terms of bits: `a[bit_i:bit_i+bit_count]`. */
+static WORD
+bitfield_extract(const BigInt *a, int bit_i, int bit_count)
+{
+    WORD bits, digit, shift, mask;
+    int digit_i, num_bits;
+
+
+    digit_i = bit_i / DIGIT_BITS; // Index of digit `bit_i` can be found at.
+    bit_i  %= DIGIT_BITS; // Index of the bit within the digit.
+    shift   = bit_i;
+
+    if (bit_count == 1) {
+        mask  = cast(WORD)1 << shift;
+        digit = a->digits[digit_i];
+
+        // Truncate result to just the 1 bit.
+        return (digit & mask) != 0 ? 1 : 0;
+    }
+
+    // 1.) Check if all the bits fit in the 1st digit.
+    //     Concept check: assuming base-2**30
+    //          bit_i: 3, bit_count: 4 = bits [3..7)
+    num_bits  = min_int(bit_count, DIGIT_BITS - bit_i);
+    mask      = (cast(WORD)1 << cast(WORD)num_bits) - 1;
+    bits      = (cast(WORD)a->digits[digit_i] >> shift) & mask;
+
+    bit_count -= num_bits;
+    if (bit_count == 0) {
+        return bits;
+    }
+    digit_i += 1;
+
+    // 2.) Check if the 2nd digit has the remaining bits we need.
+    //      Concept check: assuming base-2**30:
+    //          bit_i: 28, bit_count: 6 = bits [28..31), [31..34)
+    shift    = num_bits;
+    num_bits = min_int(bit_count, DIGIT_BITS);
+    mask     = (cast(WORD)1 << cast(WORD)num_bits) - 1;
+    bits    |= (cast(WORD)a->digits[digit_i] & mask) << shift;
+
+    bit_count -= num_bits;
+    if (bit_count == 0) {
+        return bits;
+    }
+    digit_i += 1;
+
+    // 3.) Check the 3rd digit.
+    mask   = (cast(WORD)1 << cast(WORD)bit_count) - 1;
+    shift += DIGIT_BITS;
+    bits  |= (cast(WORD)a->digits[digit_i] & mask) << shift;
+
+    return bits;
+}
+
+
 /** @brief Write `|a|` as a binary `base` string where `|a| > 0`. */
 LUAI_FUNC void
 internal_write_binary_string(Writer *w, const BigInt *a, DIGIT base)
 {
-    // `log2(base)` such that `base = 2**bit_shift == 1<<bit_shift`.
-    int bit_shift, bit_count;
+    // `log2(base)` such that `base = 2**shift == 1<<shift`.
+    int bit_count, shift, shift_fast = 0;
 
     if (internal_is_neg(a)) {
         string_write_char(w, '-');
@@ -1018,29 +1037,47 @@ internal_write_binary_string(Writer *w, const BigInt *a, DIGIT base)
     // base-8:   8=3-bit,   64=6-bits,  512=9-bits,    4096=12-bits
     // base-16: 16=4-bits, 256=8-bits, 4096=12-bits, 65,536=16-bits
     switch (base) {
-    case 2:  bit_shift = 1; string_write_literal(w, "0b"); break;
-    case 8:  bit_shift = 3; string_write_literal(w, "0o"); break;
-    case 16: bit_shift = 4; string_write_literal(w, "0x"); break;
-    case 32: bit_shift = 5; break;
-    case 64: bit_shift = 6; break;
+    case 2:  shift = 1; shift_fast = DIGIT_BITS; string_write_literal(w, "0b"); break;
+    case 8:  shift = 3; string_write_literal(w, "0o"); break;
+    case 16: shift = 4; string_write_literal(w, "0x"); break;
+    case 32: shift = 5; break;
+    case 64: shift = 6; break;
     default: __builtin_unreachable();
+    }
+
+    // Find nearest power of `shift` to `BASE`.
+    if (shift_fast == 0) {
+        shift_fast = shift;
+        while (cast(size_t)shift_fast * cast(size_t)shift < DIGIT_BITS) {
+            shift_fast *= shift;
+        }
     }
 
 
     // Write from LSD to MSD.
     bit_count = count_bits(a);
-    for (int bit_i = 0; bit_i < bit_count; bit_i += bit_shift) {
-        WORD bits;
+    for (int bit_i = 0; bit_i < bit_count; bit_i += shift_fast) {
+        WORD bitset;
         int bits_to_get;
         char ch;
 
         // When we reach MSD we might not be able to read all bits.
-        bits_to_get = min_int(bit_count - bit_i, bit_shift);
+        bits_to_get = min_int(bit_count - bit_i, shift_fast);
 
         // We assume that the resulting bitfield can be converted.
-        bits = bitfield_extract(a, bit_i, bits_to_get);
-        ch   = RADIX_TABLE[bits];
-        string_write_char_back(w, ch);
+        bitset = bitfield_extract(a, bit_i, bits_to_get);
+        if (bitset >= cast(WORD)base) {
+            DIGIT bit;
+            while (bitset > 0) {
+                bit      = bitset & (base - 1);
+                ch       = RADIX_TABLE[bit];
+                bitset >>= cast(WORD)shift;
+                string_write_char_back(w, ch);
+            }
+        } else {
+            ch = RADIX_TABLE[bitset];
+            string_write_char_back(w, ch);
+        }
     }
 }
 

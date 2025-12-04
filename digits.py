@@ -101,8 +101,9 @@ def int_count_digits(value: int, base = 10) -> int:
     return count
 
 
-def int_encode_base(value: int, base = 10, min_groups = 0) -> str:
+def int_encode_base(value: int, base = 10, *, min_groups = 0, group_size = 0) -> str:
     assert(2 <= base and base <= 64)
+    assert(group_size == 0 or 2 <= group_size and group_size <= 64)
     if value == 0 and min_groups == 0:
         return '0'
 
@@ -126,6 +127,9 @@ def int_encode_base(value: int, base = 10, min_groups = 0) -> str:
             skip_size = 4
 
     # Write LSD to MSD.
+    if group_size:
+        skip_size = group_size
+
     skip_counter = skip_size
     offset = len(sb)
     while True:
@@ -235,8 +239,6 @@ def int_split_digits(value: int, base = DIGIT_BASE) -> list[int]:
         digits.append(lsd)
     return digits
 
-a = 123456789101112131415#1617181920
-
 
 def int_combine_digits(digits: list[int], base = DIGIT_BASE) -> int:
     value = 0
@@ -254,3 +256,7 @@ def int_get_base_fast(base: int) -> int:
     while base_fast * base < DIGIT_BASE:
         base_fast *= base
     return base_fast
+
+
+a = 123456789101112131415#1617181920
+digits = int_split_digits(a)

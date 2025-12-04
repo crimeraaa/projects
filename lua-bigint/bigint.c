@@ -436,14 +436,15 @@ bigint_tostring(lua_State *L)
 
     // We overestimated the buffer?
     if (w.left != w.right) {
-        char *dst_ptr, *src_ptr;
+        char *dst_ptr, *src_ptr, *end_ptr;
 
         // Move prefix (if any) to before the integer portion.
         // It's faster than shifting all the digits to the left.
         dst_ptr  = (w.data + w.right) - w.left;
         src_ptr  = w.data;
+        end_ptr  = w.data + w.cap;
         memmove(dst_ptr, src_ptr, w.left);
-        lua_pushlstring(L, dst_ptr, w.cap - w.right);
+        lua_pushlstring(L, dst_ptr, cast(size_t)(end_ptr - dst_ptr));
     } else {
         lua_pushlstring(L, w.data, w.cap);
     }
@@ -464,6 +465,7 @@ bigint_fns[] = {
 
 static const luaL_Reg
 bigint_mt[] = {
+    // Operator overloads
     {"__add",      bigint_add},
     {"__sub",      bigint_sub},
     {"__mul",      bigint_mul},
@@ -489,6 +491,14 @@ luaopen_bigint(lua_State *L)
     luaL_register(L, NULL, bigint_mt);
     lua_pushvalue(L, -1);           // bigint, mt, mt
     lua_setfield(L, -2, "__index"); // bigint, mt ; mt.__index = mt
+
+    // Set up user-facing methods
+    for (size_t i = 0; i < count_of(bigint_mt) - 1; i += 1) {
+        const char *key = bigint_mt[i].name;
+        lua_getfield(L, -1, key);     // bigint, mt, mt["__key"]
+        lua_setfield(L, -2, key + 2); // bigint, mt ; mt["key"] = mt["__key"]
+    }
+
     lua_pop(L, 1);                  // bigint
     return 1;
 }
