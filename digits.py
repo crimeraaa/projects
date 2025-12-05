@@ -19,6 +19,12 @@ RADIX_TABLE = \
     b"abcdefghijklmnopqrstuvwxyz+/"
 
 RADIX_TABLE_REVERSE = {chr(char): value for value, char in enumerate(RADIX_TABLE)}
+RADIX_PREFIX_TABLE = {
+    'b': 2,  'B': 2,
+    'o': 8,  'O': 8,
+    'd': 10, 'D': 10,
+    'x': 16, 'X': 16,
+}
 
 def int_place_value(value: int, base = 10) -> int:
     if value == 0:
@@ -77,14 +83,14 @@ def int_bitfield_get(value: int|list[int], bit_index: int, bit_count = 1) -> int
         # Empty list is equivalent to 0.
         if len(value) == 0:
             return 0
-        
+
         # Ensure list items are all integers.
         assert(isinstance(value[0], int))
 
         digits = value
     else:
         digits = int_split_digits(value, DIGIT_BASE)
-    
+
     assert(1 <= bit_count and bit_count <= WORD_BITS)
     return __bitfield_get(digits, bit_index, bit_count)
 
@@ -93,7 +99,7 @@ def int_count_digits(value: int, base = 10) -> int:
     count = 0
     if value < 0:
         value = abs(value)
-    
+
     while value > 0:
         count += 1
         value //= base
@@ -111,7 +117,7 @@ def int_encode_base(value: int, base = 10, *, min_groups = 0, group_size = 0) ->
     if value < 0:
         sb += b'-'
         value = abs(value)
-    
+
     skip_size = 0
     match base:
         case 2:
@@ -141,7 +147,7 @@ def int_encode_base(value: int, base = 10, *, min_groups = 0, group_size = 0) ->
         sb += RADIX_TABLE[digit].to_bytes()
         value //= base
         skip_counter -= 1
-        
+
         if value == 0:
             break
 
@@ -161,7 +167,7 @@ def int_encode_base(value: int, base = 10, *, min_groups = 0, group_size = 0) ->
                 break
             skip_counter = skip_size
             sb += b'_'
-            
+
     # sb currently reads LSD to MSD. Swap them.
     left, right = offset, len(sb) - 1
     while left < right:
@@ -177,7 +183,7 @@ def int_decode_base(value: str, base = 0) -> int:
 
     value = value.strip()
     sign = 0
-    
+
     # Get sign
     while len(value) > 0:
         c = value[0]
@@ -187,17 +193,15 @@ def int_decode_base(value: str, base = 0) -> int:
         # Not unary plus nor space?
         elif not c == '+' and not c.isspace():
             break
-        
+
         value = value[1:]
 
     # Get base
     if len(value) > 2 and value[0] == '0':
-        tmp = 0
-        match value[1]:
-            case 'b': tmp = 2
-            case 'o': tmp = 8
-            case 'd': tmp = 10
-            case 'x': tmp = 16
+        try:
+            tmp = RADIX_PREFIX_TABLE[value[1]]
+        except KeyError:
+            tmp = 0
 
         # Skip ^0[bBdDoOxX] otherwise just skip ^0.
         value = value[2 if tmp else 1:]
@@ -213,12 +217,12 @@ def int_decode_base(value: str, base = 0) -> int:
         # Don't attempt to enforce correctness here.
         if c == '_' or c == ',' or c.isspace():
             continue
-        
+
         result *= base
         result += RADIX_TABLE_REVERSE[c]
 
     return -result if sign else result
-    
+
 
 def sub(a: int, b: int) -> tuple[int, int]:
     diff  = DIGIT(a - b).value
@@ -242,12 +246,12 @@ def int_split_digits(value: int, base = DIGIT_BASE) -> list[int]:
 
 def int_combine_digits(digits: list[int], base = DIGIT_BASE) -> int:
     value = 0
-    
+
     # Assume little-endian, so convert to big-endian
     for digit in reversed(digits):
         value *= base
         value += digit
-    
+
     return value
 
 
@@ -258,5 +262,17 @@ def int_get_base_fast(base: int) -> int:
     return base_fast
 
 
-a = 123456789101112131415#1617181920
-digits = int_split_digits(a)
+# a = 123_456_789_101_112_131_415 #1617181920
+
+a = 1_234_567_890
+digits  = int_split_digits(a)
+a_bin = int_encode_base(a, base=2,  group_size=DIGIT_BITS)
+a_dec = int_encode_base(a, base=10, group_size=10)
+
+# Not the same as converting each `BASE` digit to octal because the octal
+# place values do not line up with `DIGIT_BITS`. Same for hex.
+a_oct = int_encode_base(a, base=8,  group_size=11)
+a_hex = int_encode_base(a, base=16, group_size=8)
+
+print(a, bin(a), oct(a), hex(a), sep='\n')
+# print("Pretty:", a_dec, a_bin, a_oct, a_hex, sep="\n\t")

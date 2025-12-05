@@ -26,12 +26,17 @@ bigint_compare(lua_State *L, Compare_Fn cmp_bigint)
 {
     // Lua defines the comparison metamethods as only occuring when both
     // operands share the same metatable. Thus we can never reach here by
-    // comparing with a `number` for example.
+    // comparing with a `number` for example. However, if you call the
+    // function directly (e.g. by `bigint.lt` or similar) then these
+    // guarantees cannot be made.
     //
     // See: https://www.lua.org/pil/13.2.html
-    const BigInt *a = internal_get_bigint(L, 1);
-    const BigInt *b = internal_get_bigint(L, 2);
-    bool res = cmp_bigint(a, b);
+    const BigInt *a, *b;
+    bool res;
+
+    a   = internal_ensure_bigint(L, 1);
+    b   = internal_ensure_bigint(L, 2);
+    res = cmp_bigint(a, b);
     lua_pushboolean(L, res);
     return 1;
 }
@@ -67,8 +72,10 @@ typedef int (*Arith_Int)(lua_State *L, const BigInt *a, lua_Integer b);
 static int
 bigint_arith(lua_State *L, Arith_Big bigint_fn, Arith_Int integer_fn)
 {
-    Arg a = internal_arg_get(L, 1);
-    Arg b = internal_arg_get(L, 2);
+    Arg a, b;
+
+    a = internal_arg_get(L, 1);
+    b = internal_arg_get(L, 2);
 
     switch (a.type) {
     // 1.) a: BigInt *
@@ -111,7 +118,7 @@ bigint_add_bigint(lua_State *L, const BigInt *a, const BigInt *b)
     a_is_neg = internal_is_neg(a);
     if (a->sign == b->sign) {
         max_used = (a->len >= b->len) ? a->len : b->len;
-        dst      = internal_make(L, max_used + 1);
+        dst      = internal_new(L, max_used + 1);
         internal_add_bigint_unsigned(dst, a, b);
         // Both negative?
         if (a_is_neg) {
@@ -128,7 +135,7 @@ bigint_add_bigint(lua_State *L, const BigInt *a, const BigInt *b)
     }
 
     max_used = a->len;
-    dst      = internal_make(L, max_used + 1);
+    dst      = internal_new(L, max_used + 1);
     internal_sub_bigint_unsigned(dst, a, b);
 
     // 3.1.) (-a) + b > 0 when |a| < |b|
@@ -158,7 +165,7 @@ bigint_add_digit(lua_State *L, const BigInt *a, DIGIT b)
 
     // May overallocate by 1 digit, which is acceptable.
     max_used = a->len;
-    dst      = internal_make(L, max_used + 1);
+    dst      = internal_new(L, max_used + 1);
 
     // 1.) (-a) + b == -(a - b)
     if (internal_is_neg(a)) {
@@ -195,7 +202,7 @@ bigint_add_integer(lua_State *L, const BigInt *a, lua_Integer b)
     }
     // 2.) (-a) + b == -(a - b)
     // 3.) a + b where 0 < a and DIGIT_BASE <= b
-    BigInt *b_tmp = internal_make_integer(L, b);
+    BigInt *b_tmp = internal_new_from_integer(L, b);
     return bigint_add_bigint(L, a, b_tmp);
 }
 
@@ -213,7 +220,7 @@ bigint_sub_bigint(lua_State *L, const BigInt *a, const BigInt *b)
             internal_swap_ptr(&a, &b);
         }
         max_used = a->len;
-        dst      = internal_make(L, max_used);
+        dst      = internal_new(L, max_used);
 
         // 1.) (-a) -   b  == -(a + b)
         // 2.)   a  - (-b) ==   a + b
@@ -231,7 +238,7 @@ bigint_sub_bigint(lua_State *L, const BigInt *a, const BigInt *b)
     }
 
     max_used = a->len;
-    dst      = internal_make(L, max_used);
+    dst      = internal_new(L, max_used);
     internal_sub_bigint_unsigned(dst, a, b);
     if (!internal_is_zero(dst)) {
         dst->sign = sign;
@@ -253,7 +260,7 @@ bigint_sub_digit(lua_State *L, const BigInt *a, DIGIT b)
     BigInt *dst;
     Sign sign;
 
-    dst  = internal_make(L, a->len);
+    dst  = internal_new(L, a->len);
     sign = a->sign;
 
     // 1.) (-a) - b == -(a + b)
@@ -293,7 +300,7 @@ bigint_sub_integer(lua_State *L, const BigInt *a, lua_Integer b)
         // 1.2.) a - (-b) == a + |b|
         return (b >= 0 ? bigint_sub_digit : bigint_add_digit)(L, a, b_abs);
     }
-    BigInt *b_tmp = internal_make_integer(L, b);
+    BigInt *b_tmp = internal_new_from_integer(L, b);
     return bigint_sub_bigint(L, a, b_tmp);
 }
 
@@ -309,7 +316,7 @@ bigint_mul_bigint(lua_State *L, const BigInt *a, const BigInt *b)
 
     max_used  = a->len;
     min_used  = b->len;
-    dst       = internal_make(L, min_used + max_used + 1);
+    dst       = internal_new(L, min_used + max_used + 1);
     dst->sign = (a->sign == b->sign) ? POSITIVE : NEGATIVE;
     internal_mul_bigint_unsigned(dst, a, b);
     return 1;
@@ -325,7 +332,7 @@ bigint_mul_integer(lua_State *L, const BigInt *a, lua_Integer b)
         int used;
 
         used  = a->len;
-        dst   = internal_make(L, used);
+        dst   = internal_new(L, used);
         b_abs = cast(DIGIT)internal_integer_abs(b);
 
         internal_mul_digit(dst, a, b_abs);
@@ -333,7 +340,7 @@ bigint_mul_integer(lua_State *L, const BigInt *a, lua_Integer b)
         return 1;
     }
 
-    BigInt *b_tmp = internal_make_integer(L, b);
+    BigInt *b_tmp = internal_new_from_integer(L, b);
     return bigint_mul_bigint(L, a, b_tmp);
 }
 
@@ -348,7 +355,7 @@ bigint_div_bigint(lua_State *L, const BigInt *a, const BigInt *b)
 {
     luaL_argcheck(L, !internal_is_zero(b), 2, "Division by zero");
     if (internal_is_zero(a)) {
-        internal_make_integer(L, 0);
+        internal_new_from_integer(L, 0);
         return 1;
     }
     return STUB(L, "unimplemented");
@@ -363,13 +370,13 @@ bigint_div_integer(lua_State *L, const BigInt *a, lua_Integer b)
 
         luaL_argcheck(L, b != 0, 2, "Division by zero");
         b_abs     = cast(DIGIT)internal_integer_abs(b);
-        dst       = internal_make(L, a->len);
+        dst       = internal_new(L, a->len);
         dst->sign = (internal_is_pos(a) && b >= 0) ? POSITIVE : NEGATIVE;
         internal_divmod_digit(dst, a, b_abs);
         return 1;
     }
 
-    BigInt *b_tmp = internal_make_integer(L, b);
+    BigInt *b_tmp = internal_new_from_integer(L, b);
     return bigint_div_bigint(L, a, b_tmp);
 }
 
@@ -385,8 +392,8 @@ bigint_unm(lua_State *L)
     const BigInt *src;
     BigInt *dst;
 
-    src = internal_get_bigint(L, 1);
-    dst = internal_make_copy(L, src);
+    src = internal_ensure_bigint(L, 1);
+    dst = internal_new_copy(L, src);
     internal_neg(dst);
     return 1;
 }
@@ -402,16 +409,9 @@ bigint_tostring(lua_State *L)
     // Avoid `bigint.tostring(bigint)` or `bigint:tostring()`.
     a    = internal_ensure_bigint(L, 1);
     base = cast(DIGIT)luaL_optinteger(L, /*narg=*/2, /*def=*/10);
-
-    // Conversion to base-2, base-8 and base-16 strings doesn't work yet.
-    // e.g. 0xfeedbeef
-    //    0d4_276_993_775 |   0b01111111_01110110_11011111_011101111
-    //  = 0d4_000_000_000 | = 0b01110111_00110101_10010100_000000000
-    //  + 0d0_276_993_775 | + 0b00001000_01000001_01001011_011101111
     luaL_argcheck(L, 2 <= base && base <= 64,
         /*numarg=*/2,
         /*extramsg=*/"Invalid base");
-
 
     if (internal_is_zero(a)) {
         lua_pushliteral(L, "0");
@@ -422,10 +422,11 @@ bigint_tostring(lua_State *L)
     w.cap   = internal_string_length(a, base);
     w.left  = 0;
     w.right = w.cap;
-    if (w.cap + 1 <= count_of(stack_buf)) {
+    // No need for nul-termination.
+    if (w.cap <= count_of(stack_buf)) {
         w.data = stack_buf;
     } else {
-        w.data = malloc(w.cap + 1);
+        w.data = malloc(w.cap);
     }
 
     if (internal_is_pow2(base)) {
@@ -440,9 +441,9 @@ bigint_tostring(lua_State *L)
 
         // Move prefix (if any) to before the integer portion.
         // It's faster than shifting all the digits to the left.
-        dst_ptr  = (w.data + w.right) - w.left;
+        dst_ptr  = &w.data[w.right - w.left];
         src_ptr  = w.data;
-        end_ptr  = w.data + w.cap;
+        end_ptr  = &w.data[w.cap];
         memmove(dst_ptr, src_ptr, w.left);
         lua_pushlstring(L, dst_ptr, cast(size_t)(end_ptr - dst_ptr));
     } else {
@@ -458,7 +459,6 @@ bigint_tostring(lua_State *L)
 static const luaL_Reg
 bigint_fns[] = {
     {"new",      bigint_ctor},
-    {"tostring", bigint_tostring},
     {"__call",   bigint_call},
     {NULL,       NULL},
 };
@@ -482,23 +482,32 @@ LUALIB_API int
 luaopen_bigint(lua_State *L)
 {
     // bigint library
-    luaL_register(L, BIGINT_LIBNAME, bigint_fns);     // bigint
-    lua_pushvalue(L, -1);    // bigint, bigint
-    lua_setmetatable(L, -2); // bigint ; setmetatable(bigint, bigint)
+    luaL_register(L, BIGINT_LIBNAME, bigint_fns);
+    lua_pushvalue(L, -1);
+    lua_setmetatable(L, -2);
 
     // bigint main metatable
-    luaL_newmetatable(L, BIGINT_MTNAME); // bigint, mt
+    luaL_newmetatable(L, BIGINT_MTNAME);
     luaL_register(L, NULL, bigint_mt);
-    lua_pushvalue(L, -1);           // bigint, mt, mt
-    lua_setfield(L, -2, "__index"); // bigint, mt ; mt.__index = mt
+    // mt.__index = mt
+    lua_pushvalue(L, -1);
+    lua_setfield(L, -2, "__index");
 
     // Set up user-facing methods
+    // bigint, mt
     for (size_t i = 0; i < count_of(bigint_mt) - 1; i += 1) {
-        const char *key = bigint_mt[i].name;
-        lua_getfield(L, -1, key);     // bigint, mt, mt["__key"]
-        lua_setfield(L, -2, key + 2); // bigint, mt ; mt["key"] = mt["__key"]
+        const char *mt_key, *fn_key;
+
+        mt_key = bigint_mt[i].name; // "__key"
+        fn_key = mt_key + 2;        // "key"
+        lua_getfield(L, -1, mt_key);
+        // bigint, mt, fn, fn
+        //  ; fn = mt["__key"]
+        lua_pushvalue(L, -1);
+        lua_setfield(L, -3, fn_key);
+        lua_setfield(L, -3, fn_key);
     }
 
-    lua_pop(L, 1);                  // bigint
+    lua_pop(L, 1); // bigint
     return 1;
 }

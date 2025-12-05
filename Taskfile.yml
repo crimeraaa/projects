@@ -22,7 +22,7 @@ includes:
     vars:
       OUT: ./bin/bigint
     dir: ./bigint
-  
+
   lua-bigint:
     taskfile: ./lua-bigint/Build.yml
     vars:

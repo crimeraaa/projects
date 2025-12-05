@@ -12,18 +12,18 @@ struct Writer {
 };
 
 LUAI_FUNC BigInt *
-internal_make_lstring(lua_State *L, const char *s, size_t s_len, DIGIT base);
-
-LUAI_FUNC BigInt *
-internal_get_bigint(lua_State *L, int arg_i)
-{
-    return cast(BigInt *)lua_touserdata(L, arg_i);
-}
+internal_new_from_lstring(lua_State *L, const char *s, size_t s_len, DIGIT base);
 
 LUAI_FUNC BigInt *
 internal_ensure_bigint(lua_State *L, int arg_i)
 {
     return cast(BigInt *)luaL_checkudata(L, arg_i, BIGINT_MTNAME);
+}
+
+LUAI_FUNC bool
+internal_is_pow2(DIGIT v)
+{
+    return (v & (v - 1)) == 0;
 }
 
 static int
@@ -90,7 +90,7 @@ internal_neg(BigInt *dst)
 
 // Pushes a new BigInt and returns a pointer to said instance.
 LUAI_FUNC BigInt *
-internal_make(lua_State *L, int digit_count)
+internal_new(lua_State *L, int digit_count)
 {
     BigInt *dst;
     size_t  array_size = sizeof(dst->digits[0]) * cast(size_t)digit_count;
@@ -107,9 +107,9 @@ internal_make(lua_State *L, int digit_count)
 }
 
 LUAI_FUNC BigInt *
-internal_make_copy(lua_State *L, const BigInt *src)
+internal_new_copy(lua_State *L, const BigInt *src)
 {
-    BigInt *dst = internal_make(L, src->len);
+    BigInt *dst = internal_new(L, src->len);
     dst->sign = src->sign;
     memcpy(dst->digits, src->digits, sizeof(src->digits[0]) * src->len);
     return dst;
@@ -128,7 +128,7 @@ arith_divmod_base(DIGIT *rem, uintmax_t numerator)
 }
 
 LUAI_FUNC BigInt *
-internal_make_integer(lua_State *L, lua_Integer value)
+internal_new_from_integer(lua_State *L, lua_Integer value)
 {
     BigInt   *dst;
     uintmax_t value_abs;
@@ -136,7 +136,7 @@ internal_make_integer(lua_State *L, lua_Integer value)
 
     value_abs   = internal_integer_abs(value);
     digit_count = count_digits(value_abs, DIGIT_BASE);
-    dst         = internal_make(L, digit_count);
+    dst         = internal_new(L, digit_count);
     dst->sign   = (value >= 0) ? POSITIVE : NEGATIVE;
 
     // Write `value` from LSD to MSD.
@@ -224,16 +224,16 @@ internal_ctor(lua_State *L, int first_arg)
     switch (arg.type) {
     case ARG_BIGINT:
         luaL_argcheck(L, base == 0 || base == 10, first_arg + 1, "Don't.");
-        internal_make_copy(L, arg.bigint);
+        internal_new_copy(L, arg.bigint);
         break;
     case ARG_INTEGER:
         // Don't follow `tonumber()` where you can pass a number and read it
         // in another base...
         luaL_argcheck(L, base == 0 || base == 10, first_arg + 1, "Don't.");
-        internal_make_integer(L, arg.integer);
+        internal_new_from_integer(L, arg.integer);
         break;
     case ARG_STRING:
-        internal_make_lstring(L, arg.lstring.data, arg.lstring.len, base);
+        internal_new_from_lstring(L, arg.lstring.data, arg.lstring.len, base);
         break;
     default:
         return luaL_typerror(L, first_arg, BIGINT_TYPENAME "|integer|string");
@@ -598,7 +598,7 @@ char_to_upper(char ch)
  * @link https://www.rfc-editor.org/rfc/rfc4648.txt
  */
 static const char
-RADIX_TABLE[] = "0123456789"                                                   \
+DIGIT_TO_CHAR_TABLE[] = "0123456789"                                                   \
     "ABCDEFGHIJKLMNOPQRSTUVWXYZ"                                               \
     "abcdefghijklmnopqrstuvwxyz"                                               \
     "+/";
@@ -610,7 +610,7 @@ RADIX_TABLE[] = "0123456789"                                                   \
  * @link https://www.rfc-editor.org/rfc/rfc4648.txt
  */
 static const uint8_t
-RADIX_TABLE_REVERSE[] = {
+CHAR_TO_DIGIT_TABLE[] = {
     0x3e, 0xff, 0xff, 0xff, 0x3f,                               // +,-./
     0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, // 0123456789
     0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,                   // :;<=>?@
@@ -671,20 +671,16 @@ trim_string:
 static int
 digit_length_base(DIGIT base)
 {
-    // Check prefixes for most common bases.
-    switch (base) {
-    case 2:     return DIGIT_BASE2_LENGTH;
-    case 8:     return DIGIT_BASE8_LENGTH;
-    case 10:    return DIGIT_BASE10_LENGTH;
-    case 16:    return DIGIT_BASE16_LENGTH;
+    if (base == 2) {
+        return DIGIT_BITS;
     }
-    // Uncommon base, calculate as needed.
+    // Calculate as needed. This is not called in hot loops anyway.
     return count_digits(DIGIT_MAX, base);
 }
 
 
 LUAI_FUNC BigInt *
-internal_make_lstring(lua_State *L, const char *s, size_t s_len, DIGIT base)
+internal_new_from_lstring(lua_State *L, const char *s, size_t s_len, DIGIT base)
 {
     BigInt *dst;
     DIGIT *digits;
@@ -721,12 +717,12 @@ internal_make_lstring(lua_State *L, const char *s, size_t s_len, DIGIT base)
         }
 
         lut_i = cast(size_t)ch - cast(size_t)RADIX_TABLE_REVERSE_OFFSET;
-        if (lut_i >= count_of(RADIX_TABLE_REVERSE)) {
+        if (lut_i >= count_of(CHAR_TO_DIGIT_TABLE)) {
             luaL_error(L, "Non-digit character '%c'", cast(int)base, ch);
             return NULL;
         }
 
-        digit = cast(DIGIT)RADIX_TABLE_REVERSE[lut_i];
+        digit = cast(DIGIT)CHAR_TO_DIGIT_TABLE[lut_i];
         if (digit == 0xff) {
             luaL_error(L, "Invalid base-%d digit '%c'", cast(int)base, ch);
             return NULL;
@@ -736,7 +732,7 @@ internal_make_lstring(lua_State *L, const char *s, size_t s_len, DIGIT base)
 
     // Will most likely over-allocate, but this is acceptable.
     used      = (n_digits / digit_length_base(base)) + 1;
-    dst       = internal_make(L, used + 1);
+    dst       = internal_new(L, used + 1);
     dst->sign = sign;
     digits    = dst->digits;
 
@@ -755,7 +751,7 @@ internal_make_lstring(lua_State *L, const char *s, size_t s_len, DIGIT base)
         }
 
         // Assumed to never fail by this point.
-        digit = cast(DIGIT)RADIX_TABLE_REVERSE[ch - RADIX_TABLE_REVERSE_OFFSET];
+        digit = cast(DIGIT)CHAR_TO_DIGIT_TABLE[ch - RADIX_TABLE_REVERSE_OFFSET];
 
         // dst *= base
         for (int mul_i = 0; mul_i < used; mul_i += 1) {
@@ -783,6 +779,7 @@ dump_stack(lua_State *L)
     lua_getglobal(L, "tostring");
     println("*** STACK DUMP ***");
     for (int i = 1; i <= n; i += 1) {
+        // ..., tostring, tostring, arg[i]
         lua_pushvalue(L, -1);
         lua_pushvalue(L, i);
         lua_call(L, /*nargs=*/1, /*nresults=*/1);
@@ -797,26 +794,26 @@ static void
 string_write_char(Writer *w, char ch)
 {
     // Increasing top still fits?
-    if (w->left + 1 <= w->cap) {
-        w->data[w->left++] = ch;
-        return;
-    }
-    __builtin_trap();
+    assertfln(w->left + 1 <= w->cap,
+        "Out of bounds index: left=%zu > cap=%zu",
+        w->left, w->cap);
+
+    w->data[w->left++] = ch;
 }
 
 static void
 string_write_lstring(Writer *w, const char *data, size_t len)
 {
     // Increasing top still fits?
-    if (w->left + len <= w->cap) {
-        char *top;
+    char *top;
 
-        top = w->data + w->left;
-        memcpy(top, data, len);
-        w->left += len;
-        return;
-    }
-    __builtin_trap();
+    assertfln(w->left + len <= w->cap,
+        "Out of bounds index: left=%zu + len=%zu > cap=%zu",
+        w->left, len, w->cap);
+
+    top = &w->data[w->left];
+    memcpy(top, data, len);
+    w->left += len;
 }
 
 #define string_write_literal(w, s)  string_write_lstring(w, s, sizeof(s) - 1)
@@ -824,11 +821,11 @@ string_write_lstring(Writer *w, const char *data, size_t len)
 static void
 string_write_char_back(Writer *w, char ch)
 {
-    if (w->left < w->right && w->right <= w->cap) {
-        w->data[--w->right] = ch;
-        return;
-    }
-    __builtin_trap();
+    assertfln(w->left < w->right && w->right <= w->cap,
+        "Out of index: left=%zu, right=%zu, cap=%zu",
+        w->left, w->right, w->cap);
+
+    w->data[--w->right] = ch;
 }
 
 /** @brief Writes `digit` from LSD to MSD, assuming a large `base_fast`. */
@@ -849,7 +846,7 @@ string_write_digit(Writer *w, DIGIT digit, DIGIT base_fast, DIGIT base_slow)
             char ch;
 
             right = lsd % base_slow;
-            ch    = RADIX_TABLE[right];
+            ch    = DIGIT_TO_CHAR_TABLE[right];
             string_write_char_back(w, ch);
             lsd /= base_slow;
         }
@@ -890,12 +887,6 @@ count_bits(const BigInt *a)
 }
 
 
-LUAI_FUNC bool
-internal_is_pow2(DIGIT v)
-{
-    return (v & (v - 1)) == 0;
-}
-
 /** @brief Approximate how many bytes are needed for string conversion.
  *  May overestimate. */
 LUAI_FUNC size_t
@@ -934,7 +925,7 @@ internal_write_nonbinary_string(Writer *w, const BigInt *a, DIGIT base)
     }
 
     // Write from LSD to MSD.
-    dst       = internal_make_copy(w->L, a);
+    dst       = internal_new_copy(w->L, a);
     base_fast = digit_get_base_fast(base);
     while (!internal_is_zero(dst)) {
         DIGIT lsd;
@@ -1004,13 +995,32 @@ bitfield_extract(const BigInt *a, int bit_i, int bit_count)
     return bits;
 }
 
+/** @brief The the largest multiple of `shift` closest to `BITS` such that we
+ *  we can read that many bits at a time to save on bigint arithmetic calls. */
+static int
+get_shift(int *shift_fast, int shift)
+{
+    int tmp;
+    if (shift == 1) {
+        *shift_fast = DIGIT_BITS;
+        return 1;
+    }
+
+    tmp = shift;
+    while (tmp * 2 <= cast(int)DIGIT_BITS) {
+        tmp *= 2;
+    }
+    *shift_fast = tmp;
+    return shift;
+}
+
 
 /** @brief Write `|a|` as a binary `base` string where `|a| > 0`. */
 LUAI_FUNC void
 internal_write_binary_string(Writer *w, const BigInt *a, DIGIT base)
 {
     // `log2(base)` such that `base = 2**shift == 1<<shift`.
-    int bit_count, shift, shift_fast = 0;
+    int bit_count, shift, shift_fast;
 
     if (internal_is_neg(a)) {
         string_write_char(w, '-');
@@ -1037,22 +1047,14 @@ internal_write_binary_string(Writer *w, const BigInt *a, DIGIT base)
     // base-8:   8=3-bit,   64=6-bits,  512=9-bits,    4096=12-bits
     // base-16: 16=4-bits, 256=8-bits, 4096=12-bits, 65,536=16-bits
     switch (base) {
-    case 2:  shift = 1; shift_fast = DIGIT_BITS; string_write_literal(w, "0b"); break;
-    case 8:  shift = 3; string_write_literal(w, "0o"); break;
-    case 16: shift = 4; string_write_literal(w, "0x"); break;
-    case 32: shift = 5; break;
-    case 64: shift = 6; break;
-    default: __builtin_unreachable();
+    case 2:  shift = get_shift(&shift_fast, 1); string_write_literal(w, "0b"); break;
+    case 4:  shift = get_shift(&shift_fast, 2); break;
+    case 8:  shift = get_shift(&shift_fast, 3); string_write_literal(w, "0o"); break;
+    case 16: shift = get_shift(&shift_fast, 4); string_write_literal(w, "0x"); break;
+    case 32: shift = get_shift(&shift_fast, 5); break;
+    case 64: shift = get_shift(&shift_fast, 6); break;
+    default: unreachable();
     }
-
-    // Find nearest power of `shift` to `BASE`.
-    if (shift_fast == 0) {
-        shift_fast = shift;
-        while (cast(size_t)shift_fast * cast(size_t)shift < DIGIT_BITS) {
-            shift_fast *= shift;
-        }
-    }
-
 
     // Write from LSD to MSD.
     bit_count = count_bits(a);
@@ -1067,15 +1069,25 @@ internal_write_binary_string(Writer *w, const BigInt *a, DIGIT base)
         // We assume that the resulting bitfield can be converted.
         bitset = bitfield_extract(a, bit_i, bits_to_get);
         if (bitset >= cast(WORD)base) {
-            DIGIT bit;
+            DIGIT digit;
+            int counter = 0;
             while (bitset > 0) {
-                bit      = bitset & (base - 1);
-                ch       = RADIX_TABLE[bit];
+                digit     = bitset & (base - 1);
+                ch       = DIGIT_TO_CHAR_TABLE[digit];
                 bitset >>= cast(WORD)shift;
+                counter += shift;
                 string_write_char_back(w, ch);
             }
+
+            // Add leading zeroes for digits before MSD.
+            if (bits_to_get == shift_fast) {
+                while (counter < shift_fast) {
+                    counter += shift;
+                    string_write_char_back(w, '0');
+                }
+            }
         } else {
-            ch = RADIX_TABLE[bitset];
+            ch = DIGIT_TO_CHAR_TABLE[bitset];
             string_write_char_back(w, ch);
         }
     }

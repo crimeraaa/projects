@@ -35,25 +35,6 @@ typedef uint64_t WORD;
 #define DIGIT_MAX           DIGIT_MASK
 
 
-/** @brief How many base-2 digits can fit in a single base-`BASE` digit?
- *  e.g. in base-2**30: 0b00111111_11111111_11111111_11111111 */
-#define DIGIT_BASE2_LENGTH   DIGIT_BITS
-
-
-/** @brief How many base-8 digits can fit in a single base-`BASE` digit?
- *  e.g. in base-2**30: 0o10_000_000_000 */
-#define DIGIT_BASE8_LENGTH   11
-
-
-/** @brief How many base-10 digits can fit in a single base-`BASE` digit?
- *  e.g. in base-2**30: 0d1_073_741_824 */
-#define DIGIT_BASE10_LENGTH  10
-
-
-/** @brief How many base-16 digits can fit in a single base-`BASE` digit?
- *  e.g. in base-2**30: 0x4000_0000 */
-#define DIGIT_BASE16_LENGTH  8
-
 #define STUB(L, msg)    luaL_error(L, "%s:%d: %s", __FILE__, __LINE__, msg)
 
 enum Sign {
