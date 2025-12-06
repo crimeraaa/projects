@@ -4,11 +4,13 @@ from ctypes import (
     sizeof,
 )
 
+import sys
+
 DIGIT_NAILS         = 2
 DIGIT_TYPE_BITS     = sizeof(DIGIT) * 8
-DIGIT_BITS          = DIGIT_TYPE_BITS - DIGIT_NAILS
-WORD_BITS           = DIGIT_BITS * 2
-DIGIT_BASE          = int(2**DIGIT_BITS)
+DIGIT_SHIFT         = DIGIT_TYPE_BITS - DIGIT_NAILS
+WORD_SHIFT          = DIGIT_SHIFT * 2
+DIGIT_BASE          = int(2**DIGIT_SHIFT)
 DIGIT_BASE_DECIMAL  = 10**9
 DIGIT_MASK          = DIGIT_BASE - 1
 DIGIT_MAX           = DIGIT_MASK
@@ -61,8 +63,8 @@ def int_place_value(value: int, base = 10) -> int:
 def __bitfield_get(digits: list[int], bit_index: int, bit_count: int) -> int:
     if bit_count == 1:
         # `i` where `digits[i]` holds the bit at `bit_index`.
-        digit_index = bit_index // DIGIT_BITS
-        mask  = DIGIT(1 << (bit_index % DIGIT_BITS)).value
+        digit_index = bit_index // DIGIT_SHIFT
+        mask  = DIGIT(1 << (bit_index % DIGIT_SHIFT)).value
         digit = digits[digit_index]
         # Truncate result to exactly 1 bit.
         return 1 if (digit & mask) else 0
@@ -91,7 +93,7 @@ def int_bitfield_get(value: int|list[int], bit_index: int, bit_count = 1) -> int
     else:
         digits = int_split_digits(value, DIGIT_BASE)
 
-    assert(1 <= bit_count and bit_count <= WORD_BITS)
+    assert(1 <= bit_count and bit_count <= WORD_SHIFT)
     return __bitfield_get(digits, bit_index, bit_count)
 
 
@@ -224,11 +226,25 @@ def int_decode_base(value: str, base = 0) -> int:
     return -result if sign else result
 
 
-def sub(a: int, b: int) -> tuple[int, int]:
+def int_digit_add(a: int, b: int) -> tuple[int, int]:
+    sum = DIGIT(a + b).value
+    carry = sum >> DIGIT_SHIFT
+    sum &= DIGIT_MASK
+    return sum, carry
+
+
+def int_digit_sub(a: int, b: int) -> tuple[int, int]:
     diff  = DIGIT(a - b).value
     carry = diff >> (DIGIT_TYPE_BITS - 1)
     diff &= DIGIT_MASK
     return diff, carry
+
+
+def int_digit_mul(a: int, b: int) -> tuple[int, int]:
+    prod  = WORD(a * b).value
+    carry = prod >> DIGIT_SHIFT
+    prod &= DIGIT_MASK
+    return prod, carry
 
 
 def int_split_digits(value: int, base = DIGIT_BASE) -> list[int]:
@@ -264,9 +280,9 @@ def int_get_base_fast(base: int) -> int:
 
 # a = 123_456_789_101_112_131_415 #1617181920
 
-a = 1_234_567_890
+a = len(sys.argv) > 1 and int(sys.argv[1]) or 1_234_567_890
 digits  = int_split_digits(a)
-a_bin = int_encode_base(a, base=2,  group_size=DIGIT_BITS)
+a_bin = int_encode_base(a, base=2,  group_size=DIGIT_SHIFT)
 a_dec = int_encode_base(a, base=10, group_size=10)
 
 # Not the same as converting each `BASE` digit to octal because the octal

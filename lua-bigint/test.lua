@@ -1,8 +1,8 @@
-local BigInt = require "bigint"
+local int = require "bigint"
 
--- local a = BigInt("123_456_789_101_112_131_415")
--- local a = BigInt "0xfeedbeef"
-local a = BigInt "1_234_567_890"
+-- local a = int("123_456_789_101_112_131_415")
+-- local a = int "0xfeedbeef"
+local a = int(arg and arg[1] or "1_234_567_890")
 
 print(a)
 print(a:tostring(2))

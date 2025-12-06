@@ -27,7 +27,7 @@ internal_is_pow2(DIGIT v)
 }
 
 static int
-count_digits(uintmax_t value, DIGIT base)
+integer_count_digits(uintmax_t value, DIGIT base)
 {
     int count;
     if (value == 0) {
@@ -93,12 +93,13 @@ LUAI_FUNC BigInt *
 internal_new(lua_State *L, int digit_count)
 {
     BigInt *dst;
-    size_t  array_size = sizeof(dst->digits[0]) * cast(size_t)digit_count;
+    size_t  array_size;
 
     // -> (..., bi: BigInt *)
+    array_size = sizeof(dst->digits[0]) * cast(size_t)digit_count;
     dst = cast(BigInt *)lua_newuserdata(L, sizeof(*dst) + array_size);
     dst->sign = POSITIVE;
-    dst->len  = cast(size_t)digit_count;
+    dst->len = cast(size_t)digit_count;
     memset(dst->digits, 0, array_size);
 
     luaL_getmetatable(L, BIGINT_MTNAME); // -> (..., bi, mt: {})
@@ -116,36 +117,24 @@ internal_new_copy(lua_State *L, const BigInt *src)
 }
 
 
-/** @brief `quot, rem = dividend / BASE, dividend % BASE`.
- *  where `BASE` is a power of 2. */
-static DIGIT
-arith_divmod_base(DIGIT *rem, uintmax_t numerator)
-{
-    DIGIT quot;
-    quot = cast(DIGIT)(numerator >> DIGIT_BITS);
-    *rem = cast(DIGIT)(numerator & DIGIT_MASK);
-    return quot;
-}
-
 LUAI_FUNC BigInt *
 internal_new_from_integer(lua_State *L, lua_Integer value)
 {
-    BigInt   *dst;
+    BigInt *dst;
     uintmax_t value_abs;
-    int       digit_count;
+    int digit_count;
 
-    value_abs   = internal_integer_abs(value);
-    digit_count = count_digits(value_abs, DIGIT_BASE);
-    dst         = internal_new(L, digit_count);
-    dst->sign   = (value >= 0) ? POSITIVE : NEGATIVE;
+    value_abs = internal_integer_abs(value);
+    digit_count = integer_count_digits(value_abs, DIGIT_BASE);
+    dst = internal_new(L, digit_count);
+    dst->sign = (value >= 0) ? POSITIVE : NEGATIVE;
 
     // Write `value` from LSD to MSD.
     for (int i = 0; i < dst->len; i += 1) {
-        DIGIT quot_next, rem_lsd;
-
-        quot_next      = arith_divmod_base(&rem_lsd, value_abs);
-        value_abs      = quot_next;
-        dst->digits[i] = rem_lsd;
+        // dst[i] = value_abs % DIGIT_BASE
+        dst->digits[i] = cast(DIGIT)(value_abs & DIGIT_MASK);
+        // value //= DIGIT_BASE
+        value_abs >>= DIGIT_SHIFT;
     }
 
     return dst;
@@ -170,7 +159,7 @@ LUAI_FUNC Arg
 internal_arg_get(lua_State *L, int arg_i)
 {
     Arg arg;
-    arg.type    = ARG_INVALID;
+    arg.type = ARG_INVALID;
     arg.integer = 0;
 
     switch (lua_type(L, arg_i)) {
@@ -182,7 +171,7 @@ internal_arg_get(lua_State *L, int arg_i)
         i = cast(lua_Integer)n;
         // Number type accurately represents the integer (no truncation)?
         if (cast(lua_Number)i == n) {
-            arg.type    = ARG_INTEGER;
+            arg.type = ARG_INTEGER;
             arg.integer = i;
         } else {
             luaL_typerror(L, arg_i, "integer");
@@ -190,11 +179,11 @@ internal_arg_get(lua_State *L, int arg_i)
         break;
     }
     case LUA_TSTRING:
-        arg.type         = ARG_STRING;
+        arg.type = ARG_STRING;
         arg.lstring.data = lua_tolstring(L, arg_i, &arg.lstring.len);
         break;
     default:
-        arg.type   = ARG_BIGINT;
+        arg.type = ARG_BIGINT;
         arg.bigint = internal_ensure_bigint(L, arg_i);
         break;
     }
@@ -219,7 +208,7 @@ internal_ctor(lua_State *L, int first_arg)
     Arg arg;
     DIGIT base;
 
-    arg  = internal_arg_get(L, first_arg);
+    arg = internal_arg_get(L, first_arg);
     base = cast(DIGIT)luaL_optinteger(L, first_arg + 1, /*def=*/0);
     switch (arg.type) {
     case ARG_BIGINT:
@@ -356,59 +345,29 @@ internal_lt_digit_abs(const BigInt *a, DIGIT b)
     return internal_cmp_digit_abs(a, b) == LESS;
 }
 
-static DIGIT
-arith_add_carry(DIGIT *carry, DIGIT a, DIGIT b)
-{
-    DIGIT sum;
-
-    sum    = a + b + *carry;
-    *carry = sum >> DIGIT_BITS; // Extract carry bits, if any.
-    return sum & DIGIT_MASK;    // Get the valid digit bits.
-}
 
 /** @brief `|a| + |b|` where #a >= #b. */
 LUAI_FUNC void
 internal_add_bigint_unsigned(BigInt *dst, const BigInt *a, const BigInt *b)
 {
-    DIGIT carry = 0;
+    DIGIT sum, carry = 0;
     int max_used, min_used, i = 0;
 
     max_used = a->len;
     min_used = b->len;
     for (; i < min_used; i += 1) {
-        dst->digits[i] = arith_add_carry(&carry, a->digits[i], b->digits[i]);
+        sum = a->digits[i] + b->digits[i] + carry;
+        carry = sum >> DIGIT_SHIFT; // Extra the carry bit.
+        dst->digits[i] = sum & DIGIT_MASK; // Mask out the carry bit.
     }
 
     for (; i < max_used; i += 1) {
-        dst->digits[i] = arith_add_carry(&carry, a->digits[i], /*b=*/0);
+        sum = a->digits[i] + carry;
+        carry = sum >> DIGIT_SHIFT;
+        dst->digits[i] = sum & DIGIT_MASK;
     }
     dst->digits[i] = carry;
     internal_clamp(dst);
-}
-
-static DIGIT
-arith_sub_borrow(DIGIT *borrow, DIGIT a, DIGIT b)
-{
-    DIGIT diff;
-
-    // In unsigned subtraction, the carry is propagated all the way to MSB.
-    // when overflow occurs.
-    //
-    // Concept check: DIGIT(3 - 4) where DIGIT == uint32_t
-    //      =   0b00000000_00000000_00000000_00000011   ; 3
-    //      -   0b00000000_00000000_00000000_00000100   ; 4
-    //      =   0b11111111_11111111_11111111_11111111   ; DIGIT(-1)
-    //
-    // borrow = 0b11111111_11111111_11111111_11111111   ; DIGIT(-1)
-    //       >> 31
-    //        = 1
-    //
-    // diff   = 0b11111111_11111111_11111111_11111111   ; DIGIT(-1)
-    //        & 0b00111111_11111111_11111111_11111111   ; DIGIT_MASK
-    //        = 0b00111111_11111111_11111111_11111111   ; 1_073_741_823
-    diff    = a - b - *borrow;
-    *borrow = diff >> (DIGIT_TYPE_BITS - 1);
-    return diff & DIGIT_MASK;
 }
 
 
@@ -416,17 +375,37 @@ arith_sub_borrow(DIGIT *borrow, DIGIT a, DIGIT b)
 LUAI_FUNC void
 internal_sub_bigint_unsigned(BigInt *dst, const BigInt *a, const BigInt *b)
 {
-    DIGIT borrow = 0;
+    DIGIT diff, borrow = 0;
     int max_used, min_used, i = 0;
 
     max_used = a->len;
     min_used = b->len;
     for (; i < min_used; i += 1) {
-        dst->digits[i] = arith_sub_borrow(&borrow, a->digits[i], b->digits[i]);
+        // In unsigned subtraction, the carry is propagated all the way to
+        // MSB when overflow occurs. In the final mask, the unneeded magnitude
+        // is masked out (e.g. bit[30] when bits[0:30] are used).
+        //
+        // Concept check: DIGIT(3 - 4) where DIGIT == uint32_t
+        //      =   0b00000000_00000000_00000000_00000011   ; 3
+        //      -   0b00000000_00000000_00000000_00000100   ; 4
+        //      =   0b11111111_11111111_11111111_11111111   ; DIGIT(-1)
+        //
+        // borrow = 0b11111111_11111111_11111111_11111111   ; DIGIT(-1)
+        //       >> (DIGIT_TYPE_BITS - 1)                   ; 31
+        //        = 1
+        //
+        // diff   = 0b11111111_11111111_11111111_11111111   ; DIGIT(-1)
+        //        & 0b00111111_11111111_11111111_11111111   ; DIGIT_MASK
+        //        = 0b00111111_11111111_11111111_11111111   ; 1_073_741_823
+        diff = a->digits[i] - b->digits[i]  - borrow;
+        borrow = diff >> (DIGIT_TYPE_BITS - 1);
+        dst->digits[i] = diff & DIGIT_MASK;
     }
 
     for (; i < max_used; i += 1) {
-        dst->digits[i] = arith_sub_borrow(&borrow, a->digits[i], /*b=*/0);
+        diff = a->digits[i] - borrow;
+        borrow = diff >> (DIGIT_TYPE_BITS - 1);
+        dst->digits[i] = diff & DIGIT_MASK;
     }
     dst->digits[i] = borrow;
     internal_clamp(dst);
@@ -443,7 +422,11 @@ internal_add_digit(BigInt *dst, const BigInt *a, DIGIT b)
     used  = a->len;
     carry = b;
     for (int i = 0; i < used; i += 1) {
-        dst->digits[i] = arith_add_carry(&carry, a->digits[i], /*b=*/0);
+        DIGIT sum;
+
+        sum = a->digits[i] + carry;
+        carry = sum >> DIGIT_SHIFT;
+        dst->digits[i] = sum & DIGIT_MASK;
     }
     dst->digits[used] = carry;
     internal_clamp(dst);
@@ -454,33 +437,19 @@ internal_add_digit(BigInt *dst, const BigInt *a, DIGIT b)
 LUAI_FUNC void
 internal_sub_digit(BigInt *dst, const BigInt *a, DIGIT b)
 {
-    DIGIT borrow;
+    DIGIT diff, borrow;
     int used;
 
     used   = a->len;
     borrow = b;
 
     for (int i = 0; i < used; i += 1) {
-        dst->digits[i] = arith_sub_borrow(&borrow, a->digits[i], /*b=*/0);
+        diff = a->digits[i] - borrow;
+        borrow = diff >> (DIGIT_TYPE_BITS - 1);
+        dst->digits[i] = diff & DIGIT_MASK;
     }
     dst->digits[used] = borrow;
     internal_clamp(dst);
-}
-
-
-static DIGIT
-arith_mul_carry(DIGIT *carry, DIGIT a, DIGIT b)
-{
-    WORD prod;
-    DIGIT rem;
-
-    // New carry is the 'overflow' from the product, e.g. 1000 in 1234
-    // for base-1000.
-    prod   = (cast(WORD)a * cast(WORD)b) + cast(WORD)*carry;
-    *carry = arith_divmod_base(&rem, cast(uintmax_t)prod);
-
-    // Only the portion of the product that fits in `DIGIT` will be written.
-    return rem;
 }
 
 
@@ -488,12 +457,16 @@ arith_mul_carry(DIGIT *carry, DIGIT a, DIGIT b)
 LUAI_FUNC void
 internal_mul_digit(BigInt *dst, const BigInt *a, DIGIT multiplier)
 {
+    WORD prod;
     DIGIT carry = 0;
     int used;
 
     used = a->len;
     for (int i = 0; i < used; i += 1) {
-        dst->digits[i] = arith_mul_carry(&carry, a->digits[i], multiplier);
+        prod = cast(WORD)a->digits[i] * cast(WORD)multiplier + cast(WORD)carry;
+        // New carry is the 'overflow' from the product.
+        carry = cast(DIGIT)(prod >> DIGIT_SHIFT);
+        dst->digits[i] = cast(DIGIT)(prod & DIGIT_MASK);
     }
     dst->digits[used] = carry;
 }
@@ -510,12 +483,14 @@ internal_mul_bigint_unsigned(BigInt *restrict dst, const BigInt *a, const BigInt
     max_used = a->len;
     min_used = b->len;
     for (int b_i = 0; b_i < min_used; b_i += 1) {
-        DIGIT multiplier, prod, carry = 0;
+        WORD multiplier, prod;
+        DIGIT carry = 0;
 
-        multiplier = b->digits[b_i];
+        multiplier = cast(WORD)b->digits[b_i];
         for (int a_i = 0; a_i < max_used; a_i += 1) {
-            prod = arith_mul_carry(&carry, a->digits[a_i], multiplier);
-            dst->digits[a_i + b_i] += prod;
+            prod  = cast(WORD)a->digits[a_i] * multiplier + cast(WORD)carry;
+            carry = cast(DIGIT)(prod >> DIGIT_SHIFT);
+            dst->digits[a_i + b_i] += cast(DIGIT)(prod & DIGIT_SHIFT);
         }
         dst->digits[b_i + max_used] += carry;
     }
@@ -540,7 +515,7 @@ internal_divmod_digit(BigInt *dst, const BigInt *a, DIGIT denominator)
         DIGIT digit = 0;
 
         // carry *= base where base is a power of 2.
-        carry <<= DIGIT_BITS;
+        carry <<= DIGIT_SHIFT;
 
         // carry += a[i] since the lower `DIGIT` bits of carry are all 0.
         carry |= cast(WORD)a->digits[i];
@@ -598,7 +573,7 @@ char_to_upper(char ch)
  * @link https://www.rfc-editor.org/rfc/rfc4648.txt
  */
 static const char
-DIGIT_TO_CHAR_TABLE[] = "0123456789"                                                   \
+DIGIT_TO_CHAR_TABLE[] = "0123456789"                                           \
     "ABCDEFGHIJKLMNOPQRSTUVWXYZ"                                               \
     "abcdefghijklmnopqrstuvwxyz"                                               \
     "+/";
@@ -667,15 +642,16 @@ trim_string:
 }
 
 
-/** @brief How many base-`base` digits can fit in a single base-`BASE` digit? */
+/** @brief How many base-`base` digits can fit in a single base-`DIGIT_BASE`
+ *  digit? */
 static int
 digit_length_base(DIGIT base)
 {
     if (base == 2) {
-        return DIGIT_BITS;
+        return DIGIT_SHIFT;
     }
     // Calculate as needed. This is not called in hot loops anyway.
-    return count_digits(DIGIT_MAX, base);
+    return integer_count_digits(DIGIT_MAX, base);
 }
 
 
@@ -754,15 +730,23 @@ internal_new_from_lstring(lua_State *L, const char *s, size_t s_len, DIGIT base)
         digit = cast(DIGIT)CHAR_TO_DIGIT_TABLE[ch - RADIX_TABLE_REVERSE_OFFSET];
 
         // dst *= base
-        for (int mul_i = 0; mul_i < used; mul_i += 1) {
-            digits[mul_i] = arith_mul_carry(&mul_carry, digits[mul_i], base);
+        for (int i = 0; i < used; i += 1) {
+            WORD prod;
+
+            prod = cast(WORD)digits[i] * cast(WORD)base + cast(WORD)mul_carry;
+            mul_carry = cast(DIGIT)(prod >> DIGIT_SHIFT);
+            digits[i] = cast(DIGIT)(prod & DIGIT_MASK);
         }
         digits[used] = mul_carry;
 
         // dst += digit
         add_carry = digit;
-        for (int add_i = 0; add_i < used; add_i += 1) {
-            digits[add_i] = arith_add_carry(&add_carry, digits[add_i], /*b=*/0);
+        for (int i = 0; i < used; i += 1) {
+            DIGIT sum;
+
+            sum = digits[i] + add_carry;
+            add_carry = sum >> DIGIT_SHIFT;
+            digits[i] = sum & DIGIT_MASK;
         }
         digits[used] = add_carry;
     }
@@ -822,68 +806,33 @@ static void
 string_write_char_back(Writer *w, char ch)
 {
     assertfln(w->left < w->right && w->right <= w->cap,
-        "Out of index: left=%zu, right=%zu, cap=%zu",
+        "Out of bounds index: left=%zu, right=%zu, cap=%zu",
         w->left, w->right, w->cap);
 
     w->data[--w->right] = ch;
 }
 
-/** @brief Writes `digit` from LSD to MSD, assuming a large `base_fast`. */
-static void
-string_write_digit(Writer *w, DIGIT digit, DIGIT base_fast, DIGIT base_slow)
-{
-    if (digit == 0) {
-        string_write_char(w, '0');
-        return;
-    }
-
-    while (digit > 0) {
-        DIGIT lsd;
-
-        lsd = digit % base_fast;
-        while (lsd > 0) {
-            DIGIT right;
-            char ch;
-
-            right = lsd % base_slow;
-            ch    = DIGIT_TO_CHAR_TABLE[right];
-            string_write_char_back(w, ch);
-            lsd /= base_slow;
-        }
-        digit /= base_fast;
-    }
-}
-
 
 /** @brief Help optimize non-binary strings by getting the closest multiple of
- *  `base` to the binary `BASE`. */
+ *  `base` to the binary `DIGIT_BASE`. */
 static DIGIT
-digit_get_base_fast(DIGIT base)
+digit_get_base_fast(int *digit_count, DIGIT base)
 {
     DIGIT base_fast = 0;
 
     // 10**9
     if (base == 10) {
+        *digit_count = DIGIT_SHIFT_DECIMAL;
         return DIGIT_BASE_DECIMAL;
     }
 
+    *digit_count = 1;
     base_fast = base;
     while (base_fast * base < DIGIT_BASE) {
         base_fast *= base;
+        *digit_count += 1;
     }
     return base_fast;
-}
-
-static int
-count_bits(const BigInt *a)
-{
-    int count = 0;
-    if (!internal_is_zero(a)) {
-        // Count MSD digits exactly, all other digits have fixed width.
-        count += count_digits(a->digits[a->len - 1], /*base=*/2);
-        count += (a->len - 1) * DIGIT_BITS;
-    }
-    return count;
 }
 
 
@@ -897,17 +846,44 @@ internal_string_length(const BigInt *a, DIGIT base)
         // Negative requires the '-' sign.
         size += cast(size_t)internal_is_neg(a);
 
-        // Power of 2 requires the "0\d" prefix.
-        if (internal_is_pow2(base)) {
+        // base-2, base-8 and base-16 requires the "0\d" prefix.
+        if (base == 2 || base == 8 || base == 16) {
             size += 2;
         }
 
         // Determine likely size for MSD.
         // All digits past MSD are fixed-size.
-        size += cast(size_t)(count_digits(a->digits[a->len - 1], base));
+        size += cast(size_t)(integer_count_digits(a->digits[a->len - 1], base));
         size += cast(size_t)(a->len - 1) * cast(size_t)digit_length_base(base);
     }
     return size;
+}
+
+
+/** @brief Writes `digit` from LSD to MSD, assuming a large `base_fast`.
+ * @return The number of significant digits written.
+ */
+static int
+string_write_digit(Writer *w, DIGIT digit, DIGIT base_fast, DIGIT base_slow)
+{
+    int written = 0;
+    if (digit == 0) {
+        string_write_char(w, '0');
+        return 1;
+    }
+
+    while (digit > 0) {
+        DIGIT lsd;
+
+        lsd = digit % base_fast;
+        while (lsd > 0) {
+            string_write_char_back(w, DIGIT_TO_CHAR_TABLE[lsd % base_slow]);
+            lsd /= base_slow;
+            written += 1;
+        }
+        digit /= base_fast;
+    }
+    return written;
 }
 
 
@@ -919,6 +895,7 @@ internal_write_nonbinary_string(Writer *w, const BigInt *a, DIGIT base)
 
     // Help reduce the number of divmod calls.
     DIGIT base_fast;
+    int digit_count;
 
     if (internal_is_neg(a)) {
         string_write_char(w, '-');
@@ -926,16 +903,40 @@ internal_write_nonbinary_string(Writer *w, const BigInt *a, DIGIT base)
 
     // Write from LSD to MSD.
     dst       = internal_new_copy(w->L, a);
-    base_fast = digit_get_base_fast(base);
+    base_fast = digit_get_base_fast(&digit_count, base);
     while (!internal_is_zero(dst)) {
-        DIGIT lsd;
-        lsd = internal_divmod_digit(dst, dst, base_fast);
-        string_write_digit(w, lsd, base_fast, base);
+        DIGIT lsd_fast;
+        int written, lzeroes;
+
+        lsd_fast = internal_divmod_digit(dst, dst, base_fast);
+        written = string_write_digit(w, lsd_fast, base_fast, base);
+        lzeroes = digit_count - written;
+
+        // Leading zeroes needed for non-MSD? Recall that `divmod` may
+        // mutate `len`. If we just divmod the MSD, then `len` is 0.
+        if (dst->len >= 1) {
+            while (lzeroes > 0) {
+                string_write_char_back(w, '0');
+                lzeroes -= 1;
+            }
+        }
     }
 }
 
 static int
-min_int(int a, int b)
+count_bits(const BigInt *a)
+{
+    int count = 0;
+    if (!internal_is_zero(a)) {
+        // Count MSD digits exactly, all other digits have fixed width.
+        count += integer_count_digits(a->digits[a->len - 1], /*base=*/2);
+        count += (a->len - 1) * DIGIT_SHIFT;
+    }
+    return count;
+}
+
+static int
+int_min(int a, int b)
 {
     return (a < b) ? a : b;
 }
@@ -948,8 +949,8 @@ bitfield_extract(const BigInt *a, int bit_i, int bit_count)
     int digit_i, num_bits;
 
 
-    digit_i = bit_i / DIGIT_BITS; // Index of digit `bit_i` can be found at.
-    bit_i  %= DIGIT_BITS; // Index of the bit within the digit.
+    digit_i = bit_i / DIGIT_SHIFT; // Index of digit `bit_i` can be found at.
+    bit_i  %= DIGIT_SHIFT; // Index of the bit within the digit.
     shift   = bit_i;
 
     if (bit_count == 1) {
@@ -963,7 +964,7 @@ bitfield_extract(const BigInt *a, int bit_i, int bit_count)
     // 1.) Check if all the bits fit in the 1st digit.
     //     Concept check: assuming base-2**30
     //          bit_i: 3, bit_count: 4 = bits [3..7)
-    num_bits  = min_int(bit_count, DIGIT_BITS - bit_i);
+    num_bits  = int_min(bit_count, DIGIT_SHIFT - bit_i);
     mask      = (cast(WORD)1 << cast(WORD)num_bits) - 1;
     bits      = (cast(WORD)a->digits[digit_i] >> shift) & mask;
 
@@ -977,7 +978,7 @@ bitfield_extract(const BigInt *a, int bit_i, int bit_count)
     //      Concept check: assuming base-2**30:
     //          bit_i: 28, bit_count: 6 = bits [28..31), [31..34)
     shift    = num_bits;
-    num_bits = min_int(bit_count, DIGIT_BITS);
+    num_bits = int_min(bit_count, DIGIT_SHIFT);
     mask     = (cast(WORD)1 << cast(WORD)num_bits) - 1;
     bits    |= (cast(WORD)a->digits[digit_i] & mask) << shift;
 
@@ -989,26 +990,26 @@ bitfield_extract(const BigInt *a, int bit_i, int bit_count)
 
     // 3.) Check the 3rd digit.
     mask   = (cast(WORD)1 << cast(WORD)bit_count) - 1;
-    shift += DIGIT_BITS;
+    shift += DIGIT_SHIFT;
     bits  |= (cast(WORD)a->digits[digit_i] & mask) << shift;
 
     return bits;
 }
 
-/** @brief The the largest multiple of `shift` closest to `BITS` such that we
- *  we can read that many bits at a time to save on bigint arithmetic calls. */
+/** @brief The the largest multiple of `shift` closest to `DIGIT_SHIFT` such
+ *  that we we can read that many bits at once, reducing bigint calls. */
 static int
-get_shift(int *shift_fast, int shift)
+shift_get(int *shift_fast, int shift)
 {
     int tmp;
     if (shift == 1) {
-        *shift_fast = DIGIT_BITS;
+        *shift_fast = WORD_SHIFT;
         return 1;
     }
 
     tmp = shift;
-    while (tmp * 2 <= cast(int)DIGIT_BITS) {
-        tmp *= 2;
+    while (tmp + shift <= cast(int)WORD_SHIFT) {
+        tmp += shift;
     }
     *shift_fast = tmp;
     return shift;
@@ -1047,48 +1048,42 @@ internal_write_binary_string(Writer *w, const BigInt *a, DIGIT base)
     // base-8:   8=3-bit,   64=6-bits,  512=9-bits,    4096=12-bits
     // base-16: 16=4-bits, 256=8-bits, 4096=12-bits, 65,536=16-bits
     switch (base) {
-    case 2:  shift = get_shift(&shift_fast, 1); string_write_literal(w, "0b"); break;
-    case 4:  shift = get_shift(&shift_fast, 2); break;
-    case 8:  shift = get_shift(&shift_fast, 3); string_write_literal(w, "0o"); break;
-    case 16: shift = get_shift(&shift_fast, 4); string_write_literal(w, "0x"); break;
-    case 32: shift = get_shift(&shift_fast, 5); break;
-    case 64: shift = get_shift(&shift_fast, 6); break;
+    case 2:  shift = shift_get(&shift_fast, 1); string_write_literal(w, "0b"); break;
+    case 4:  shift = shift_get(&shift_fast, 2); break;
+    case 8:  shift = shift_get(&shift_fast, 3); string_write_literal(w, "0o"); break;
+    case 16: shift = shift_get(&shift_fast, 4); string_write_literal(w, "0x"); break;
+    case 32: shift = shift_get(&shift_fast, 5); break;
+    case 64: shift = shift_get(&shift_fast, 6); break;
     default: unreachable();
     }
 
     // Write from LSD to MSD.
     bit_count = count_bits(a);
     for (int bit_i = 0; bit_i < bit_count; bit_i += shift_fast) {
-        WORD bitset;
+        WORD bits;
         int bits_to_get;
-        char ch;
 
         // When we reach MSD we might not be able to read all bits.
-        bits_to_get = min_int(bit_count - bit_i, shift_fast);
+        bits_to_get = int_min(bit_count - bit_i, shift_fast);
 
         // We assume that the resulting bitfield can be converted.
-        bitset = bitfield_extract(a, bit_i, bits_to_get);
-        if (bitset >= cast(WORD)base) {
+        bits = bitfield_extract(a, bit_i, bits_to_get);
+        int counter = 0;
+        do {
             DIGIT digit;
-            int counter = 0;
-            while (bitset > 0) {
-                digit     = bitset & (base - 1);
-                ch       = DIGIT_TO_CHAR_TABLE[digit];
-                bitset >>= cast(WORD)shift;
-                counter += shift;
-                string_write_char_back(w, ch);
-            }
 
-            // Add leading zeroes for digits before MSD.
-            if (bits_to_get == shift_fast) {
-                while (counter < shift_fast) {
-                    counter += shift;
-                    string_write_char_back(w, '0');
-                }
+            digit = cast(DIGIT)(bits & (cast(WORD)base - 1));
+            bits >>= cast(WORD)shift;
+            counter += shift;
+            string_write_char_back(w, DIGIT_TO_CHAR_TABLE[digit]);
+        } while (bits > 0);
+
+        // Add leading zeroes for digits before MSD.
+        if (bit_i + shift_fast < bit_count) {
+            while (counter < shift_fast) {
+                counter += shift;
+                string_write_char_back(w, '0');
             }
-        } else {
-            ch = DIGIT_TO_CHAR_TABLE[bitset];
-            string_write_char_back(w, ch);
         }
     }
 }

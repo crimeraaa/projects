@@ -34,8 +34,8 @@ bigint_compare(lua_State *L, Compare_Fn cmp_bigint)
     const BigInt *a, *b;
     bool res;
 
-    a   = internal_ensure_bigint(L, 1);
-    b   = internal_ensure_bigint(L, 2);
+    a = internal_ensure_bigint(L, 1);
+    b = internal_ensure_bigint(L, 2);
     res = cmp_bigint(a, b);
     lua_pushboolean(L, res);
     return 1;
@@ -173,6 +173,7 @@ bigint_add_digit(lua_State *L, const BigInt *a, DIGIT b)
         //  where |a| < |b|
         if (internal_lt_digit_abs(a, b)) {
             dst->digits[0] = b - a->digits[0];
+            internal_clamp(dst);
         }
         // 1.2.) -(a - b) < 0
         //  where |a| > |b|

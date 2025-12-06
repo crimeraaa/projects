@@ -22,19 +22,19 @@ typedef uint64_t WORD;
  *  Using 1 is tempting, but risks overflow in some comparisons. */
 #define DIGIT_NAILS         2
 #define DIGIT_TYPE_BITS     (CHAR_BIT * sizeof(DIGIT))
-#define DIGIT_BITS          (DIGIT_TYPE_BITS - DIGIT_NAILS)
+#define DIGIT_SHIFT         (DIGIT_TYPE_BITS - DIGIT_NAILS)
+#define WORD_SHIFT          (DIGIT_SHIFT * 2)
 
-
-/** @brief base-`2**BITS`. */
-#define DIGIT_BASE          (1 << DIGIT_BITS)
-
-
-/** @brief Used to optimize conversion to base-10 strings. */
-#define DIGIT_BASE_DECIMAL  1000000000
+/** @brief base-`2**DIGIT_SHIFT`. */
+#define DIGIT_BASE          (1 << DIGIT_SHIFT)
 #define DIGIT_MASK          (DIGIT_BASE - 1)
 #define DIGIT_MAX           DIGIT_MASK
 
+/** @brief Used to optimize conversion to base-10 strings. */
+#define DIGIT_SHIFT_DECIMAL 9
 
+/** @brief base-`10**DIGIT_SHIFT_DECIMAL`. */
+#define DIGIT_BASE_DECIMAL  1000000000
 #define STUB(L, msg)    luaL_error(L, "%s:%d: %s", __FILE__, __LINE__, msg)
 
 enum Sign {
