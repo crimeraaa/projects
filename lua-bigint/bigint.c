@@ -110,8 +110,16 @@ static int
 bigint_add_bigint(lua_State *L, const BigInt *a, const BigInt *b)
 {
     BigInt *dst;
-    int max_used;
+    size_t max_used;
     bool a_is_neg, a_is_less;
+
+    if (internal_is_zero(a)) {
+        internal_new_copy(L, b);
+        return 1;
+    } else if (internal_is_zero(b)) {
+        internal_new_copy(L, a);
+        return 1;
+    }
 
     // 1.)   a  +   b
     // 2.) (-a) + (-b) == -(a + b)
@@ -161,7 +169,7 @@ static int
 bigint_add_digit(lua_State *L, const BigInt *a, DIGIT b)
 {
     BigInt *dst;
-    int max_used;
+    size_t max_used;
 
     // May overallocate by 1 digit, which is acceptable.
     max_used = a->len;
@@ -194,9 +202,18 @@ bigint_sub_digit(lua_State *L, const BigInt *a, DIGIT b);
 static int
 bigint_add_integer(lua_State *L, const BigInt *a, lua_Integer b)
 {
+    // Fast paths
+    if (internal_is_zero(a)) {
+        internal_new_from_integer(L, b);
+        return 1;
+    } else if (b == 0) {
+        internal_new_copy(L, a);
+        return 1;
+    }
+
     // 1.) a + b where 0 <= b and b < DIGIT_BASE
     if (integer_fits_digit_abs(b)) {
-        DIGIT b_abs = internal_integer_abs(b);
+        DIGIT b_abs = cast(DIGIT)internal_integer_abs(b);
         // 1.1.) a +   b
         // 1.2.) a + (-b) == a - |b|
         return (b >= 0 ? bigint_add_digit : bigint_sub_digit)(L, a, b_abs);
@@ -211,9 +228,21 @@ static int
 bigint_sub_bigint(lua_State *L, const BigInt *a, const BigInt *b)
 {
     BigInt *dst;
-    int max_used;
+    size_t max_used;
     Sign sign;
     bool a_is_neg;
+
+    // 0 - b = -b
+    if (internal_is_zero(a)) {
+        dst = internal_new_copy(L, b);
+        internal_neg(dst);
+        return 1;
+    }
+    // a - 0 = a
+    else if (internal_is_zero(b)) {
+        internal_new_copy(L, a);
+        return 1;
+    }
 
     a_is_neg = internal_is_neg(a);
     if (a->sign != b->sign) {
@@ -294,9 +323,21 @@ bigint_sub_digit(lua_State *L, const BigInt *a, DIGIT b)
 static int
 bigint_sub_integer(lua_State *L, const BigInt *a, lua_Integer b)
 {
+    // 0 - b = -b
+    if (internal_is_zero(a)) {
+        BigInt *dst = internal_new_from_integer(L, b);
+        internal_neg(dst);
+        return 1;
+    }
+    // a - b = a
+    else if (b == 0) {
+        internal_new_copy(L, a);
+        return 1;
+    }
+
     // 1.) a - b where 0 <= b and b < DIGIT_BASE
     if (integer_fits_digit_abs(b)) {
-        DIGIT b_abs = internal_integer_abs(b);
+        DIGIT b_abs = cast(DIGIT)internal_integer_abs(b);
         // 1.1.) a -   b
         // 1.2.) a - (-b) == a + |b|
         return (b >= 0 ? bigint_sub_digit : bigint_add_digit)(L, a, b_abs);
@@ -309,7 +350,12 @@ static int
 bigint_mul_bigint(lua_State *L, const BigInt *a, const BigInt *b)
 {
     BigInt *dst;
-    int max_used, min_used;
+    size_t max_used, min_used;
+
+    if (internal_is_zero(a) || internal_is_zero(b)) {
+        internal_new_from_integer(L, 0);
+        return 1;
+    }
 
     if (a->len < b->len) {
         internal_swap_ptr(&a, &b);
@@ -319,7 +365,7 @@ bigint_mul_bigint(lua_State *L, const BigInt *a, const BigInt *b)
     min_used  = b->len;
     dst       = internal_new(L, min_used + max_used + 1);
     dst->sign = (a->sign == b->sign) ? POSITIVE : NEGATIVE;
-    internal_mul_bigint_unsigned(dst, a, b);
+    internal_mul_bigint(dst, a, b);
     return 1;
 }
 
@@ -327,10 +373,13 @@ bigint_mul_bigint(lua_State *L, const BigInt *a, const BigInt *b)
 static int
 bigint_mul_integer(lua_State *L, const BigInt *a, lua_Integer b)
 {
-    if (integer_fits_digit_abs(b)) {
+    if (internal_is_zero(a) || b == 0) {
+        internal_new_from_integer(L, 0);
+        return 1;
+    } else if (integer_fits_digit_abs(b)) {
         BigInt *dst;
+        size_t used;
         DIGIT b_abs;
-        int used;
 
         used  = a->len;
         dst   = internal_new(L, used);
@@ -365,11 +414,14 @@ bigint_div_bigint(lua_State *L, const BigInt *a, const BigInt *b)
 static int
 bigint_div_integer(lua_State *L, const BigInt *a, lua_Integer b)
 {
-    if (integer_fits_digit_abs(b)) {
+    luaL_argcheck(L, b != 0, 2, "Division by zero");
+    if (internal_is_zero(a)) {
+        internal_new_from_integer(L, 0);
+        return 1;
+    } else if (integer_fits_digit_abs(b)) {
         BigInt *dst;
         DIGIT b_abs;
 
-        luaL_argcheck(L, b != 0, 2, "Division by zero");
         b_abs     = cast(DIGIT)internal_integer_abs(b);
         dst       = internal_new(L, a->len);
         dst->sign = (internal_is_pos(a) && b >= 0) ? POSITIVE : NEGATIVE;
