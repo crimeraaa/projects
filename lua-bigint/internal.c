@@ -535,12 +535,6 @@ internal_divmod_digit(BigInt *dst, const BigInt *a, DIGIT denominator)
 }
 
 static bool
-char_is_lower(char ch)
-{
-    return 'a' <= ch && ch <= 'z';
-}
-
-static bool
 char_is_space(char ch)
 {
     switch (ch) {
@@ -556,47 +550,37 @@ char_is_space(char ch)
     return false;
 }
 
+
+/** @brief Maps digits in the range `[0,36)` to their appropriate ASCII characters.
+ *
+ * @link https://www.rfc-editor.org/rfc/rfc4648.txt
+ */
 static char
-char_to_upper(char ch)
+digit_to_char(DIGIT digit)
 {
-    if (char_is_lower(ch)) {
-        return 'A' + (ch - 'a');
-    }
-    return ch;
+    static const char
+    DIGIT_TO_CHAR_TABLE[] = "0123456789abcdefghijklmnopqrstuvwxyz";
+
+    return DIGIT_TO_CHAR_TABLE[digit];
 }
 
-#define RADIX_TABLE_REVERSE_OFFSET  '+'
+static DIGIT
+char_to_digit(char ch, DIGIT base)
+{
+    DIGIT digit = DIGIT_MAX;
+    if ('0' <= ch && ch <= '9') {
+        digit = cast(DIGIT)(ch - '0');
+    } else if ('A' <= ch && ch <= 'Z') {
+        digit = cast(DIGIT)(ch - 'A' + 10);
+    } else if ('a' <= ch && ch <= 'z') {
+        digit = cast(DIGIT)(ch - 'a' + 10);
+    }
 
-
-/** @brief Maps digits in the range `[0,64)` to their appropriate ASCII characters.
- *
- * @link https://www.rfc-editor.org/rfc/rfc4648.txt
- */
-static const char
-DIGIT_TO_CHAR_TABLE[] = "0123456789"                                           \
-    "ABCDEFGHIJKLMNOPQRSTUVWXYZ"                                               \
-    "abcdefghijklmnopqrstuvwxyz"                                               \
-    "+/";
-
-
-/** @brief Maps ASCII digits in the range `['+'..'z']` to their appropriate
- *  digit values.
- *
- * @link https://www.rfc-editor.org/rfc/rfc4648.txt
- */
-static const uint8_t
-CHAR_TO_DIGIT_TABLE[] = {
-    0x3e, 0xff, 0xff, 0xff, 0x3f,                               // +,-./
-    0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, // 0123456789
-    0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,                   // :;<=>?@
-    0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f, 0x10, 0x11, 0x12, 0x13, // ABCDEFGHIJ
-    0x14, 0x15, 0x16, 0x17, 0x18, 0x19, 0x1a, 0x1b, 0x1c, 0x1d, // KLMNOPQRST
-    0x1e, 0x1f, 0x20, 0x21, 0x22, 0x23,                         // UVWXYZ
-    0xff, 0xff, 0xff, 0xff, 0xff, 0xff,                         // [\]^_`
-    0x24, 0x25, 0x26, 0x27, 0x28, 0x29, 0x2a, 0x2b, 0x2c, 0x2d, // abcdefghij
-    0x2e, 0x2f, 0x30, 0x31, 0x32, 0x33, 0x34, 0x35, 0x36, 0x37, // klmnopqrst
-    0x38, 0x39, 0x3a, 0x3b, 0x3c, 0x3d,                         // uvwxyz
-};
+    if (0 <= digit && digit < base) {
+        return digit;
+    }
+    return DIGIT_MAX;
+}
 
 static Sign
 string_get_sign(const char **s, size_t *s_len)
@@ -678,8 +662,7 @@ internal_new_from_lstring(lua_State *L, const char *s, size_t s_len, DIGIT base)
 
     // Count number of base-`base` digits in the string
     for (size_t i = 0; i < s_len; i += 1) {
-        size_t lut_i;
-        int digit;
+        DIGIT digit;
         char ch;
 
         ch = s[i];
@@ -687,19 +670,8 @@ internal_new_from_lstring(lua_State *L, const char *s, size_t s_len, DIGIT base)
             continue;
         }
 
-        // Can do case-insensitive conversion?
-        if (base <= 36 && char_is_lower(ch)) {
-            ch = char_to_upper(ch);
-        }
-
-        lut_i = cast(size_t)ch - cast(size_t)RADIX_TABLE_REVERSE_OFFSET;
-        if (lut_i >= count_of(CHAR_TO_DIGIT_TABLE)) {
-            luaL_error(L, "Non-digit character '%c'", cast(int)base, ch);
-            return NULL;
-        }
-
-        digit = cast(DIGIT)CHAR_TO_DIGIT_TABLE[lut_i];
-        if (digit == 0xff) {
+        digit = char_to_digit(ch, base);
+        if (digit == DIGIT_MAX) {
             luaL_error(L, "Invalid base-%d digit '%c'", cast(int)base, ch);
             return NULL;
         }
@@ -721,13 +693,8 @@ internal_new_from_lstring(lua_State *L, const char *s, size_t s_len, DIGIT base)
             continue;
         }
 
-        // Can do case-insensitive conversion?
-        if (base <= 36 && char_is_lower(ch)) {
-            ch = char_to_upper(ch);
-        }
-
         // Assumed to never fail by this point.
-        digit = cast(DIGIT)CHAR_TO_DIGIT_TABLE[ch - RADIX_TABLE_REVERSE_OFFSET];
+        digit = char_to_digit(ch, base);
 
         // dst *= base
         for (int i = 0; i < used; i += 1) {
@@ -877,7 +844,7 @@ string_write_digit(Writer *w, DIGIT digit, DIGIT base_fast, DIGIT base_slow)
 
         lsd = digit % base_fast;
         while (lsd > 0) {
-            string_write_char_back(w, DIGIT_TO_CHAR_TABLE[lsd % base_slow]);
+            string_write_char_back(w, digit_to_char(lsd % base_slow));
             lsd /= base_slow;
             written += 1;
         }
@@ -996,7 +963,7 @@ bitfield_extract(const BigInt *a, int bit_i, int bit_count)
     return bits;
 }
 
-/** @brief The the largest multiple of `shift` closest to `DIGIT_SHIFT` such
+/** @brief The the largest multiple of `shift` closest to `WORD_SHIFT` such
  *  that we we can read that many bits at once, reducing bigint calls. */
 static int
 shift_get(int *shift_fast, int shift)
@@ -1053,7 +1020,6 @@ internal_write_binary_string(Writer *w, const BigInt *a, DIGIT base)
     case 8:  shift = shift_get(&shift_fast, 3); string_write_literal(w, "0o"); break;
     case 16: shift = shift_get(&shift_fast, 4); string_write_literal(w, "0x"); break;
     case 32: shift = shift_get(&shift_fast, 5); break;
-    case 64: shift = shift_get(&shift_fast, 6); break;
     default: unreachable();
     }
 
@@ -1065,8 +1031,6 @@ internal_write_binary_string(Writer *w, const BigInt *a, DIGIT base)
 
         // When we reach MSD we might not be able to read all bits.
         bits_to_get = int_min(bit_count - bit_i, shift_fast);
-
-        // We assume that the resulting bitfield can be converted.
         bits = bitfield_extract(a, bit_i, bits_to_get);
         int counter = 0;
         do {
@@ -1075,7 +1039,7 @@ internal_write_binary_string(Writer *w, const BigInt *a, DIGIT base)
             digit = cast(DIGIT)(bits & (cast(WORD)base - 1));
             bits >>= cast(WORD)shift;
             counter += shift;
-            string_write_char_back(w, DIGIT_TO_CHAR_TABLE[digit]);
+            string_write_char_back(w, digit_to_char(digit));
         } while (bits > 0);
 
         // Add leading zeroes for digits before MSD.
@@ -1089,5 +1053,5 @@ internal_write_binary_string(Writer *w, const BigInt *a, DIGIT base)
 }
 
 // Macro cleanup
-#undef RADIX_TABLE_REVERSE_OFFSET
+#undef CHAR_TO_DIGIT_OFFSET
 #undef string_write_literal

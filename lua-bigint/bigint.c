@@ -410,7 +410,7 @@ bigint_tostring(lua_State *L)
     // Avoid `bigint.tostring(bigint)` or `bigint:tostring()`.
     a    = internal_ensure_bigint(L, 1);
     base = cast(DIGIT)luaL_optinteger(L, /*narg=*/2, /*def=*/10);
-    luaL_argcheck(L, 2 <= base && base <= 64,
+    luaL_argcheck(L, 2 <= base && base <= 36,
         /*numarg=*/2,
         /*extramsg=*/"Invalid base");
 
