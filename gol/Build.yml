@@ -1,0 +1,23 @@
+# https://taskfile.dev
+
+version: '3'
+
+tasks:
+  default:
+    cmds:
+      - task: run
+
+  run:
+    desc: Run the `gol` executable, building it unconditionally.
+    deps:
+      - task: build
+    cmds:
+      - '{{.OUT}} {{.CLI_ARGS}}'
+    interactive: true
+
+  build:
+    desc: Build the `gol` executable unconditionally.
+    cmds:
+      - mkdir -p ./bin
+      - '{{.CC}} {{.CC_FLAGS}} -o {{.OUT}} ./main.c'
+

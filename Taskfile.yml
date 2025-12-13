@@ -5,14 +5,14 @@ version: '3'
 vars:
   CC: clang
   CC_FLAGS: >-
-    -std=c11
+    -std=gnu11
     -g
     -Wall
     -Wextra
     -Werror
     -Wconversion
     -pedantic
-  # -fsanitize=address
+    -fsanitize=address
   # -I{{.TASKFILE_DIR}}
 
   # OUT: bin/bigint
@@ -35,6 +35,12 @@ includes:
     vars:
       OUT: ./bin/main
     dir: ./mem
+  
+  gol:
+    taskfile: ./gol/Build.yml
+    vars:
+      OUT: ./bin/gol
+    dir: ./gol
 
 tasks:
   fix-whitespace:
