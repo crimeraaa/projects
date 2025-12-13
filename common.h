@@ -62,6 +62,7 @@ unreachable(void) {}
 #   endif
 #endif /* unreachable */
 
+#ifndef NDEBUG
 #define assertfln(expr, fmt, ...)                                              \
 do {                                                                           \
     if (!(expr)) {                                                             \
@@ -70,6 +71,9 @@ do {                                                                           \
         trap();                                                                \
     }                                                                          \
 } while (0)
+#else
+#define assertfln(expr, fmt, ...)       ((void)0)
+#endif /* NDEBUG */
 
 #define assertln(expr, msg) assertfln(expr, "%s", msg)
 
