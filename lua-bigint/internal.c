@@ -397,7 +397,6 @@ internal_sub_bigint_unsigned(BigInt *dst, const BigInt *a, const BigInt *b)
         borrow = diff >> (DIGIT_TYPE_BITS - 1);
         dst->digits[i] = diff & DIGIT_MASK;
     }
-    dst->digits[i] = borrow;
     internal_clamp(dst);
 }
 
@@ -438,7 +437,6 @@ internal_sub_digit(BigInt *dst, const BigInt *a, DIGIT b)
         borrow = diff >> (DIGIT_TYPE_BITS - 1);
         dst->digits[i] = diff & DIGIT_MASK;
     }
-    dst->digits[used] = borrow;
     internal_clamp(dst);
 }
 
@@ -463,7 +461,7 @@ internal_mul_digit(BigInt *dst, const BigInt *a, DIGIT multiplier)
 }
 
 
-/** @brief Long division. `|a| * |b|` where #a >= #b.
+/** @brief Long multiplication. `|a| * |b|` where #a >= #b.
  *
  * @param dst Should alias neither `a` nor `b`.
  */

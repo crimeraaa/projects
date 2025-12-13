@@ -382,7 +382,7 @@ bigint_mul_integer(lua_State *L, const BigInt *a, lua_Integer b)
         DIGIT b_abs;
 
         used  = a->len;
-        dst   = internal_new(L, used);
+        dst   = internal_new(L, used + 1);
         b_abs = cast(DIGIT)internal_integer_abs(b);
 
         internal_mul_digit(dst, a, b_abs);

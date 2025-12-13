@@ -8,3 +8,5 @@ print(a)
 print(a:tostring(2))
 print(a:tostring(8))
 print(a:tostring(16))
+
+print(a - 999999999)
