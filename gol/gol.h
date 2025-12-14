@@ -2,15 +2,11 @@
 #define CONWAY_GAME_OF_LIFE_H
 
 #include <stdio.h>  // fprintf, fputc
-#include <stdlib.h> // system
 #include <string.h> // memset, memcpy
-#include <time.h>   // struct timespec, nanosleep
 
 #include "../common.h"
 
 
-/** @brief In milliseconds. */
-#define TICK_SPEED              100
 #define GRID_COLS               50
 #define GRID_ROWS               25
 #define GRID_AREA               (GRID_ROWS * GRID_COLS)

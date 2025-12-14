@@ -12,7 +12,7 @@ vars:
     -Werror
     -Wconversion
     -pedantic
-    -fsanitize=address
+  # -fsanitize=address
   # -I{{.TASKFILE_DIR}}
 
   # OUT: bin/bigint

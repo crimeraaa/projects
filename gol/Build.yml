@@ -19,5 +19,5 @@ tasks:
     desc: Build the `gol` executable unconditionally.
     cmds:
       - mkdir -p ./bin
-      - '{{.CC}} {{.CC_FLAGS}} -o {{.OUT}} ./main.c'
+      - '{{.CC}} {{.CC_FLAGS}} -Iinclude -o {{.OUT}} ./main.c lib/libraylib.a -lm'
 

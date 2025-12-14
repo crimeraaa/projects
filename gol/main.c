@@ -1,5 +1,7 @@
 #include "gol.c"
 
+#include "raylib.h"
+
 // Very unsafe function!
 static bool
 grid_copy_file(Grid *g, FILE *f)
@@ -35,21 +37,30 @@ invalid_cols:
     return true;
 }
 
-static void
-cell_stdio_writer(void *user_data, Cell_State state)
-{
-    FILE *f;
+#define SCALE        20
+#define TEXT_OFFSET  2
 
-    f = cast(FILE *)user_data;
+struct Point {int x, y;};
+typedef struct Point Point;
+
+static void
+cell_writer(void *user_data, Cell_State state)
+{
+    Point *pixel;
+
+    pixel = cast(Point *)user_data;
     switch (state) {
     case CELL_DEAD:
-        fputc(CELL_CHAR_DEAD, f);
+        DrawRectangleLines(pixel->x, pixel->y, SCALE, SCALE, DARKGRAY);
+        pixel->x += SCALE;
         break;
     case CELL_ALIVE:
-        fputc(CELL_CHAR_ALIVE, f);
+        DrawRectangle(pixel->x, pixel->y, SCALE, SCALE, WHITE);
+        pixel->x += SCALE;
         break;
     case CELL_WRITE_NEWLINE:
-        fputc('\n', f);
+        pixel->x  = 0;
+        pixel->y += SCALE;
         break;
     default:
         unreachable();
@@ -57,11 +68,26 @@ cell_stdio_writer(void *user_data, Cell_State state)
     }
 }
 
+static void
+render(Grid *g)
+{
+    ClearBackground(BLACK);
+    BeginDrawing();
+    {
+        const char *msg;
+        Point pixel = {0, TEXT_OFFSET * SCALE};
+
+        msg = TextFormat("FPS: %i", GetFPS());
+        DrawText(msg, /*posX=*/5, /*posY=*/5, /*fontSize=*/SCALE, WHITE);
+        grid_write(g, &cell_writer, &pixel);
+    }
+    EndDrawing();
+}
+
 int
 main(int argc, char *argv[])
 {
     Grid g;
-
     grid_init(&g);
     if (argc > 1) {
         const char *s;
@@ -88,17 +114,15 @@ main(int argc, char *argv[])
         }
     }
 
-    system("clear");
-
-    struct timespec time_pause;
-    time_pause.tv_sec   = 0;
-    time_pause.tv_nsec  = TICK_SPEED * 1000000; // msecs * 1e6
-
-    while (g.alive != 0) {
-        grid_write(&g, &cell_stdio_writer, stdout);
+    InitWindow(/*width=*/  GRID_COLS * SCALE,
+               /*height=*/(GRID_ROWS + TEXT_OFFSET) * SCALE,
+               "Conway's Game Of Life");
+    SetTargetFPS(5);
+    render(&g);
+    while (!WindowShouldClose()) {
         grid_update(&g);
-        nanosleep(&time_pause, /*rem=*/NULL);
-        system("clear");
+        render(&g);
     }
+    CloseWindow();
     return 0;
 }
