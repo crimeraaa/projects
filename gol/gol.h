@@ -5,7 +5,6 @@
 #include <stdlib.h> // system
 #include <string.h> // memset, memcpy
 #include <time.h>   // struct timespec, nanosleep
-#include <unistd.h> // pause
 
 #include "../common.h"
 
@@ -43,5 +42,26 @@ struct Grid {
 typedef struct Grid Grid;
 typedef enum Cell_State Cell_State;
 
+void
+grid_init(Grid *g);
+
+void
+grid_update(Grid *g);
+
+void
+grid_copy(Grid *dst, const Grid *src);
+
+/** @brief `return g[row][col]`. */
+Cell_State
+grid_at(const Grid *g, size_t row, size_t col);
+
+
+/** @brief `g[row][col] = next_state`. */
+void
+grid_insert(Grid *g, size_t row, size_t col, Cell_State next_state);
+
+
+void
+grid_write(const Grid *g, Cell_Writer writer_fn, void *writer_data);
 
 #endif /* CONWAY_GAME_OF_LIFE_H */
