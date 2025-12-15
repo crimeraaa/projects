@@ -4,7 +4,7 @@
 #include <lua.h>
 #include <lauxlib.h>
 
-#include "../common.h"
+#include <projects.h>
 
 
 /** @brief Must be able to hold the range `[0, (BASE-1)*2]`. */

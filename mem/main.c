@@ -5,7 +5,7 @@
 #include "arena.c"
 #include "stack.c"
 
-#include "../utils/strings.c"
+#include <utils/strings.c>
 
 static Allocator
 temp_allocator;

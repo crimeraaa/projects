@@ -1,8 +1,8 @@
 #ifndef UTILS_STRINGS_H
 #define UTILS_STRINGS_H
 
-#include "../common.h"
-#include "../mem/allocator.h"
+#include <projects.h>
+#include <mem/allocator.h>
 
 typedef struct String String;
 struct String {

@@ -3,12 +3,12 @@
 #include <stdlib.h> // realloc, free
 
 // bigint
-#include "../mem/allocator.c"
-#include "../utils/strings.c"
+#include <mem/allocator.c>
+#include <utils/strings.c>
 #include "bigint.c"
 
 // main
-#include "../mem/arena.c"
+#include <mem/arena.c>
 #include "lexer.c"
 #include "parser.c"
 

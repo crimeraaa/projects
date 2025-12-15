@@ -1,7 +1,7 @@
 #ifndef MEM_ALLOCATOR_H
 #define MEM_ALLOCATOR_H
 
-#include "../common.h"
+#include <projects.h>
 
 #ifndef MEM_DEFAULT_ALIGNMENT
 #define MEM_DEFAULT_ALIGNMENT alignof(max_align_t)

@@ -4,7 +4,7 @@
 #include <stddef.h>
 #include <stdbool.h>
 
-#include "../utils/strings.h"
+#include <utils/strings.h>
 
 typedef enum {
     TOKEN_UNKNOWN,

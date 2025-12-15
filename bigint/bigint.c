@@ -2,7 +2,7 @@
 #include <string.h> // strlen
 
 #include "bigint.h"
-#include "../utils/strings.h"
+#include <utils/strings.h>
 
 void
 bigint_init(BigInt *b, Allocator allocator)
@@ -17,7 +17,7 @@ bigint_init(BigInt *b, Allocator allocator)
 static BigInt_Error
 bigint_init_len_cap(BigInt *b, int len, int cap, Allocator allocator)
 {
-    b->data = array_make(BigInt_Digit, cap, allocator);
+    b->data = array_make(BigInt_Digit, cast(size_t)cap, allocator);
     if (b->data == NULL) {
         return BIGINT_ERROR_MEMORY;
     }

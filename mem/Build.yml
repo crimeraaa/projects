@@ -17,4 +17,4 @@ tasks:
       - '{{.CC}} {{.CC_FLAGS}} -o {{.OUT}} ./main.c'
     sources:
       - ./*.[ch]
-      - ../common.h
+      - ../projects.h

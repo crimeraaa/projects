@@ -1,7 +1,7 @@
 #ifndef BIGINT_H
 #define BIGINT_H
 
-#include "../mem/allocator.h"
+#include <mem/allocator.h>
 
 // === CONFIGUATION ======================================================== {{{
 

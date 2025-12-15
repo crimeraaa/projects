@@ -4,14 +4,8 @@
 #include <stdio.h>  // fprintf, fputc
 #include <string.h> // memset, memcpy
 
-#include "../common.h"
+#include <mem/allocator.h>
 
-
-#define GRID_COLS               50
-#define GRID_ROWS               25
-#define GRID_AREA               (GRID_ROWS * GRID_COLS)
-#define CELL_CHAR_ALIVE         'E'
-#define CELL_CHAR_DEAD          '-'
 #define GRID_LIMB_TYPE          uint64_t
 #define GRID_LIMB_TYPE_BITS     (sizeof(GRID_LIMB_TYPE) * CHAR_BIT)
 #define GRID_LIMB_SHIFT         GRID_LIMB_TYPE_BITS
@@ -28,24 +22,35 @@ typedef GRID_LIMB_TYPE GRID_LIMB;
 typedef void (*Cell_Writer)(void *user_data, enum Cell_State state);
 
 struct Grid {
+    size_t rows, cols;
+
     /* How many `CELL_ALIVE` are in `cells[]`? */
     int alive;
 
     /* Packed `Cell_State`. */
-    GRID_LIMB limbs[GRID_AREA / GRID_LIMB_TYPE_BITS + 1];
+    GRID_LIMB limbs[];
 };
 
 typedef struct Grid Grid;
 typedef enum Cell_State Cell_State;
 
+Grid *
+grid_make(size_t rows, size_t cols, Allocator allocator);
+
+Grid *
+grid_make_copy(const Grid *src, Allocator allocator);
+
 void
 grid_init(Grid *g);
 
 void
-grid_update(Grid *g);
+grid_update(Grid *g, Grid *scratch);
 
+
+/** @brief Deep copy `*dst = *src`, assuming already adequate sizes. */
 void
-grid_copy(Grid *dst, const Grid *src);
+grid_deep_copy(Grid *dst, const Grid *src);
+
 
 /** @brief `return g[row][col]`. */
 Cell_State

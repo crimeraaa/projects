@@ -1,48 +1,86 @@
 #include "gol.h"
 
-void
-grid_init(Grid *g)
+Grid *
+grid_make(size_t rows, size_t cols, Allocator allocator)
 {
+    Grid *g;
+    size_t limb_count, array_size;
+
+    limb_count = ((rows * cols) / GRID_LIMB_TYPE_BITS) + 1;
+    array_size = sizeof(g->limbs[0]) * limb_count;
+
+    // Assume success
+    g        = cast(Grid *)mem_alloc(sizeof(*g) + array_size, allocator);
+    g->rows  = rows;
+    g->cols  = cols;
     g->alive = 0;
-    memset(g->limbs, CELL_DEAD, sizeof(g->limbs));
+    memset(g->limbs, 0, array_size);
+    return g;
+}
+
+Grid *
+grid_make_copy(const Grid *src, Allocator allocator)
+{
+    Grid *dst;
+
+    // Assume success
+    dst = grid_make(src->rows, src->cols, allocator);
+    grid_deep_copy(dst, src);
+    return dst;
 }
 
 void
-grid_update(Grid *g)
+grid_deep_copy(Grid *dst, const Grid *src)
 {
-    Grid scratch;
-    grid_copy(&scratch, g);
-    for (size_t row = 0; row < GRID_ROWS; row += 1) {
+    size_t limb_count;
+
+    limb_count = ((src->rows * src->cols) / GRID_LIMB_TYPE_BITS) + 1;
+    dst->rows  = src->rows;
+    dst->cols  = src->cols;
+    dst->alive = src->alive;
+    memcpy(dst->limbs, src->limbs, sizeof(dst->limbs[0]) * limb_count);
+}
+
+void
+grid_update(Grid *g, Grid *scratch)
+{
+    size_t row_count, col_count;
+
+    row_count = g->rows;
+    col_count = g->cols;
+    grid_deep_copy(scratch, g);
+
+    for (size_t row = 0; row < row_count; row += 1) {
         size_t north, south;
 
-        north = (row - 1 + GRID_ROWS) % GRID_ROWS;
-        south = (row + 1 + GRID_ROWS) % GRID_ROWS;
-        for (size_t col = 0; col < GRID_COLS; col += 1) {
+        north = (row - 1 + row_count) % row_count;
+        south = (row + 1 + row_count) % row_count;
+        for (size_t col = 0; col < col_count; col += 1) {
             size_t west, east;
-            int count_neighbors_alive;
+            int alive_neighbor_count;
 
-            west = (col - 1 + GRID_COLS) % GRID_COLS;
-            east = (col + 1 + GRID_COLS) % GRID_COLS;
+            west = (col - 1 + col_count) % col_count;
+            east = (col + 1 + col_count) % col_count;
 
             // Unrolled loop of iterating through all 8 neighbors.
-            count_neighbors_alive =
-                  cast(int)(grid_at(g, north, west))
-                + cast(int)(grid_at(g, north, col))
-                + cast(int)(grid_at(g, north, east))
-                + cast(int)(grid_at(g, row,   west))
-                + cast(int)(grid_at(g, row,   east))
-                + cast(int)(grid_at(g, south, west))
-                + cast(int)(grid_at(g, south, col))
-                + cast(int)(grid_at(g, south, east));
+            alive_neighbor_count =
+                  cast(int)grid_at(g, north, west)
+                + cast(int)grid_at(g, north, col)
+                + cast(int)grid_at(g, north, east)
+                + cast(int)grid_at(g, row,   west)
+                + cast(int)grid_at(g, row,   east)
+                + cast(int)grid_at(g, south, west)
+                + cast(int)grid_at(g, south, col)
+                + cast(int)grid_at(g, south, east);
 
-            switch (count_neighbors_alive) {
+            switch (alive_neighbor_count) {
             // 1.) Any cell with fewer than 2 live neighbors dies.
             case 0:
             case 1:
             // 3.) Any live cell with more than 3 live neighbors dies,
             // as if by overpopulation.
             default:
-                grid_insert(&scratch, row, col, CELL_DEAD);
+                grid_insert(scratch, row, col, CELL_DEAD);
                 break;
 
             // 2.) Any live cell with 2 or 3 live neighbors live on to the
@@ -53,20 +91,12 @@ grid_update(Grid *g)
             // 4.) Any dead cell with exactly 3 live neighbors becomes
             // a live cell, as if by reproduction.
             case 3:
-                grid_insert(&scratch, row, col, CELL_ALIVE);
+                grid_insert(scratch, row, col, CELL_ALIVE);
                 break;
             }
         }
     }
-    grid_copy(g, &scratch);
-}
-
-
-void
-grid_copy(Grid *dst, const Grid *src)
-{
-    dst->alive = src->alive;
-    memcpy(dst->limbs, src->limbs, sizeof(dst->limbs));
+    grid_deep_copy(g, scratch);
 }
 
 Cell_State
@@ -75,11 +105,11 @@ grid_at(const Grid *g, size_t row, size_t col)
     GRID_LIMB mask;
     size_t cell_index, limb_index, bit_index;
 
-    assertfln(row < GRID_ROWS && col < GRID_COLS,
+    assertfln(row < g->rows && col < g->cols,
         "Invalid index: cells[row=%zu][col=%zu]", row, col);
 
     // Column major.
-    cell_index = (row * GRID_COLS) + col;
+    cell_index = (row * g->cols) + col;
     limb_index = cell_index / GRID_LIMB_SHIFT;
     bit_index  = cell_index % GRID_LIMB_SHIFT;
     mask       = (cast(GRID_LIMB)1 << cast(GRID_LIMB)bit_index);
@@ -96,11 +126,11 @@ grid_insert(Grid *g, size_t row, size_t col, Cell_State next_state)
     size_t cell_index, limb_index, bit_index;
     Cell_State prev_state;
 
-    assertfln(row < GRID_ROWS && col < GRID_COLS,
+    assertfln(row < g->rows && col < g->cols,
         "Invalid index: cells[row=%zu][col=%zu]", row, col);
 
     // Column major.
-    cell_index = (row * GRID_COLS) + col;
+    cell_index = (row * g->cols) + col;
     limb_index = cell_index / GRID_LIMB_SHIFT;
     bit_index  = cell_index % GRID_LIMB_SHIFT;
     mask       = (cast(GRID_LIMB)1 << cast(GRID_LIMB)bit_index);
@@ -134,8 +164,12 @@ grid_insert(Grid *g, size_t row, size_t col, Cell_State next_state)
 void
 grid_write(const Grid *g, Cell_Writer writer_fn, void *writer_data)
 {
-    for (size_t row = 0; row < GRID_ROWS; row += 1) {
-        for (size_t col = 0; col < GRID_COLS; col += 1) {
+    size_t row_count, col_count;
+
+    row_count = g->rows;
+    col_count = g->cols;
+    for (size_t row = 0; row < row_count; row += 1) {
+        for (size_t col = 0; col < col_count; col += 1) {
             Cell_State state;
 
             state = grid_at(g, row, col);
