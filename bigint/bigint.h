@@ -48,10 +48,10 @@ struct BigInt {
     BigInt_Digit *data;
 
     // How many digits are validly indexable in `data`.
-    int len;
+    size_t len;
 
     // How many digits are allocated for in `data`.
-    int cap;
+    size_t cap;
 
     BigInt_Sign sign;
 

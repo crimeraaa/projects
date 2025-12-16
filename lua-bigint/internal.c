@@ -243,12 +243,12 @@ internal_cmp_bigint(const BigInt *a, const BigInt *b)
     }
     // 3.) Same signs and same lengths. Compare digits from MSD to LSD.
     else {
-        for (size_t i = a->len; i > 0; i -= 1) {
-            size_t i2 = i - 1;
-            if (a->digits[i2] < b->digits[i2]) {
+        for (size_t iter = a->len; iter > 0; iter -= 1) {
+            size_t i = iter - 1;
+            if (a->digits[i] < b->digits[i]) {
                 cmp = LESS;
                 goto not_equal;
-            } else if (a->digits[i2] > b->digits[i2]) {
+            } else if (a->digits[i] > b->digits[i]) {
                 cmp = GREATER;
                 goto not_equal;
             }
@@ -293,11 +293,11 @@ internal_cmp_bigint_abs(const BigInt *a, const BigInt *b)
         return (a->len < b->len) ? LESS : GREATER;
     }
 
-    for (size_t i = a->len; i > 0; i -= 1) {
-        size_t i2 = i - 1;
-        if (a->digits[i2] < b->digits[i2]) {
+    for (size_t iter = a->len; iter > 0; iter -= 1) {
+        size_t i = iter - 1;
+        if (a->digits[i] < b->digits[i]) {
             return LESS;
-        } else if (a->digits[i2] > b->digits[i2]) {
+        } else if (a->digits[i] > b->digits[i]) {
             return GREATER;
         }
     }
@@ -473,15 +473,20 @@ internal_mul_bigint(BigInt *restrict dst, const BigInt *a, const BigInt *b)
     max_used = a->len;
     min_used = b->len;
     for (size_t b_i = 0; b_i < min_used; b_i += 1) {
-        WORD multiplier, prod;
+        WORD multiplier;
         DIGIT carry = 0;
 
         multiplier = cast(WORD)b->digits[b_i];
         // This inner loop is what causes the N**2 complexity.
         for (size_t a_i = 0; a_i < max_used; a_i += 1) {
+            WORD prod;
+
+            // prod   = a[i] * b[i] + carry
+            // carry  = prod / DIGIT_BASE
+            // dst[i] = prod % DIGIT_BASE
             prod  = cast(WORD)a->digits[a_i] * multiplier + cast(WORD)carry;
             carry = cast(DIGIT)(prod >> DIGIT_SHIFT);
-            dst->digits[a_i + b_i] += cast(DIGIT)(prod & DIGIT_SHIFT);
+            dst->digits[a_i + b_i] += cast(DIGIT)(prod & DIGIT_MASK);
         }
         dst->digits[b_i + max_used] += carry;
     }
@@ -502,17 +507,15 @@ internal_divmod_digit(BigInt *dst, const BigInt *a, DIGIT denominator)
     WORD carry = 0;
 
     // Divide MSD to LSD.
-    for (size_t i = a->len; i > 0; i -= 1) {
-        size_t i2;
-        DIGIT digit = 0;
-
-        i2 = i - 1;
+    for (size_t iter = a->len; iter > 0; iter -= 1) {
+        size_t i     = iter - 1;
+        DIGIT  digit = 0;
 
         // carry *= base where base is a power of 2.
         carry <<= DIGIT_SHIFT;
 
         // carry += a[i] since the lower `DIGIT` bits of carry are all 0.
-        carry |= cast(WORD)a->digits[i2];
+        carry |= cast(WORD)a->digits[i];
         if (carry >= cast(WORD)denominator) {
             // dst[i] will be the portion of `carry` that fits.
             digit = cast(DIGIT)(carry / cast(WORD)denominator);
@@ -521,7 +524,7 @@ internal_divmod_digit(BigInt *dst, const BigInt *a, DIGIT denominator)
             carry -= cast(WORD)digit * cast(WORD)denominator;
         }
 
-        dst->digits[i2] = digit;
+        dst->digits[i] = digit;
     }
 
     internal_clamp(dst);

@@ -15,9 +15,9 @@ bigint_init(BigInt *b, Allocator allocator)
 }
 
 static BigInt_Error
-bigint_init_len_cap(BigInt *b, int len, int cap, Allocator allocator)
+bigint_init_len_cap(BigInt *b, size_t len, size_t cap, Allocator allocator)
 {
-    b->data = array_make(BigInt_Digit, cast(size_t)cap, allocator);
+    b->data = array_make(BigInt_Digit, cap, allocator);
     if (b->data == NULL) {
         return BIGINT_ERROR_MEMORY;
     }
@@ -29,7 +29,7 @@ bigint_init_len_cap(BigInt *b, int len, int cap, Allocator allocator)
 }
 
 static BigInt_Error
-bigint_init_len(BigInt *b, int len, Allocator allocator)
+bigint_init_len(BigInt *b, size_t len, Allocator allocator)
 {
     return bigint_init_len_cap(b, len, len, allocator);
 }
@@ -38,7 +38,7 @@ bigint_init_len(BigInt *b, int len, Allocator allocator)
 /** @brief Count the number of base-`base` digits in `value`.
  *  Assumes that the original value was positive to begin with. */
 static int
-bigint_count_digits(uintmax_t value, int base)
+internal_count_digits(uintmax_t value, int base)
 {
     // The below loop will never start.
     if (value == 0) {
@@ -59,19 +59,25 @@ bigint_count_digits(uintmax_t value, int base)
 /** @brief Workhorse function. Do not expose as `intmax_t` is a nightmare for APIs.
  * See: https://thephd.dev/intmax_t-hell-c++-c */
 static BigInt_Error
-bigint_init_int_impl(BigInt *b, intmax_t value, Allocator allocator)
+bigint_init_any_int(BigInt *b, intmax_t value, Allocator allocator)
 {
-    b->sign = (value >= 0) ? BIGINT_POSITIVE : BIGINT_NEGATIVE;
+    uintmax_t value_abs;
+    BigInt_Error err;
+    size_t digit_count;
+
+    // Value checking.
+    value_abs = (value >= 0) ? cast(uintmax_t)value : -cast(uintmax_t)value;
+    b->sign   = (value >= 0) ? BIGINT_POSITIVE : BIGINT_NEGATIVE;
     if (b->sign == BIGINT_NEGATIVE) {
         // Concept check: -1234 % 10 == 6; We do not want this!
         value = -value;
     }
 
-    int n_digits = bigint_count_digits(value, BIGINT_DIGIT_BASE);
-    BigInt_Error err = bigint_init_len_cap(b, n_digits, n_digits, allocator);
+    digit_count = cast(size_t)internal_count_digits(value_abs, BIGINT_DIGIT_BASE);
+    err  = bigint_init_len_cap(b, digit_count, digit_count, allocator);
     if (err) return err;
 
-    for (int i = 0; i < n_digits; i++) {
+    for (size_t i = 0; i < digit_count; i++) {
         // Get the (current) least significant digit.
         // Concept check: 1234 % 10 == 4
         b->data[i] = cast(BigInt_Digit)(value % BIGINT_DIGIT_BASE);
@@ -86,7 +92,7 @@ bigint_init_int_impl(BigInt *b, intmax_t value, Allocator allocator)
 BigInt_Error
 bigint_init_int(BigInt *b, int value, Allocator allocator)
 {
-    return bigint_init_int_impl(b, cast(intmax_t)value, allocator);
+    return bigint_init_any_int(b, cast(intmax_t)value, allocator);
 }
 
 static BigInt_Sign
@@ -188,7 +194,7 @@ bigint_clear(BigInt *b)
 }
 
 static bool
-bigint_resize(BigInt *b, int n)
+bigint_resize(BigInt *b, size_t n)
 {
     if (n > b->cap) {
         BigInt_Digit *ptr = array_resize(BigInt_Digit, b->data, b->cap, n, b->allocator);
@@ -215,11 +221,11 @@ bigint_copy(BigInt *dst, const BigInt *src)
     dst->allocator = src->allocator;
     dst->sign      = src->sign;
 
-    int len = src->len;
+    size_t len = src->len;
     if (!bigint_resize(dst, len)) {
         return BIGINT_ERROR_MEMORY;
     }
-    for (int i = 0; i < len; i += 1) {
+    for (size_t i = 0; i < len; i += 1) {
         dst->data[i] = src->data[i];
     }
     return BIGINT_OK;
@@ -292,7 +298,7 @@ bigint_set_base_lstring(BigInt *dst, const char *data, size_t len, int base)
         int digit = char_to_int(ch, base);
         if (digit != -1) {
             bigint_mul_digit(dst, dst, cast(BigInt_Digit)base);
-            bigint_add_digit(dst, dst, digit);
+            bigint_add_digit(dst, dst, cast(BigInt_Digit)digit);
         } else {
             err = BIGINT_ERROR_DIGIT;
 fail:
@@ -336,7 +342,7 @@ bigint_digit_length_in_base(int base)
     case 16: return BIGINT_DIGIT_BASE16_LENGTH;
     }
     // Always works, but marginally slower- not O(1) time.
-    return bigint_count_digits(BIGINT_DIGIT_MAX, base);
+    return internal_count_digits(BIGINT_DIGIT_MAX, base);
 }
 
 size_t
@@ -359,13 +365,13 @@ bigint_base_string_length(const BigInt *b, int base)
     case 16: n_chars += 2; break;
     }
 
-    int msd_index = b->len - 1;
+    size_t msd_index = b->len - 1;
 
     // MSD has variable width with no leading zeroes.
-    n_chars += bigint_count_digits(b->data[msd_index], base);
+    n_chars += cast(size_t)internal_count_digits(b->data[msd_index], base);
 
     // Beyond MSD, all remaining digits have fixed width.
-    n_chars += (b->len - 1) * bigint_digit_length_in_base(base);
+    n_chars += (b->len - 1) * cast(size_t)bigint_digit_length_in_base(base);
     return n_chars;
 }
 
@@ -438,14 +444,14 @@ bigint_to_base_lstring(const BigInt *src,
     }
 
     // Write the MSD. It will never have leading zeroes.
-    int msd_index = src->len - 1;
+    size_t msd_index = src->len - 1;
     if (!bigint_string_append_digit(&sb, src->data[msd_index], base)) {
         goto fail;
     }
 
     // Write everything past the MSD. They may have leading zeroes.
-    for (int i = msd_index - 1; i >= 0; i -= 1) {
-        BigInt_Digit digit = src->data[i];
+    for (size_t i = msd_index; i > 0; i -= 1) {
+        BigInt_Digit digit = src->data[i - 1];
 
         // For each digit, write its base-10 representation from most-to-least
         // significant using the current maximum place value (`10**n`).
@@ -476,23 +482,25 @@ fail:
 static BigInt_Error
 bigint_add_unsigned(BigInt *dst, const BigInt *a, const BigInt *b)
 {
+    size_t max_used, min_used, i = 0;
+    BigInt_Digit carry = 0;
+
     // Swap so we can assume a >= b (loosely)
     if (a->len < b->len) {
         bigint_swap_ptr(&a, &b);
     }
 
-    int max_used = a->len;
-    int min_used = b->len;
+    max_used = a->len;
+    min_used = b->len;
     if (!bigint_resize(dst, max_used + 1)) {
         return BIGINT_ERROR_MEMORY;
     }
 
-    BigInt_Digit carry = 0;
-    int i = 0;
-
     // Add up the digit places common to both numbers.
     for (; i < min_used; i += 1) {
-        BigInt_Digit sum = a->data[i] + b->data[i] + carry;
+        BigInt_Digit sum;
+
+        sum = a->data[i] + b->data[i] + carry;
         if (sum > BIGINT_DIGIT_MAX) {
             sum -= BIGINT_DIGIT_BASE;
             // Notice how whenever we carry in addition, it is only 1 at most.
@@ -507,7 +515,9 @@ bigint_add_unsigned(BigInt *dst, const BigInt *a, const BigInt *b)
 
     // Copy over unadded digit places, propagating the carry.
     for (; i < max_used; i += 1) {
-        BigInt_Digit sum = a->data[i] + carry;
+        BigInt_Digit sum;
+
+        sum = a->data[i] + carry;
         if (sum > BIGINT_DIGIT_MAX) {
             sum -= BIGINT_DIGIT_BASE;
             carry = 1;
@@ -527,14 +537,14 @@ bigint_add_unsigned(BigInt *dst, const BigInt *a, const BigInt *b)
 static BigInt_Error
 bigint_sub_unsigned(BigInt *dst, const BigInt *a, const BigInt *b)
 {
-    int max_used = a->len;
-    int min_used = b->len;
+    size_t max_used, min_used, i = 0;
+    BigInt_Word borrow = 0;
+
+    max_used = a->len;
+    min_used = b->len;
     if (!bigint_resize(dst, max_used + 1)) {
         return BIGINT_ERROR_MEMORY;
     }
-
-    BigInt_Word borrow = 0;
-    int i = 0;
 
     // Subtract the digit places common to both `a` and `b`, propagating the
     // carry as a negative offset.
@@ -566,7 +576,7 @@ bigint_sub_unsigned(BigInt *dst, const BigInt *a, const BigInt *b)
         } else {
             borrow = 0;
         }
-        dst->data[i] = diff;
+        dst->data[i] = cast(BigInt_Digit)diff;
     }
 
     dst->data[max_used] = cast(BigInt_Digit)borrow;
@@ -651,12 +661,13 @@ bigint_sub(BigInt *dst, const BigInt *a, const BigInt *b)
 BigInt_Error
 bigint_mul(BigInt *dst, const BigInt *a, const BigInt *b)
 {
+    size_t max_used, min_used;
     if (a->len < b->len) {
         bigint_swap_ptr(&a, &b);
     }
 
-    int max_used = a->len;
-    int min_used = b->len;
+    max_used = a->len;
+    min_used = b->len;
 
     // Use a temporary to avoid aliasing issues as we iterate both `a` and `b`
     // multiple times.
@@ -671,10 +682,10 @@ bigint_mul(BigInt *dst, const BigInt *a, const BigInt *b)
     tmp.sign = (a->sign == b->sign) ? BIGINT_POSITIVE : BIGINT_NEGATIVE;
 
     // long multiplication
-    for (int b_i = 0; b_i < min_used; b_i += 1) {
+    for (size_t b_i = 0; b_i < min_used; b_i += 1) {
         BigInt_Word carry = 0;
         BigInt_Word mult = cast(BigInt_Word)b->data[b_i];
-        for (int a_i = 0; a_i < max_used; a_i += 1) {
+        for (size_t a_i = 0; a_i < max_used; a_i += 1) {
             BigInt_Word prod = mult * cast(BigInt_Word)a->data[a_i] + carry;
             carry = prod / BIGINT_DIGIT_BASE;
             tmp.data[b_i + a_i] += cast(BigInt_Digit)(prod % BIGINT_DIGIT_BASE);
@@ -713,13 +724,13 @@ bigint_mod(BigInt *dst, const BigInt *a, const BigInt *b)
 static BigInt_Error
 bigint_add_digit_unsigned(BigInt *dst, const BigInt *a, BigInt_Digit b)
 {
-    int used = a->len;
+    size_t used = a->len;
     if (!bigint_resize(dst, used + 1)) {
         return BIGINT_ERROR_MEMORY;
     }
 
     BigInt_Digit carry = b;
-    for (int i = 0; i < used; i++) {
+    for (size_t i = 0; i < used; i++) {
         BigInt_Digit sum = a->data[i] + carry;
         if (sum > BIGINT_DIGIT_MAX) {
             sum -= BIGINT_DIGIT_BASE;
@@ -742,13 +753,13 @@ bigint_add_digit_unsigned(BigInt *dst, const BigInt *a, BigInt_Digit b)
 static BigInt_Error
 bigint_sub_digit_unsigned(BigInt *dst, const BigInt *a, BigInt_Digit b)
 {
-    int used = a->len;
+    size_t used = a->len;
     if (!bigint_resize(dst, used + 1)) {
         return BIGINT_ERROR_MEMORY;
     }
 
     BigInt_Digit borrow = b;
-    for (int i = 0; i < used; i += 1) {
+    for (size_t i = 0; i < used; i += 1) {
         BigInt_Word diff = cast(BigInt_Word)a->data[i] - cast(BigInt_Word)borrow;
         if (diff < 0) {
             borrow = 1;
@@ -756,7 +767,7 @@ bigint_sub_digit_unsigned(BigInt *dst, const BigInt *a, BigInt_Digit b)
         } else {
             borrow = 0;
         }
-        dst->data[i] = diff;
+        dst->data[i] = cast(BigInt_Digit)diff;
         if (borrow == 0) {
             break;
         }
@@ -829,7 +840,7 @@ bigint_sub_digit(BigInt *dst, const BigInt *a, BigInt_Digit b)
     if (bigint_lt_digit_abs(a, b)) {
         bigint_resize(dst, a->len + 1);
         BigInt_Word diff = b - a->data[0];
-        dst->data[0] = diff;
+        dst->data[0] = cast(BigInt_Digit)diff;
         bigint_neg(dst, dst);
         return bigint_clamp(dst);
     }
@@ -847,7 +858,8 @@ static BigInt_Error
 bigint_mul_digit_unsigned(BigInt *dst, const BigInt *a, BigInt_Digit b)
 {
     // Save in case `dst` aliases `a`
-    int used = a->len;
+    size_t used = a->len;
+    BigInt_Word carry = 0;
 
     // Add 1 because multiplication results in at most 1 extra digit.
     // Concept check (base-10): 9*9 = 81
@@ -855,8 +867,7 @@ bigint_mul_digit_unsigned(BigInt *dst, const BigInt *a, BigInt_Digit b)
         return BIGINT_ERROR_MEMORY;
     }
 
-    BigInt_Word carry = 0;
-    for (int i = 0; i < used; i++) {
+    for (size_t i = 0; i < used; i++) {
         BigInt_Word prod = cast(BigInt_Word)a->data[i] * cast(BigInt_Word)b;
         // Adjust for any previous carries.
         prod += carry;
@@ -947,7 +958,8 @@ bigint_compare(const BigInt *a, const BigInt *b)
     }
 
     // 3.) Same signs and same lengths are "roughly" equal. Compare MSD to LSD.
-    for (int i = a->len - 1; i >= 0; i -= 1) {
+    for (size_t iter = a->len; iter > 0; iter -= 1) {
+        size_t i = iter - 1;
         // 2.1.) |a[i]| < |b[i]|
         //
         // Concept check:   2  <   3
@@ -975,7 +987,8 @@ bigint_compare_abs(const BigInt *a, const BigInt *b)
     }
 
     // 2.) Same lengths. Do not consider signedness. Compare MSD to LSD.
-    for (int i = a->len - 1; i >= 0; i -= 1) {
+    for (size_t it = a->len; it > 0; it -= 1) {
+        size_t i = it - 1;
         if (a->data[i] < b->data[i]) {
             return BIGINT_LESS;
         }
