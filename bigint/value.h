@@ -1,7 +1,8 @@
 #ifndef BIGINT_VALUE_H
 #define BIGINT_VALUE_H
 
-#include "bigint.h"
+// #include "bigint.h"
+#include "i128.h"
 
 typedef enum {
     VALUE_BOOLEAN,
@@ -11,8 +12,9 @@ typedef enum {
 typedef struct {
     Value_Type type;
     union {
-        BigInt *integer;
-        bool    boolean;
+        // BigInt *integer;
+        i128 integer;
+        bool boolean;
     };
 } Value;
 

@@ -4,10 +4,35 @@
 
 #include <projects.h>
 
-typedef struct i128 i128;
-struct i128 {
+// Little-endian i128.
+typedef struct i128le i128le;
+struct i128le {
     uint64_t lo, hi;
 };
+
+// Big-endian i128.
+typedef struct i128be i128be;
+struct i128be {
+    uint64_t hi, lo;
+};
+
+#if __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__
+
+// Default i128 is little endian.
+typedef i128le i128;
+
+#elif __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__
+
+// Default i128 is big endian.
+typedef i128be i128;
+
+#else
+
+// Unknown endianness, fallback to little endian i128.
+typedef i128le i128;
+
+#endif
+
 
 #define BIGINT_I128_IMPLEMENTATION
 
@@ -58,17 +83,6 @@ i128_shift_right_logical(i128 a, unsigned int n);
 
 // ARITHMETIC OPERATIONS
 
-/** @brief `dst = a + b`
- *  @return overflow bit */
-bool
-i128_checked_add_unsigned(i128 *dst, i128 a, i128 b);
-
-
-/** @brief `dst = a - b`
- *  @return overflow bit */
-bool
-i128_checked_sub_unsigned(i128 *dst, i128 a, i128 b);
-
 
 /** @brief `a + b` without returning any information on overflows. */
 i128
@@ -88,7 +102,7 @@ bool
 i128_lt_unsigned(i128 a, i128 b);
 
 bool
-i128_le_unsigned(i128 a, i128 b);
+i128_leq_unsigned(i128 a, i128 b);
 
 bool
 i128_neq(i128 a, i128 b);
@@ -97,7 +111,7 @@ bool
 i128_gt_unsigned(i128 a, i128 b);
 
 bool
-i128_ge_unsigned(i128 a, i128 b);
+i128_geq_unsigned(i128 a, i128 b);
 
 #ifdef BIGINT_I128_IMPLEMENTATION
 
@@ -107,17 +121,10 @@ i128
 i128_from_i64(int64_t value)
 {
     i128 dst;
-    if (value >= 0) {
-        dst.lo = cast(uint64_t)value;
-        dst.hi = 0;
-    }
-    // Concept check:
-    //  int64_t(-1) lo = `0xffff_ffff_ffff_ffff`, hi = `0xffff_ffff_ffff_ffff`
-    //  int64_t(-2) lo = `0xffff_ffff_ffff_fffe`, hi = `0xffff_ffff_ffff_ffff`
-    else {
-        dst.lo = cast(uint64_t)value;
-        dst.hi = ~cast(uint64_t)0;
-    }
+    // For negative values, -1 will result in all high bits being set.
+    // Otherwise, -0 leaves them alone.
+    dst.lo = cast(uint64_t)value;
+    dst.hi = -cast(uint64_t)(value < 0);
     return dst;
 }
 
@@ -134,6 +141,16 @@ int
 i128_sign(i128 a)
 {
     return cast(int)(a.hi >> (TYPE_BITS(a.hi) - 1));
+}
+
+i128
+i128_abs(i128 value)
+{
+    if (i128_sign(value)) {
+        value = i128_not(value);
+        value = i128_add_unsigned(value, i128_from_u64(1));
+    }
+    return value;
 }
 
 // BITWISE OPERATIONS
@@ -220,35 +237,18 @@ i128_shift_right_logical(i128 a, unsigned int n)
 
 // ARITHMETIC OPERATIONS
 
-bool
-i128_checked_add_unsigned(i128 *dst, i128 a, i128 b)
-{
-    bool overflow;
-    // If overflow occured, then result is much smaller than either operand.
-    dst->lo  = a.lo + b.lo;
-    overflow = (dst->lo < a.lo && dst->lo < b.lo);
-    dst->hi  = a.hi + b.hi + cast(uint64_t)overflow;
-    overflow = (dst->hi < a.hi && dst->hi < b.hi);
-    return overflow;
-}
-
-bool
-i128_checked_sub_unsigned(i128 *dst, i128 a, i128 b)
-{
-    bool overflow;
-    // If overflow occured, then result is much larger than either operand.
-    dst->lo  = a.lo - b.lo;
-    overflow = (dst->lo > a.lo && dst->lo > b.lo);
-    dst->hi  = a.hi - b.hi - cast(uint64_t)overflow;
-    overflow = (dst->hi > a.hi && dst->hi > b.hi);
-    return dst;
-}
-
 i128
 i128_add_unsigned(i128 a, i128 b)
 {
     i128 dst;
-    i128_checked_add_unsigned(&dst, a, b);
+    bool carry;
+
+    // Overflow check for uint64_t:
+    //  a + b > UINT64_MAX
+    //  a     > UINT64_MAX - b
+    carry  = a.lo > (UINT64_MAX - b.lo);
+    dst.lo = a.lo + b.lo;
+    dst.hi = a.hi + b.hi + cast(uint64_t)carry;
     return dst;
 }
 
@@ -256,7 +256,13 @@ i128
 i128_sub_unsigned(i128 a, i128 b)
 {
     i128 dst;
-    i128_checked_sub_unsigned(&dst, a, b);
+    bool borrow;
+
+    // Overflow check for uint64_t subtraction:
+    //  a - b < 0 where a < b
+    borrow = a.lo < b.lo;
+    dst.lo = a.lo - b.lo;
+    dst.hi = a.hi - b.hi - cast(uint64_t)borrow;
     return dst;
 }
 
@@ -317,21 +323,46 @@ i128_mul_unsigned(i128 a, i128 b)
 bool
 i128_eq(i128 a, i128 b)
 {
-    return (a.hi == b.hi) && (a.lo == b.lo);
+    // Concept check: `a ^ b == 0` where `a == b`
+    uint64_t xor_hi, xor_lo;
+
+    xor_hi = a.hi ^ b.hi;
+    xor_lo = a.lo ^ b.lo;
+    return (xor_hi | xor_lo) == 0;
 }
 
 bool
 i128_lt_unsigned(i128 a, i128 b)
 {
-    // a = a1 a0
-    // b = b1 b0
-    return (a.hi < b.hi) || (a.hi == b.hi && a.lo < b.lo);
+    // Simulate `a - b < 0`.
+    bool less, carry;
+
+    // Overflow check:
+    //  carry = a.lo - b.lo < 0
+    //  carry = a.lo        < b.lo
+    //
+    //  a.hi - (b.hi + carry) < 0
+    //  a.hi                  < b.hi + carry
+    carry = a.lo < b.lo;
+    less  = a.hi < b.hi + cast(uint64_t)carry;
+    return less;
 }
 
 bool
-i128_le_unsigned(i128 a, i128 b)
+i128_leq_unsigned(i128 a, i128 b)
 {
-    return (a.hi <= b.hi) || (a.hi == b.hi && a.lo <= b.lo);
+    // Simulate `a - b <= 0`.
+    bool less_eq, carry;
+
+    // Overflow checks:
+    //  carry = a.lo - b.lo < 0
+    //  carry = a.lo        < b.lo
+    //
+    //  a.hi - (b.hi + carry) <= 0
+    //  a.hi                  <= b.hi + carry
+    carry   = a.lo <  b.lo;
+    less_eq = a.hi <= b.hi + cast(uint64_t)carry;
+    return less_eq;
 }
 
 bool
@@ -349,10 +380,10 @@ i128_gt_unsigned(i128 a, i128 b)
 }
 
 bool
-i128_ge_unsigned(i128 a, i128 b)
+i128_geq_unsigned(i128 a, i128 b)
 {
     // (a >= b) <=> (b <= a)
-    return i128_le_unsigned(b, a);
+    return i128_leq_unsigned(b, a);
 }
 
 

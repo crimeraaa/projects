@@ -1,14 +1,23 @@
+// C
 #include <stdio.h>  // fprintf
 #include <stdlib.h> // atoi
 #include <string.h> // strlen
 
+// projects
+#include <mem/allocator.c>
+#include <utils/strings.c>
+
+// main
 #include "i128.h"
+#include "lexer.c"
+#include "parser.c"
 
 /** @brief Writes at most `len - 2` characters (i.e. `buf[:len - 1]`),
  *  writing the nul character at `len - 1`.
  */
-static const char *
-internal_i128_binary_base_string(i128 a, char *buf, size_t len, unsigned int shift)
+
+const char *
+i128_binary_base_string(i128 a, char *buf, size_t len, unsigned int shift)
 {
     i128 zero, mask;
     size_t buf_i = 0;
@@ -68,36 +77,22 @@ nul_terminate:
 static const char *
 i128_bin(i128 a, char *buf, size_t len)
 {
-    return internal_i128_binary_base_string(a, buf, len, 1);
+    return i128_binary_base_string(a, buf, len, 1);
 }
 
 static const char *
 i128_oct(i128 a, char *buf, size_t len)
 {
-    return internal_i128_binary_base_string(a, buf, len, 3);
+    return i128_binary_base_string(a, buf, len, 3);
 }
 
 static const char *
 i128_hex(i128 a, char *buf, size_t len)
 {
-    return internal_i128_binary_base_string(a, buf, len, 4);
+    return i128_binary_base_string(a, buf, len, 4);
 }
 
-static bool
-char_is_space(char ch)
-{
-    switch (ch) {
-    case ' ':
-    case '\r':
-    case '\n':
-    case '\t':
-    case '\v':
-        return true;
-    }
-    return false;
-}
-
-static i128
+i128
 i128_from_lstring(const char *restrict s, size_t n, const char **restrict end_ptr, int base)
 {
     i128 dst, base_i128;
@@ -123,7 +118,10 @@ i128_from_lstring(const char *restrict s, size_t n, const char **restrict end_pt
         else if (base != string_base) {
             goto finish;
         }
+    } else if (base == 0) {
+        base = 10;
     }
+
     base_i128 = i128_from_u64(cast(uint64_t)base);
 
     for (; i < n; i += 1) {
@@ -132,16 +130,15 @@ i128_from_lstring(const char *restrict s, size_t n, const char **restrict end_pt
         char ch;
 
         ch = s[i];
-        if (ch == '_' || ch == ',' || char_is_space(ch)) {
+        if (ch == '_' || ch == ',' || is_space(ch)) {
             continue;
         }
 
-        // Assumes ASCII
-        if ('0' <= ch && ch <= '9') {
+        if (is_digit(ch)) {
             digit = cast(uint64_t)(ch - '0');
-        } else if ('A' <= ch && ch <= 'Z') {
+        } else if (is_upper(ch)) {
             digit = cast(uint64_t)(ch - 'A' + 10);
-        } else if ('a' <= ch && ch <= 'z') {
+        } else if (is_lower(ch)) {
             digit = cast(uint64_t)(ch - 'a' + 10);
         } else {
             break;
@@ -167,34 +164,43 @@ finish:
 }
 
 int
-main(int argc, char *argv[])
+main(void)
 {
-    i128 tmp;
-    char buf[256];
-
-    if (argc == 1) {
-        tmp = i128_from_u64(1234);
-    } else {
-        const char *s, *end_ptr;
+    char buf[BUFSIZ];
+    for (;;) {
+        Parser p;
+        Value v;
+        const char *s;
         size_t n;
-        int base = 0;
+        Parser_Error err;
 
-        s = argv[1];
-        n = strlen(s);
-        if (argc >= 3) {
-            base = atoi(argv[2]);
+        fputs(">>> ", stdout);
+        if (fgets(buf, sizeof(buf), stdin) == NULL) {
+            fputc('\n', stdout);
+            break;
         }
+        s = buf;
+        n = strcspn(buf, "\r\n");
 
-        tmp = i128_from_lstring(s, n, &end_ptr, base);
-        if (end_ptr != s + n) {
-            eprintfln("Failed to parse '%s' in base-%i.\n", s, base);
-            return 1;
+        parser_init(&p, (String){s, n}, (Allocator){NULL, NULL});
+
+        v.type    = VALUE_INTEGER;
+        v.integer = i128_from_u64(0);
+        err       = parser_parse(&p, &v);
+        if (err == PARSER_OK) {
+            switch (v.type) {
+            case VALUE_BOOLEAN:
+                printfln("%s", v.boolean ? "true" : "false");
+                break;
+            case VALUE_INTEGER:
+                printfln("bin(%s)", i128_bin(v.integer, buf, sizeof(buf)));
+                printfln("oct(%s)", i128_oct(v.integer, buf, sizeof(buf)));
+                printfln("hex(%s)", i128_hex(v.integer, buf, sizeof(buf)));
+                break;
+            }
         }
     }
 
-    printf("bin(%s)\n", i128_bin(tmp, buf, sizeof(buf)));
-    printf("oct(%s)\n", i128_oct(tmp, buf, sizeof(buf)));
-    printf("hex(%s)\n", i128_hex(tmp, buf, sizeof(buf)));
     return 0;
 }
 

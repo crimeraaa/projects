@@ -45,10 +45,10 @@ parser_throw(Parser *p, Parser_Error err)
 {
     // Clean up intermediate values, if any
     while (p->intermediates != NULL) {
-        Value v = p->intermediates->value;
-        if (value_is_integer(v)) {
-            bigint_destroy(v.integer);
-        }
+        // Value v = p->intermediates->value;
+        // if (value_is_integer(v)) {
+        //     bigint_destroy(v.integer);
+        // }
         p->intermediates = p->intermediates->prev;
     }
     p->error_code = err;
@@ -144,6 +144,9 @@ parser_check_integer_binary(Parser *p, const Value *a, const Value *b, String ac
     parser_check_integer_unary(p, b, act);
 }
 
+i128
+i128_from_lstring(const char *restrict s, size_t n, const char **restrict end_ptr, int base);
+
 static void
 parser_parse_unary(Parser *p, Value *left)
 {
@@ -161,14 +164,16 @@ parser_parse_unary(Parser *p, Value *left)
     case TOKEN_MINUS:
         parser_parse_precedence(p, PREC_UNARY, left);
         parser_check_integer_unary(p, left, t.lexeme);
-        bigint_neg(left->integer, left->integer);
+        // bigint_neg(left->integer, left->integer);
+        parser_syntax_error_at(p, "unary negation not yet supported", &t);
         break;
 
     // Number literals
     case TOKEN_NUMBER:
         // Default type is integer anyway
         parser_check_integer_unary(p, left, t.lexeme);
-        bigint_set_base_lstring(left->integer, s.data, s.len, /*base=*/0);
+        left->integer = i128_from_lstring(s.data, s.len, NULL, 0);
+        // bigint_set_base_lstring(left->integer, s.data, s.len, /*base=*/0);
         break;
 
     // Groupings
@@ -187,46 +192,55 @@ static void
 parser_arith(Parser *p, const Parser_Rule *rule, Value *left, Value *right)
 {
     Token t = p->consumed;
+    i128 *dst, a, b;
     parser_parse_precedence(p, rule->prec + 1, right);
     parser_check_integer_binary(p, left, right, t.lexeme);
 
-    BigInt *dst = left->integer;
-    BigInt *a   = left->integer;
-    BigInt *b   = right->integer;
 
-    BigInt_Error err = BIGINT_OK;
+    dst = &left->integer;
+    a   = left->integer;
+    b   = right->integer;
+
+    // BigInt_Error err = BIGINT_OK;
     switch (rule->op) {
-    case BIN_ADD: err = bigint_add(dst, a, b); break;
-    case BIN_SUB: err = bigint_sub(dst, a, b); break;
-    case BIN_MUL: err = bigint_mul(dst, a, b); break;
+    // case BIN_ADD: err = bigint_add(dst, a, b); break;
+    // case BIN_SUB: err = bigint_sub(dst, a, b); break;
+    // case BIN_MUL: err = bigint_mul(dst, a, b); break;
+
+    case BIN_ADD: *dst = i128_add_unsigned(a, b); break;
+    case BIN_SUB: *dst = i128_sub_unsigned(a, b); break;
+    // case BIN_MUL: *dst = i128_mul_unsigned(a, b); break;
     default:
         parser_syntax_error_at(p, "Unsupported binary arithmetic operation", &t);
         break;
     }
 
-    if (err) {
-        parser_throw(p, PARSER_ERROR_MEMORY);
-    }
+    // if (err) {
+    //     parser_throw(p, PARSER_ERROR_MEMORY);
+    // }
 }
 
 static void
 parser_compare(Parser *p, const Parser_Rule *rule, Value *left, Value *right)
 {
     Token t = p->consumed;
+    // BigInt *a, *b;
+    i128 a, b;
+    bool res = false;
+
     parser_parse_precedence(p, rule->prec + 1, right);
     parser_check_integer_binary(p, left, right, t.lexeme);
 
-    BigInt *a = left->integer;
-    BigInt *b = right->integer;
+    a = left->integer;
+    b = right->integer;
 
-    bool res = false;
     switch (rule->op) {
-    case BIN_EQ:    res = bigint_eq(a, b);  break;
-    case BIN_NEQ:   res = bigint_neq(a, b); break;
-    case BIN_LT:    res = bigint_lt(a, b);  break;
-    case BIN_LEQ:   res = bigint_leq(a, b); break;
-    case BIN_GT:    res = bigint_gt(a, b);  break;
-    case BIN_GEQ:   res = bigint_geq(a, b); break;
+    case BIN_EQ:    res = i128_eq(a, b);  break;
+    case BIN_NEQ:   res = i128_neq(a, b); break;
+    case BIN_LT:    res = i128_lt_unsigned(a, b);  break;
+    case BIN_LEQ:   res = i128_leq_unsigned(a, b); break;
+    case BIN_GT:    res = i128_gt_unsigned(a, b);  break;
+    case BIN_GEQ:   res = i128_geq_unsigned(a, b); break;
     default:
         parser_syntax_error_at(p, "Unsupported binary comparison operation", &t);
         break;
@@ -266,12 +280,13 @@ parser_parse_precedence(Parser *p, Precedence prec, Value *left)
     top.prev          = p->intermediates;
     p->intermediates  = &top;
 
-    BigInt tmp;
-    bigint_init(&tmp, p->allocator);
+    // BigInt tmp;
+    // bigint_init(&tmp, p->allocator);
 
     Value *right = &top.value;
     right->type    = VALUE_INTEGER;
-    right->integer = &tmp;
+    right->integer = i128_from_u64(0);
+    // right->integer = &tmp;
 
     for (;;) {
         const Parser_Rule *rule = parser_get_rule(p->lookahead.type);
@@ -279,11 +294,11 @@ parser_parse_precedence(Parser *p, Precedence prec, Value *left)
             break;
         }
         parser_advance(p);
-        bigint_clear(&tmp);
+        // bigint_clear(&tmp);
         rule->binary_fn(p, rule, left, right);
     }
 
-    bigint_destroy(&tmp);
+    // bigint_destroy(&tmp);
 
     // Pop the intermediate
     p->intermediates = top.prev;
