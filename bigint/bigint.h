@@ -33,8 +33,8 @@
 #define BIGINT_DIGIT_MAX            (BIGINT_DIGIT_BASE - 1)
 
 // Convenience typedefs.
-typedef BIGINT_DIGIT_TYPE           BigInt_Digit;
-typedef BIGINT_WORD_TYPE            BigInt_Word;
+typedef BIGINT_DIGIT_TYPE           BigInt_DIGIT;
+typedef BIGINT_WORD_TYPE            BigInt_WORD;
 
 typedef enum {
     BIGINT_POSITIVE,
@@ -45,7 +45,7 @@ typedef struct BigInt BigInt;
 struct BigInt {
     // Digits are stored in a little-endian fashion; the least significant
     // digit is stored at the 0th index. E.g. 1234 is stored as {4,3,2,1}.
-    BigInt_Digit *data;
+    BigInt_DIGIT *data;
 
     // How many digits are validly indexable in `data`.
     size_t len;
@@ -84,19 +84,36 @@ bigint_init(BigInt *b, Allocator allocator);
 BigInt_Error
 bigint_init_int(BigInt *b, int i, Allocator allocator);
 
-/** @brief Write the integer string `data` (bounded by length `len`) of given
+/** @brief Write the integer string `s` (bounded by length `n`) of given
  *  `base` into `dst`.
  *
  * @param base  If 0, we will attempt to determine it based on any prefixes.
  *              Otherwise, it will default to 10.
  */
 BigInt_Error
-bigint_init_base_lstring(BigInt *dst,
-    const char                  *data,
-    size_t                       len,
-    int                          base,
-    Allocator                    allocator);
+bigint_init_base_lstring(BigInt *dst, const char *data, size_t len, int base, Allocator allocator);
 
+
+/** @brief Writes the integer nul-terminated string `s`, of base `base`,
+ *  into `dst`. */
+BigInt_Error
+bigint_init_base_string(BigInt *dst, const char *s, int base, Allocator allocator);
+
+
+/** @brief Write integer string `data` (bounded by `len`), of unknown base,
+ *  into `dst` to be initialized with the Allocator `allocator`.
+ *
+ * If the base cannot be determined, it will default to 10.
+ */
+BigInt_Error
+bigint_init_lstring(BigInt *dst, const char *s, size_t n, Allocator allocator);
+
+
+/** @brief Write integer in the nul-terminated string `string`, of unknown
+ *  base into the BigInt `dst`.
+ */
+BigInt_Error
+bigint_init_string(BigInt *dst, const char *s, Allocator allocator);
 
 void
 bigint_destroy(BigInt *b);
@@ -122,6 +139,11 @@ size_t
 bigint_base_string_length(const BigInt *src, int base);
 
 
+/** @brief Get the string length of the would-be base-10 representation. */
+size_t
+bigint_string_length(const BigInt *src);
+
+
 /** @brief Write the base-N representation of `src` into a buffer from
  *  `allocator`.
  *
@@ -133,103 +155,22 @@ bigint_base_string_length(const BigInt *src, int base);
  *  not be resized.
  */
 const char *
-bigint_to_base_lstring(const BigInt *src,
-    int                              base,
-    size_t                          *len,
-    Allocator                        allocator);
+bigint_to_base_lstring(const BigInt *src, int base, size_t *len, Allocator allocator);
 
 
-/** @brief Writes the integer nul-terminated string `cstring`, of base `base`,
- *  into `dst`.
- *
- * @param dst       BigInt *
- * @param cstring   const char *    - Read-only, nul-terminated string.
- * @param base.
- * @param allocator Allocator
- */
-#define bigint_init_base_string(dst, cstring, base, allocator)                 \
-    bigint_init_base_lstring(dst,                                              \
-        /*data=*/            cstring,                                          \
-        /*len=*/             strlen(cstring),                                  \
-        /*base=*/            base,                                             \
-        /*allocator=*/       allocator)
+/** @brief Write the base-`base` representation of `src`. */
+const char *
+bigint_to_base_string(const BigInt *src, int base, Allocator allocator);
 
 
-/** @brief Write integer string `data` (bounded by `len`), of unknown base,
- *  into `dst` to be initialized with the Allocator `allocator`.
- *
- * If the base cannot be determined, it will default to 10.
- *
- * @param dst       BigInt *
- * @param data      const char * - Read-only string, may not be nul-terminated.
- * @param len       size_t       - Number of characters in `data`.
- * @param allocator Allocator    - Allocates the digit array used by `dst`.
- */
-#define bigint_init_lstring(dst, data, len, allocator)                         \
-    bigint_init_base_lstring(dst,                                              \
-        /*data=*/            data,                                             \
-        /*len=*/             len,                                              \
-        /*base=*/            0,                                                \
-        /*allocator=*/       allocator)
+/** @brief Write the base-10 representation of `src`. */
+const char *
+bigint_to_lstring(const BigInt *src, size_t *len, Allocator allocator);
 
 
-/** @brief Write integer in the nul-terminated string `string`, of unknown
- *  base into the BigInt `dst`.
- *
- * @param dst       BigInt *
- * @param cstring   const char * - A nul-terminated string.
- * @param allocator Allocator    - Allocates the digit array used by `dst`.
- */
-#define bigint_init_string(dst, cstring, allocator)                            \
-    bigint_init_lstring(dst,                                                   \
-        /*string=*/     cstring,                                               \
-        /*len=*/        strlen(cstring),                                       \
-        /*allocator=*/  allocator)
-
-
-/** @brief Get the string length of the would-be base-10 representation.
- *
- * @param src BigInt *
- */
-#define bigint_string_length(src) \
-    bigint_base_string_length(src, /*base=*/10)
-
-
-/** @brief Write the base-`base` representation of `src`.
- *
- * @param src       BigInt *
- * @param base      int        - What base to write the output string in.
- * @param allocator Allocator  - Allocates the string buffer.
- */
-#define bigint_to_base_string(src, base, allocator)                            \
-    bigint_to_base_lstring(src,                                                \
-        /*base=*/          base,                                               \
-        /*len=*/           NULL,                                               \
-        /*allocator=*/     allocator)
-
-
-/** @brief Write the base-10 representation of `src`
- *
- * @param src       BigInt *
- * @param len       size_t *    - Optional out parameter for string length.
- * @param allocator Allocator   - Allocates the string buffer.
- */
-#define bigint_to_lstring(src, len, allocator)                                 \
-    bigint_to_base_lstring(src,                                                \
-        /*base=*/          10,                                                 \
-        /*len=*/           len,                                                \
-        /*allocator=*/     allocator)
-
-
-/** @brief Write the base-10 representation of `src`.
- *
- * @param src       BigInt *
- * @param allocator Allocator    - Allocates the string buffer.
- */
-#define bigint_to_string(src, allocator)                                       \
-    bigint_to_lstring(src,                                                     \
-        /*len=*/      NULL,                                                    \
-        /*allocator=*/allocator)
+/** @brief Write the base-10 representation of `src`. */
+const char *
+bigint_to_string(const BigInt *src, Allocator allocator);
 
 
 // === ARITHMETIC ========================================================== {{{
@@ -272,18 +213,18 @@ bigint_mul(BigInt *dst, const BigInt *a, const BigInt *b);
  *  May alias either `a` nor `b`.
  */
 BigInt_Error
-bigint_div(BigInt *dst, const BigInt *a, const BigInt *b);
+bigint_div_bigint(BigInt *dst, const BigInt *a, const BigInt *b);
 
 
 /** @brief `dst = a % b` */
 BigInt_Error
-bigint_mod(BigInt *dst, const BigInt *a, const BigInt *b);
+bigint_mod_bigint(BigInt *dst, const BigInt *a, const BigInt *b);
 
 BigInt_Error
-bigint_add_digit(BigInt *dst, const BigInt *a, BigInt_Digit b);
+bigint_add_digit(BigInt *dst, const BigInt *a, BigInt_DIGIT b);
 
 BigInt_Error
-bigint_sub_digit(BigInt *dst, const BigInt *a, BigInt_Digit b);
+bigint_sub_digit(BigInt *dst, const BigInt *a, BigInt_DIGIT b);
 
 
 /** @brief `dst = a * b`
@@ -293,7 +234,7 @@ bigint_sub_digit(BigInt *dst, const BigInt *a, BigInt_Digit b);
  *  May alias `a` because we only iterate over the digit sequence once.
  */
 BigInt_Error
-bigint_mul_digit(BigInt *dst, const BigInt *a, BigInt_Digit b);
+bigint_mul_digit(BigInt *dst, const BigInt *a, BigInt_DIGIT b);
 
 
 /** @brief `dst = -a` */
@@ -314,10 +255,10 @@ BigInt_Comparison
 bigint_compare_abs(const BigInt *a, const BigInt *b);
 
 BigInt_Comparison
-bigint_compare_digit(const BigInt *a, BigInt_Digit b);
+bigint_compare_digit(const BigInt *a, BigInt_DIGIT b);
 
 BigInt_Comparison
-bigint_compare_digit_abs(const BigInt *a, BigInt_Digit b);
+bigint_compare_digit_abs(const BigInt *a, BigInt_DIGIT b);
 
 /** @brief Queries `b == 0`. Assumes that `-0` is impossible. */
 bool
@@ -330,37 +271,81 @@ bigint_is_neg(const BigInt *b);
 
 
 /** @brief Queries `b >= 0`. */
-#define bigint_is_pos(b)        (!bigint_is_neg(b))
+bool
+bigint_is_pos(const BigInt *b);
 
 
-#define bigint_eq(a, b)         (bigint_compare(a, b) == BIGINT_EQUAL)
-#define bigint_lt(a, b)         (bigint_compare(a, b) == BIGINT_LESS)
-#define bigint_leq(a, b)        (bigint_compare(a, b) <= BIGINT_EQUAL)
-#define bigint_neq(a, b)        (!bigint_eq(a, b))
-#define bigint_gt(a, b)         bigint_lt(b, a)
-#define bigint_geq(a, b)        bigint_leq(b, a)
+bool
+bigint_eq(const BigInt *a, const BigInt *b);
 
-#define bigint_eq_digit(a, b)   (bigint_compare_digit(a, b,) == BIGINT_EQUAL)
-#define bigint_lt_digit(a, b)   (bigint_compare_digit(a, b,) == BIGINT_LESS)
-#define bigint_leq_digit(a, b)  (bigint_compare_digit(a, b,) <= BIGINT_EQUAL)
-#define bigint_neq_digit(a, b)  (!bigint_eq_digit(a, b))
-#define bigint_gt_digit(a, b)   (!bigint_leq_digit(a, b))
-#define bigint_geq_digit(a, b)  (!bigint_lt_digit(a, b))
+bool
+bigint_lt(const BigInt *a, const BigInt *b);
 
-#define bigint_eq_abs(a, b)     (bigint_compare_abs(a, b) == BIGINT_EQUAL)
-#define bigint_lt_abs(a, b)     (bigint_compare_abs(a, b) == BIGINT_LESS)
-#define bigint_leq_abs(a, b)    (bigint_compare_abs(a, b) <= BIGINT_LESS)
-#define bigint_neq_abs(a, b)    (!bigint_eq_abs(a, b))
-#define bigint_gt_abs(a, b)     bigint_lt_abs(b, a)
-#define bigint_geq_abs(a, b)    bigint_leq_abs(b, a)
+bool
+bigint_leq(const BigInt *a, const BigInt *b);
 
-#define bigint_eq_digit_abs(a, b)   (bigint_compare_digit_abs(a, b) == BIGINT_EQUAL)
-#define bigint_lt_digit_abs(a, b)   (bigint_compare_digit_abs(a, b) == BIGINT_LESS)
-#define bigint_leq_digit_abs(a, b)  (bigint_compare_digit_abs(a, b) <= BIGINT_EQUAL)
-#define bigint_neq_digit_abs(a, b)  (!bigint_eq_digit_abs(a, b))
-#define bigint_gt_digit_abs(a, b)   (!bigint_leq_digit_abs(a, b))
-#define bigint_geq_digit_abs(a, b)  (!bigint_lt_digit_abs(a, b))
+bool
+bigint_neq(const BigInt *a, const BigInt *b);
 
+bool
+bigint_gt(const BigInt *a, const BigInt *b);
+
+bool
+bigint_geq(const BigInt *a, const BigInt *b);
+
+bool
+bigint_eq_digit(const BigInt *a, BigInt_DIGIT b);
+
+bool
+bigint_lt_digit(const BigInt *a, BigInt_DIGIT b);
+
+bool
+bigint_leq_digit(const BigInt *a, BigInt_DIGIT b);
+
+bool
+bigint_neq_digit(const BigInt *a, BigInt_DIGIT b);
+
+bool
+bigint_gt_digit(const BigInt *a, BigInt_DIGIT b);
+
+bool
+bigint_geq_digit(const BigInt *a, BigInt_DIGIT b);
+
+bool
+bigint_eq_abs(const BigInt *a, const BigInt *b);
+
+bool
+bigint_lt_abs(const BigInt *a, const BigInt *b);
+
+bool
+bigint_leq_abs(const BigInt *a, const BigInt *b);
+
+bool
+bigint_neq_abs(const BigInt *a, const BigInt *b);
+
+bool
+bigint_gt_abs(const BigInt *a, const BigInt *b);
+
+bool
+bigint_geq_abs(const BigInt *a, const BigInt *b);
+
+bool
+bigint_eq_digit_abs(const BigInt *a, BigInt_DIGIT b);
+
+bool
+bigint_lt_digit_abs(const BigInt *a, BigInt_DIGIT b);
+
+bool
+bigint_leq_digit_abs(const BigInt *a, BigInt_DIGIT b);
+
+bool
+bigint_neq_digit_abs(const BigInt *a, BigInt_DIGIT b);
+
+bool
+bigint_gt_digit_abs(const BigInt *a, BigInt_DIGIT b);
+
+bool
+bigint_geq_digit_abs(const BigInt *a, BigInt_DIGIT b);
 
 // === }}} =====================================================================
 

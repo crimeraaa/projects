@@ -1,3 +1,205 @@
+#include <stdio.h>  // fprintf
+#include <stdlib.h> // atoi
+#include <string.h> // strlen
+
+#include "i128.h"
+
+/** @brief Writes at most `len - 2` characters (i.e. `buf[:len - 1]`),
+ *  writing the nul character at `len - 1`.
+ */
+static const char *
+internal_i128_binary_base_string(i128 a, char *buf, size_t len, unsigned int shift)
+{
+    i128 zero, mask;
+    size_t buf_i = 0;
+
+    zero = i128_from_u64(0);
+    mask = i128_from_u64((1 << shift) - 1);
+
+    // Check if we can accomodate the base prefix.
+    if (buf_i + 2 > len - 1) {
+        goto nul_terminate;
+    }
+
+    // Write base prefix.
+    buf[buf_i++] = '0';
+    switch (1 << shift) {
+    case 2:  buf[buf_i++] = 'b'; break;
+    case 8:  buf[buf_i++] = 'o'; break;
+    case 16: buf[buf_i++] = 'x'; break;
+    }
+
+    if (i128_eq(a, zero)) {
+        // Check if we can accomodate this character.
+        if (buf_i + 1 <= len - 1) {
+            buf[buf_i++] = '0';
+        }
+        goto nul_terminate;
+    }
+
+    // Write LSD to MSD into the buffer.
+    for (; buf_i < len - 1 && !i128_eq(a, zero); buf_i++) {
+        uint64_t digit;
+
+        // digit = a % base
+        // a     = a / base
+        digit = i128_and(a, mask).lo;
+        a     = i128_shift_right_logical(a, shift);
+        if (digit < 10) {
+            buf[buf_i] = cast(char)digit + '0';
+        } else {
+            buf[buf_i] = cast(char)digit - 10 + 'a';
+        }
+    }
+
+    // Rewrite to be MSD to LSD.
+    for (size_t left = 2, right = buf_i - 1; left < right; left++, right--) {
+        char tmp;
+
+        tmp        = buf[left];
+        buf[left]  = buf[right];
+        buf[right] = tmp;
+    }
+nul_terminate:
+    buf[buf_i] = '\0';
+    return buf;
+}
+
+static const char *
+i128_bin(i128 a, char *buf, size_t len)
+{
+    return internal_i128_binary_base_string(a, buf, len, 1);
+}
+
+static const char *
+i128_oct(i128 a, char *buf, size_t len)
+{
+    return internal_i128_binary_base_string(a, buf, len, 3);
+}
+
+static const char *
+i128_hex(i128 a, char *buf, size_t len)
+{
+    return internal_i128_binary_base_string(a, buf, len, 4);
+}
+
+static bool
+char_is_space(char ch)
+{
+    switch (ch) {
+    case ' ':
+    case '\r':
+    case '\n':
+    case '\t':
+    case '\v':
+        return true;
+    }
+    return false;
+}
+
+static i128
+i128_from_lstring(const char *restrict s, size_t n, const char **restrict end_ptr, int base)
+{
+    i128 dst, base_i128;
+    size_t i = 0;
+
+    dst = i128_from_u64(0);
+    if (n > 2 && s[i] == '0') {
+        int string_base = 0;
+
+        i++;
+        switch (s[i]) {
+        case 'b': case 'B': string_base = 2;  i++; break;
+        case 'o': case 'O': string_base = 8;  i++; break;
+        case 'd': case 'D': string_base = 10; i++; break;
+        case 'x': case 'X': string_base = 16; i++; break;
+        }
+
+        // Didn't know the base beforehand, so we have it now.
+        if (base == 0 && string_base != 0) {
+            base = string_base;
+        }
+        // Inconsistent base received?
+        else if (base != string_base) {
+            goto finish;
+        }
+    }
+    base_i128 = i128_from_u64(cast(uint64_t)base);
+
+    for (; i < n; i += 1) {
+        i128 digit_i128;
+        uint64_t digit = 0;
+        char ch;
+
+        ch = s[i];
+        if (ch == '_' || ch == ',' || char_is_space(ch)) {
+            continue;
+        }
+
+        // Assumes ASCII
+        if ('0' <= ch && ch <= '9') {
+            digit = cast(uint64_t)(ch - '0');
+        } else if ('A' <= ch && ch <= 'Z') {
+            digit = cast(uint64_t)(ch - 'A' + 10);
+        } else if ('a' <= ch && ch <= 'z') {
+            digit = cast(uint64_t)(ch - 'a' + 10);
+        } else {
+            break;
+        }
+
+        // Not a valid digit in this base?
+        if (digit >= cast(uint64_t)base) {
+            break;
+        }
+
+        // dst *= base
+        // dst += digit
+        digit_i128 = i128_from_u64(digit);
+        dst        = i128_mul_unsigned(dst, base_i128);
+        dst        = i128_add_unsigned(dst, digit_i128);
+    }
+
+finish:
+    if (end_ptr) {
+        *end_ptr = &s[i];
+    }
+    return dst;
+}
+
+int
+main(int argc, char *argv[])
+{
+    i128 tmp;
+    char buf[256];
+
+    if (argc == 1) {
+        tmp = i128_from_u64(1234);
+    } else {
+        const char *s, *end_ptr;
+        size_t n;
+        int base = 0;
+
+        s = argv[1];
+        n = strlen(s);
+        if (argc >= 3) {
+            base = atoi(argv[2]);
+        }
+
+        tmp = i128_from_lstring(s, n, &end_ptr, base);
+        if (end_ptr != s + n) {
+            eprintfln("Failed to parse '%s' in base-%i.\n", s, base);
+            return 1;
+        }
+    }
+
+    printf("bin(%s)\n", i128_bin(tmp, buf, sizeof(buf)));
+    printf("oct(%s)\n", i128_oct(tmp, buf, sizeof(buf)));
+    printf("hex(%s)\n", i128_hex(tmp, buf, sizeof(buf)));
+    return 0;
+}
+
+#if 0
+
 #include <stdio.h>  // fgets, fputc, printf, fprintf
 #include <string.h> // strlen, strcspn
 #include <stdlib.h> // realloc, free
@@ -196,6 +398,7 @@ main(int argc, char *argv[])
     static char arena_buf[BUFSIZ];
     arena_init(&arena, arena_buf, sizeof(arena_buf));
     temp_allocator = arena_allocator(&arena);
+
     switch (argc) {
     case 1:
         return repl();
@@ -210,3 +413,5 @@ main(int argc, char *argv[])
         return 1;
     }
 }
+
+#endif // if 0

@@ -225,6 +225,9 @@ internal_cmp_bigint(const BigInt *a, const BigInt *b)
     Comparison cmp;
     bool a_is_neg;
 
+    if (a == b) {
+        return EQUAL;
+    }
 
     // 1.) Differing signs?
     a_is_neg = internal_is_neg(a);
@@ -289,6 +292,10 @@ integer_fits_digit_abs(lua_Integer b)
 LUAI_FUNC Comparison
 internal_cmp_bigint_abs(const BigInt *a, const BigInt *b)
 {
+    if (a == b) {
+        return EQUAL;
+    }
+
     if (a->len != b->len) {
         return (a->len < b->len) ? LESS : GREATER;
     }

@@ -29,6 +29,8 @@
     __builtin_trap()
 
 
+#define TYPE_BITS(T)        (sizeof(T) * CHAR_BIT)
+
 #if defined(__GNUC__)
 #   define trap()           __builtin_trap()
 /*  If C23, we already have this in <stddef.h>. */
