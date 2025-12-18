@@ -22,7 +22,7 @@ enum Char_Trait {
     CHAR_ALNUM  = CHAR_ALPHA | CHAR_DIGIT,
 };
 
-extern const uint16_t
+extern const u16
 ASCII_CHAR_TRAITS[CHAR_MAX + 1];
 
 #define ascii_has_trait(ch, trait)  (ASCII_CHAR_TRAITS[(int)ch] & (trait))

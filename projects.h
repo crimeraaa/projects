@@ -31,12 +31,25 @@
 
 #define TYPE_BITS(T)        (sizeof(T) * CHAR_BIT)
 
+typedef  uint8_t u8;
+typedef uint16_t u16;
+typedef uint32_t u32;
+typedef uint64_t u64;
+typedef   int8_t i8;
+typedef  int16_t i16;
+typedef  int32_t i32;
+typedef  int64_t i64;
+
+
+/* Compiler-specific: GCC or GCC-like */
 #if defined(__GNUC__)
 #   define trap()           __builtin_trap()
 /*  If C23, we already have this in <stddef.h>. */
 #   ifndef unreachable
 #   define unreachable()    __builtin_unreachable()
 #   endif
+
+/* Compiler-specific: MSVC */
 #elif defined(_MSC_VER)
 #   define trap()          __debugbreak()
 /*  If C23, we already have this in <stddef.h> */
@@ -46,6 +59,7 @@
 #endif /* __GNUC__, _MSC_VER */
 
 
+/* Fallbacks */
 #ifndef unreachable
 #   if __STDC_VERSION__ >= 201703L
 
@@ -68,18 +82,18 @@ unreachable(void) {}
 #define assertfln(expr, fmt, ...)                                              \
 do {                                                                           \
     if (!(expr)) {                                                             \
-        eprintfln(FILE_LINE_STRING " Assertion '%s' failed (" fmt ")",         \
-                #expr, __VA_ARGS__);                                           \
+        eprintfln(FILE_LINE_STRING " Assertion '" #expr "' failed (" fmt ")",  \
+                __VA_ARGS__);                                                  \
         trap();                                                                \
     }                                                                          \
 } while (0)
-#else
+#else /* !NDEBUG */
 #define assertfln(expr, fmt, ...)       ((void)0)
 #endif /* NDEBUG */
 
 #define assertln(expr, msg) assertfln(expr, "%s", msg)
 
-// Semantics for C99 compound literals are different in C++.
+/* Semantics for C99 compound literals are different in C++. */
 #ifdef __cplusplus
 #define COMPOUND_LITERAL(T)    T
 #else

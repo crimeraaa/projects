@@ -8,10 +8,10 @@
 
 
 /** @brief Must be able to hold the range `[0, (BASE-1)*2]`. */
-typedef uint32_t DIGIT;
+typedef u32 DIGIT;
 
 /** @brief Must be able to hold the range `[0, (BASE-1)**2]`. */
-typedef uint64_t WORD;
+typedef u64 WORD;
 
 
 #define BIGINT_LIBNAME      "bigint"

@@ -382,7 +382,7 @@ internal_sub_bigint_unsigned(BigInt *dst, const BigInt *a, const BigInt *b)
         // MSB when overflow occurs. In the final mask, the unneeded magnitude
         // is masked out (e.g. bit[30] when bits[0:30] are used).
         //
-        // Concept check: DIGIT(3 - 4) where DIGIT == uint32_t
+        // Concept check: DIGIT(3 - 4) where DIGIT == u32
         //      =   0b00000000_00000000_00000000_00000011   ; 3
         //      -   0b00000000_00000000_00000000_00000100   ; 4
         //      =   0b11111111_11111111_11111111_11111111   ; DIGIT(-1)

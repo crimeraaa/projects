@@ -7,6 +7,7 @@
 // parser
 #include "parser.h"
 #include "lexer.c"
+#include "i128.c"
 
 
 typedef enum {
@@ -65,7 +66,9 @@ parser_throw(Parser *p, Parser_Error err)
 static void
 parser_syntax_error_at(Parser *p, const char *info, const Token *where)
 {
-    String s = where->lexeme;
+    String s;
+
+    s = where->lexeme;
     if (s.len == 0) {
         s = token_lstrings[where->type];
     }
@@ -89,7 +92,9 @@ parser_syntax_error_consumed(Parser *p, const char *info)
 static void
 parser_advance(Parser *p)
 {
-    Token t      = lexer_lex(&p->lexer);
+    Token t;
+
+    t = lexer_lex(&p->lexer);
     p->consumed  = p->lookahead;
     p->lookahead = t;
     if (t.type == TOKEN_UNKNOWN) {
@@ -151,14 +156,14 @@ parser_check_integer_binary(Parser *p, const Value *a, const Value *b, String ac
     parser_check_integer_unary(p, b, act);
 }
 
-i128
-i128_from_lstring(const char *restrict s, size_t n, const char **restrict end_ptr, int base);
-
 static void
 parser_parse_unary(Parser *p, Value *left)
 {
-    Token  t = p->consumed;
-    String s = t.lexeme;
+    Token t;
+    String s;
+
+    t = p->consumed;
+    s = t.lexeme;
     // Check the consumed prefix operand/operator
     switch (t.type) {
     // Essentially a no-op, but we do care if it's an integer.
@@ -205,16 +210,16 @@ parser_parse_unary(Parser *p, Value *left)
 static void
 parser_arith(Parser *p, const Parser_Rule *rule, Value *left, Value *right)
 {
-    Token t = p->consumed;
+    Token t;
     i128 *dst, a, b;
+
+    t = p->consumed;
     parser_parse_precedence(p, rule->prec + 1, right);
     parser_check_integer_binary(p, left, right, t.lexeme);
-
 
     dst = &left->integer;
     a   = left->integer;
     b   = right->integer;
-
     // BigInt_Error err = BIGINT_OK;
     switch (rule->op) {
     // case BIN_ADD: err = bigint_add(dst, a, b); break;
@@ -223,7 +228,7 @@ parser_arith(Parser *p, const Parser_Rule *rule, Value *left, Value *right)
 
     case BIN_ADD: *dst = i128_add(a, b); break;
     case BIN_SUB: *dst = i128_sub(a, b); break;
-    // case BIN_MUL: *dst = i128_mul_unsigned(a, b); break;
+    case BIN_MUL: *dst = i128_mul(a, b); break;
     default:
         parser_syntax_error_at(p, "Unsupported binary arithmetic operation", &t);
         break;
@@ -237,17 +242,17 @@ parser_arith(Parser *p, const Parser_Rule *rule, Value *left, Value *right)
 static void
 parser_compare(Parser *p, const Parser_Rule *rule, Value *left, Value *right)
 {
-    Token t = p->consumed;
+    Token t;
     // BigInt *a, *b;
     i128 a, b;
     bool res = false;
 
+    t = p->consumed;
     parser_parse_precedence(p, rule->prec + 1, right);
     parser_check_integer_binary(p, left, right, t.lexeme);
 
     a = left->integer;
     b = right->integer;
-
     switch (rule->op) {
     case BIN_EQ:    res = i128_eq(a, b);  break;
     case BIN_NEQ:   res = i128_neq(a, b); break;
@@ -267,7 +272,9 @@ parser_compare(Parser *p, const Parser_Rule *rule, Value *left, Value *right)
 static void
 parser_logical(Parser *p, const Parser_Rule *rule, Value *left, Value *right)
 {
-    Token t = p->consumed;
+    Token t;
+
+    t = p->consumed;
     parser_parse_precedence(p, rule->prec + 1, right);
     if (!value_is_boolean(*left) || !value_is_boolean(*right)) {
         printfln("Expected <boolean> at " STRING_QFMTSPEC ", got '<integer>'",
@@ -286,24 +293,27 @@ parser_logical(Parser *p, const Parser_Rule *rule, Value *left, Value *right)
 static void
 parser_parse_precedence(Parser *p, Precedence prec, Value *left)
 {
+    Value_List top;
+    Value *right;
+
     parser_advance(p);
     parser_parse_unary(p, left);
 
-    Value_List top;
     // Push new intermediate
     top.prev          = p->intermediates;
     p->intermediates  = &top;
 
     // BigInt tmp;
     // bigint_init(&tmp, p->allocator);
-
-    Value *right = &top.value;
+    right          = &top.value;
     right->type    = VALUE_INTEGER;
     right->integer = I128_ZERO;
     // right->integer = &tmp;
 
     for (;;) {
-        const Parser_Rule *rule = parser_get_rule(p->lookahead.type);
+        const Parser_Rule *rule;
+
+        rule = parser_get_rule(p->lookahead.type);
         if (prec > rule->prec || rule->binary_fn == NULL) {
             break;
         }

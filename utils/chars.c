@@ -8,7 +8,7 @@
 #define TRAITS_LOWER_XDIGIT    (TRAITS_LOWER | CHAR_XDIGIT)
 
 /** @link https://en.cppreference.com/w/c/string/byte/isalpha.html */
-const uint16_t
+const u16
 ASCII_CHAR_TRAITS[CHAR_MAX + 1] = {
     // Control Codes (NUL, etc.)
     CHAR_CNTRL, CHAR_CNTRL, CHAR_CNTRL, CHAR_CNTRL, CHAR_CNTRL, CHAR_CNTRL,

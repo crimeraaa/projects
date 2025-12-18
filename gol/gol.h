@@ -6,7 +6,7 @@
 
 #include <mem/allocator.h>
 
-#define GRID_LIMB_TYPE          uint64_t
+#define GRID_LIMB_TYPE          u64
 #define GRID_LIMB_TYPE_BITS     (sizeof(GRID_LIMB_TYPE) * CHAR_BIT)
 #define GRID_LIMB_SHIFT         GRID_LIMB_TYPE_BITS
 

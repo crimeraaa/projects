@@ -22,11 +22,11 @@
 
 // The primary digit type used for addition and some multiplication.
 // Must be able to hold the range `[0, base)`.
-#define BIGINT_DIGIT_TYPE           uint32_t
+#define BIGINT_DIGIT_TYPE           u32
 
 // The secondary digit type used for subtraction and multiplication.
 // Must be able to hold the range `[-(base*2), base*base)`.
-#define BIGINT_WORD_TYPE            int64_t
+#define BIGINT_WORD_TYPE            i64
 
 // === }}} =====================================================================
 

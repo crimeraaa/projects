@@ -4,20 +4,20 @@
 #include <string.h> // strlen
 
 // main
-#include "i128.h"
 #include "parser.c"
+
 
 /** @brief Writes at most `len - 2` characters (i.e. `buf[:len - 1]`),
  *  writing the nul character at `len - 1`.
  */
 
-const char *
-i128_binary_base_string(i128 a, char *buf, size_t len, unsigned int shift)
+static const char *
+i128_to_binary_string(i128 a, char *buf, size_t len, unsigned int base, unsigned int shift)
 {
     i128 mask;
     size_t buf_prefix_i = 0, buf_i = 0;
 
-    mask = i128_from_u64((1 << shift) - 1);
+    mask = i128_from_u64(base - 1);
 
     if (i128_sign(a)) {
         // Check if we can accomodate the unary negation.
@@ -35,7 +35,7 @@ i128_binary_base_string(i128 a, char *buf, size_t len, unsigned int shift)
 
     // Write base prefix.
     buf[buf_prefix_i++] = '0';
-    switch (1 << shift) {
+    switch (base) {
     case 2:  buf[buf_prefix_i++] = 'b'; break;
     case 8:  buf[buf_prefix_i++] = 'o'; break;
     case 16: buf[buf_prefix_i++] = 'x'; break;
@@ -52,12 +52,12 @@ i128_binary_base_string(i128 a, char *buf, size_t len, unsigned int shift)
     // Write LSD to MSD into the buffer.
     buf_i = buf_prefix_i;
     for (; buf_i < len - 1 && !i128_eq(a, I128_ZERO); buf_i++) {
-        uint64_t digit;
+        u64 digit;
 
         // digit = a % base
         // a     = a / base
         digit = i128_and(a, mask).lo;
-        a     = i128_shift_right_logical(a, shift);
+        a     = i128_logical_right_shift(a, shift);
         if (digit < 10) {
             buf[buf_i] = cast(char)digit + '0';
         } else {
@@ -81,90 +81,19 @@ nul_terminate:
 static const char *
 i128_bin(i128 a, char *buf, size_t len)
 {
-    return i128_binary_base_string(a, buf, len, 1);
+    return i128_to_binary_string(a, buf, len, 2, 1);
 }
 
 static const char *
 i128_oct(i128 a, char *buf, size_t len)
 {
-    return i128_binary_base_string(a, buf, len, 3);
+    return i128_to_binary_string(a, buf, len, 8, 3);
 }
 
 static const char *
 i128_hex(i128 a, char *buf, size_t len)
 {
-    return i128_binary_base_string(a, buf, len, 4);
-}
-
-i128
-i128_from_lstring(const char *restrict s, size_t n, const char **restrict end_ptr, int base)
-{
-    i128 dst, base_i128;
-    size_t i = 0;
-
-    dst = I128_ZERO;
-    if (n > 2 && s[i] == '0') {
-        int string_base = 0;
-
-        i++;
-        switch (s[i]) {
-        case 'b': case 'B': string_base = 2;  i++; break;
-        case 'o': case 'O': string_base = 8;  i++; break;
-        case 'd': case 'D': string_base = 10; i++; break;
-        case 'x': case 'X': string_base = 16; i++; break;
-        }
-
-        // Didn't know the base beforehand, so we have it now.
-        if (base == 0 && string_base != 0) {
-            base = string_base;
-        }
-        // Inconsistent base received?
-        else if (base != string_base) {
-            goto finish;
-        }
-    } else if (base == 0) {
-        base = 10;
-    }
-
-    base_i128 = i128_from_u64(cast(uint64_t)base);
-
-    for (; i < n; i += 1) {
-        i128 digit_i128;
-        uint64_t digit = 0;
-        char ch;
-
-        ch = s[i];
-        if (ch == '_' || ch == ',' || is_space(ch)) {
-            continue;
-        }
-
-        if (is_digit(ch)) {
-            digit = cast(uint64_t)(ch - '0');
-        } else if (is_upper(ch)) {
-            digit = cast(uint64_t)(ch - 'A' + 10);
-        } else if (is_lower(ch)) {
-            digit = cast(uint64_t)(ch - 'a' + 10);
-        } else {
-            break;
-        }
-
-        // Not a valid digit in this base?
-        if (digit >= cast(uint64_t)base) {
-            break;
-        }
-
-        // dst *= base
-        // dst += digit
-        digit_i128 = i128_from_u64(digit);
-        dst        = i128_mul_unsigned(dst, base_i128);
-        dst        = i128_add(dst, digit_i128);
-    }
-
-finish:
-    if (end_ptr) {
-        *end_ptr = &s[i];
-    }
-    return dst;
+    return i128_to_binary_string(a, buf, len, 16, 4);
 }
 
 int
