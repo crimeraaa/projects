@@ -3,13 +3,8 @@
 #include <stdlib.h> // atoi
 #include <string.h> // strlen
 
-// projects
-#include <mem/allocator.c>
-#include <utils/strings.c>
-
 // main
 #include "i128.h"
-#include "lexer.c"
 #include "parser.c"
 
 /** @brief Writes at most `len - 2` characters (i.e. `buf[:len - 1]`),
@@ -19,35 +14,44 @@
 const char *
 i128_binary_base_string(i128 a, char *buf, size_t len, unsigned int shift)
 {
-    i128 zero, mask;
-    size_t buf_i = 0;
+    i128 mask;
+    size_t buf_prefix_i = 0, buf_i = 0;
 
-    zero = i128_from_u64(0);
     mask = i128_from_u64((1 << shift) - 1);
 
+    if (i128_sign(a)) {
+        // Check if we can accomodate the unary negation.
+        if (buf_prefix_i + 1 > len - 1) {
+            goto nul_terminate;
+        }
+        buf[buf_prefix_i++] = '-';
+        a = i128_abs(a);
+    }
+
     // Check if we can accomodate the base prefix.
-    if (buf_i + 2 > len - 1) {
+    if (buf_prefix_i + 2 > len - 1) {
         goto nul_terminate;
     }
 
     // Write base prefix.
-    buf[buf_i++] = '0';
+    buf[buf_prefix_i++] = '0';
     switch (1 << shift) {
-    case 2:  buf[buf_i++] = 'b'; break;
-    case 8:  buf[buf_i++] = 'o'; break;
-    case 16: buf[buf_i++] = 'x'; break;
+    case 2:  buf[buf_prefix_i++] = 'b'; break;
+    case 8:  buf[buf_prefix_i++] = 'o'; break;
+    case 16: buf[buf_prefix_i++] = 'x'; break;
     }
 
-    if (i128_eq(a, zero)) {
+    if (i128_eq(a, I128_ZERO)) {
         // Check if we can accomodate this character.
-        if (buf_i + 1 <= len - 1) {
-            buf[buf_i++] = '0';
+        if (buf_prefix_i + 1 <= len - 1) {
+            buf[buf_prefix_i++] = '0';
         }
         goto nul_terminate;
     }
 
     // Write LSD to MSD into the buffer.
-    for (; buf_i < len - 1 && !i128_eq(a, zero); buf_i++) {
+    buf_i = buf_prefix_i;
+    for (; buf_i < len - 1 && !i128_eq(a, I128_ZERO); buf_i++) {
         uint64_t digit;
 
         // digit = a % base
@@ -62,7 +66,7 @@ i128_binary_base_string(i128 a, char *buf, size_t len, unsigned int shift)
     }
 
     // Rewrite to be MSD to LSD.
-    for (size_t left = 2, right = buf_i - 1; left < right; left++, right--) {
+    for (size_t left = buf_prefix_i, right = buf_i - 1; left < right; left++, right--) {
         char tmp;
 
         tmp        = buf[left];
@@ -98,7 +102,7 @@ i128_from_lstring(const char *restrict s, size_t n, const char **restrict end_pt
     i128 dst, base_i128;
     size_t i = 0;
 
-    dst = i128_from_u64(0);
+    dst = I128_ZERO;
     if (n > 2 && s[i] == '0') {
         int string_base = 0;
 
@@ -153,7 +157,7 @@ i128_from_lstring(const char *restrict s, size_t n, const char **restrict end_pt
         // dst += digit
         digit_i128 = i128_from_u64(digit);
         dst        = i128_mul_unsigned(dst, base_i128);
-        dst        = i128_add_unsigned(dst, digit_i128);
+        dst        = i128_add(dst, digit_i128);
     }
 
 finish:
@@ -185,7 +189,7 @@ main(void)
         parser_init(&p, (String){s, n}, (Allocator){NULL, NULL});
 
         v.type    = VALUE_INTEGER;
-        v.integer = i128_from_u64(0);
+        v.integer = I128_ZERO;
         err       = parser_parse(&p, &v);
         if (err == PARSER_OK) {
             switch (v.type) {

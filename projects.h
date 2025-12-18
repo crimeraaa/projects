@@ -79,5 +79,11 @@ do {                                                                           \
 
 #define assertln(expr, msg) assertfln(expr, "%s", msg)
 
+// Semantics for C99 compound literals are different in C++.
+#ifdef __cplusplus
+#define COMPOUND_LITERAL(T)    T
+#else
+#define COMPOUND_LITERAL(T)   (T)
+#endif
 
 #endif /* PROJECTS_COMMON_H */

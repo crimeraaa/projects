@@ -14,6 +14,7 @@ typedef enum {
 
     // Balanced pairs
     TOKEN_PAREN_OPEN, TOKEN_PAREN_CLOSE, // ( )
+    TOKEN_PIPE, // |
 
     // Arithmetic
     TOKEN_PLUS, TOKEN_MINUS,                // + -

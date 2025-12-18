@@ -1,6 +1,13 @@
 #include <stdio.h>  // fprintf, sprintf
 
+// projects
+#include <mem/allocator.c>
+#include <utils/strings.c>
+
+// parser
 #include "parser.h"
+#include "lexer.c"
+
 
 typedef enum {
     BIN_NONE,
@@ -165,7 +172,7 @@ parser_parse_unary(Parser *p, Value *left)
         parser_parse_precedence(p, PREC_UNARY, left);
         parser_check_integer_unary(p, left, t.lexeme);
         // bigint_neg(left->integer, left->integer);
-        parser_syntax_error_at(p, "unary negation not yet supported", &t);
+        left->integer = i128_neg(left->integer);
         break;
 
     // Number literals
@@ -180,6 +187,13 @@ parser_parse_unary(Parser *p, Value *left)
     case TOKEN_PAREN_OPEN:
         parser_parse_expression(p, left);
         parser_expect(p, TOKEN_PAREN_CLOSE);
+        break;
+
+    // Absolute value
+    case TOKEN_PIPE:
+        parser_parse_expression(p, left);
+        parser_expect(p, TOKEN_PIPE);
+        left->integer = i128_abs(left->integer);
         break;
 
     default:
@@ -207,8 +221,8 @@ parser_arith(Parser *p, const Parser_Rule *rule, Value *left, Value *right)
     // case BIN_SUB: err = bigint_sub(dst, a, b); break;
     // case BIN_MUL: err = bigint_mul(dst, a, b); break;
 
-    case BIN_ADD: *dst = i128_add_unsigned(a, b); break;
-    case BIN_SUB: *dst = i128_sub_unsigned(a, b); break;
+    case BIN_ADD: *dst = i128_add(a, b); break;
+    case BIN_SUB: *dst = i128_sub(a, b); break;
     // case BIN_MUL: *dst = i128_mul_unsigned(a, b); break;
     default:
         parser_syntax_error_at(p, "Unsupported binary arithmetic operation", &t);
@@ -237,10 +251,10 @@ parser_compare(Parser *p, const Parser_Rule *rule, Value *left, Value *right)
     switch (rule->op) {
     case BIN_EQ:    res = i128_eq(a, b);  break;
     case BIN_NEQ:   res = i128_neq(a, b); break;
-    case BIN_LT:    res = i128_lt_unsigned(a, b);  break;
-    case BIN_LEQ:   res = i128_leq_unsigned(a, b); break;
-    case BIN_GT:    res = i128_gt_unsigned(a, b);  break;
-    case BIN_GEQ:   res = i128_geq_unsigned(a, b); break;
+    case BIN_LT:    res = i128_lt_signed(a, b);  break;
+    case BIN_LEQ:   res = i128_leq_signed(a, b); break;
+    case BIN_GT:    res = i128_gt_signed(a, b);  break;
+    case BIN_GEQ:   res = i128_geq_signed(a, b); break;
     default:
         parser_syntax_error_at(p, "Unsupported binary comparison operation", &t);
         break;
@@ -285,7 +299,7 @@ parser_parse_precedence(Parser *p, Precedence prec, Value *left)
 
     Value *right = &top.value;
     right->type    = VALUE_INTEGER;
-    right->integer = i128_from_u64(0);
+    right->integer = I128_ZERO;
     // right->integer = &tmp;
 
     for (;;) {
@@ -312,6 +326,7 @@ parser_rules[TOKEN_COUNT] = {
     /* TOKEN_OR */              {PREC_OR,         BIN_OR,   parser_logical},
     /* TOKEN_PAREN_OPEN */      {PREC_NONE,       BIN_NONE, NULL},
     /* TOKEN_PAREN_CLOSE */     {PREC_NONE,       BIN_NONE, NULL},
+    /* TOKEN_PIPE */            {PREC_NONE,       BIN_NONE, NULL},
     /* TOKEN_PLUS */            {PREC_TERMINAL,   BIN_ADD,  parser_arith},
     /* TOKEN_MINUS */           {PREC_TERMINAL,   BIN_SUB,  parser_arith},
     /* TOKEN_STAR */            {PREC_FACTOR,     BIN_MUL,  parser_arith},

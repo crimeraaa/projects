@@ -129,6 +129,7 @@ lexer_lex(Lexer *x)
     switch (ch) {
     case '(': t = TOKEN_PAREN_OPEN;  break;
     case ')': t = TOKEN_PAREN_CLOSE; break;
+    case '|': t = TOKEN_PIPE;        break;
     case '+': t = TOKEN_PLUS;        break;
     case '-': t = TOKEN_MINUS;       break;
     case '*': t = TOKEN_STAR;        break;
@@ -161,6 +162,7 @@ token_lstrings[TOKEN_COUNT] = {
     /* TOKEN_OR */              s_("or"),
     /* TOKEN_PAREN_OPEN */      s_("("),
     /* TOKEN_PAREN_CLOSE */     s_(")"),
+    /* TOKEN_PIPE */            s_("|"),
     /* TOKEN_PLUS */            s_("+"),
     /* TOKEN_MINUS */           s_("-"),
     /* TOKEN_STAR */            s_("*"),
