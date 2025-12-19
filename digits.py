@@ -1,16 +1,25 @@
 from ctypes import (
+    c_uint8 as u8,
+    c_uint16 as u16,
+    c_uint32 as u32,
+    c_uint64 as u64,
+
+    c_int8 as i8,
+    c_int16 as i16,
+    c_int32 as i32,
+    c_int64 as i64,
+
     c_uint32 as DIGIT,
     c_int64 as WORD,
-    sizeof,
 )
 
-import sys
+# import sys
 
 DIGIT_NAILS         = 2
-DIGIT_TYPE_BITS     = sizeof(DIGIT) * 8
+DIGIT_TYPE_BITS     = 32
 DIGIT_SHIFT         = DIGIT_TYPE_BITS - DIGIT_NAILS
 WORD_SHIFT          = DIGIT_SHIFT * 2
-DIGIT_BASE          = int(2**DIGIT_SHIFT)
+DIGIT_BASE          = 2**DIGIT_SHIFT
 DIGIT_BASE_DECIMAL  = 10**9
 DIGIT_MASK          = DIGIT_BASE - 1
 DIGIT_MAX           = DIGIT_MASK
@@ -27,6 +36,46 @@ RADIX_PREFIX_TABLE = {
     'd': 10, 'D': 10,
     'x': 16, 'X': 16,
 }
+
+TYPE_MAX = {
+    u8:   u8(-1).value,
+    u16: u16(-1).value,
+    u32: u32(-1).value,
+    u64: u64(-1).value,
+
+    # Assuming two's complement.
+    i8:   u8(-1).value >> 1,
+    i16: u16(-1).value >> 1,
+    i32: u32(-1).value >> 1,
+    i64: u64(-1).value >> 1,
+}
+
+TYPE_MIN = {
+    u8:  0,
+    u16: 0,
+    u32: 0,
+    u64: 0,
+
+    # Assuming two's complement.
+    i8:  -TYPE_MAX[i8]  - 1,
+    i16: -TYPE_MAX[i16] - 1,
+    i32: -TYPE_MAX[i32] - 1,
+    i64: -TYPE_MAX[i64] - 1,
+}
+
+def int_max(*args) -> int:
+    if len(args) == 1 and args[0] in TYPE_MAX:
+        return TYPE_MAX[args[0]]
+    else:
+        return max(*args)
+
+
+def int_min(*args) -> int:
+    if len(args) == 1 and args[0] in TYPE_MIN:
+        return TYPE_MIN[args[0]]
+    else:
+        return min(*args)
+
 
 def int_place_value(value: int, base = 10) -> int:
     if value == 0:
@@ -109,7 +158,19 @@ def int_count_digits(value: int, base = 10) -> int:
     return count
 
 
-def int_encode_base(value: int, base = 10, *, min_groups = 0, group_size = 0) -> str:
+def int_bin(value: int, min_groups = 0, group_size = 8) -> str:
+    return int_encode_base(value, base=2, min_groups=min_groups, group_size=group_size)
+
+
+def int_oct(value: int, min_groups = 0, group_size = 3) -> str:
+    return int_encode_base(value, base=8, min_groups=min_groups, group_size=group_size)
+
+
+def int_hex(value: int, min_groups = 0, group_size = 4) -> str:
+    return int_encode_base(value, base=16, min_groups=min_groups, group_size=group_size)
+
+
+def int_encode_base(value: int, base = 10, min_groups = 0, group_size = 0) -> str:
     assert(2 <= base and base <= 64)
     assert(group_size == 0 or 2 <= group_size and group_size <= 64)
     if value == 0 and min_groups == 0:
@@ -247,20 +308,21 @@ def int_digit_mul(a: int, b: int) -> tuple[int, int]:
     return prod, carry
 
 
-def int_split_digits(value: int, base = DIGIT_BASE) -> list[int]:
+def int_split_digits(value: int, base = DIGIT_BASE) -> tuple[int]:
     if value == 0:
         return [0]
 
+    # little endian ordering.
     digits = []
     value  = abs(value)
     while value > 0:
         lsd = value % base
         value //= base
         digits.append(lsd)
-    return digits
+    return tuple(digits)
 
 
-def int_combine_digits(digits: list[int], base = DIGIT_BASE) -> int:
+def int_combine_digits(digits: list[int] | tuple[int], base = DIGIT_BASE) -> int:
     value = 0
 
     # Assume little-endian, so convert to big-endian
@@ -280,15 +342,40 @@ def int_get_base_fast(base: int) -> int:
 
 # a = 123_456_789_101_112_131_415 #1617181920
 
-a = len(sys.argv) > 1 and int(sys.argv[1]) or 1_234_567_890
-digits  = int_split_digits(a)
-a_bin = int_encode_base(a, base=2,  group_size=DIGIT_SHIFT)
-a_dec = int_encode_base(a, base=10, group_size=10)
+# a = len(sys.argv) > 1 and int(sys.argv[1]) or 1_234_567_890
+# digits  = int_split_digits(a)
+# a_bin = int_encode_base(a, base=2,  group_size=DIGIT_SHIFT)
+# a_dec = int_encode_base(a, base=10, group_size=10)
 
-# Not the same as converting each `BASE` digit to octal because the octal
-# place values do not line up with `DIGIT_BITS`. Same for hex.
-a_oct = int_encode_base(a, base=8,  group_size=11)
-a_hex = int_encode_base(a, base=16, group_size=8)
+# # Not the same as converting each `BASE` digit to octal because the octal
+# # place values do not line up with `DIGIT_BITS`. Same for hex.
+# a_oct = int_encode_base(a, base=8,  group_size=11)
+# a_hex = int_encode_base(a, base=16, group_size=8)
 
-print(a, bin(a), oct(a), hex(a), sep='\n')
-# print("Pretty:", a_dec, a_bin, a_oct, a_hex, sep="\n\t")
+# print(a, bin(a), oct(a), hex(a), sep='\n')
+# # print("Pretty:", a_dec, a_bin, a_oct, a_hex, sep="\n\t")
+
+
+# Demonstrate a * b0
+bits = 32
+base = 2**bits
+mask = int_max(u32)
+a = int_max(u64)
+b = a
+
+
+a0, a1 = int_split_digits(a, base)
+b0, b1 = int_split_digits(b, base)
+
+p00 = a0 * b0
+p10 = a1 * b0
+# p01 = a0 * b1
+
+# The following are equivalent.
+mid1 =   a * b0
+mid2 = (a1 * b0) * base**1 + (a0 * b0) * base**0
+
+def int_print(value: int):
+    print(f"bin({bin(value)})")
+    print(f"oct({oct(value)})")
+    print(f"hex({hex(value)})")

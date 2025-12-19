@@ -35,17 +35,36 @@ i128_from_lstring(const char *restrict s, size_t n, const char **restrict end_pt
 {
     i128 dst, base_i128;
     size_t i = 0;
+    bool sign = false;
 
     dst = I128_ZERO;
-    if (n > 2 && s[i] == '0') {
-        int string_base = 0;
 
-        i++;
-        switch (s[i]) {
-        case 'b': case 'B': string_base = 2;  i++; break;
-        case 'o': case 'O': string_base = 8;  i++; break;
-        case 'd': case 'D': string_base = 10; i++; break;
-        case 'x': case 'X': string_base = 16; i++; break;
+    // Check leading characters.
+    for (; i < n; i += 1) {
+        char ch;
+
+        ch = s[i];
+        if (ch == '+' || is_space(ch)) {
+            continue;
+        } else if (ch == '-') {
+            sign = !sign;
+            continue;
+        } else {
+            break;
+        }
+    }
+
+    // Read base prefix, if we might have one.
+    if (i < n && s[i] == '0') {
+        int string_base = 0;
+        i += 1;
+        if (i < n) {
+            switch (s[i]) {
+            case 'b': case 'B': string_base = 2;  i += 1; break;
+            case 'o': case 'O': string_base = 8;  i += 1; break;
+            case 'd': case 'D': string_base = 10; i += 1; break;
+            case 'x': case 'X': string_base = 16; i += 1; break;
+            }
         }
 
         // Didn't know the base beforehand, so we have it now.
@@ -56,7 +75,9 @@ i128_from_lstring(const char *restrict s, size_t n, const char **restrict end_pt
         else if (base != string_base) {
             goto finish;
         }
-    } else if (base == 0) {
+    }
+    // No base prefix but caller doesn't know the base either.
+    else if (base == 0) {
         base = 10;
     }
 
@@ -98,7 +119,7 @@ finish:
     if (end_ptr) {
         *end_ptr = &s[i];
     }
-    return dst;
+    return sign ? i128_neg(dst) : dst;
 }
 
 // BITWISE OPERATIONS
@@ -143,13 +164,8 @@ i128
 i128_logical_left_shift(i128 a, unsigned int n)
 {
     i128 dst;
-    // Nothing to do?
-    if (n == 0) {
-        dst.lo = a.lo;
-        dst.hi = a.hi;
-    }
     // Resulting logical left-shift may result in nonzero `lo` and `hi`?
-    else if (n < TYPE_BITS(dst.lo)) {
+    if (n < TYPE_BITS(dst.lo)) {
         dst.lo = (a.lo << n);
         dst.hi = (a.hi << n) | (a.lo >> (TYPE_BITS(a.lo) - n));
     }
@@ -166,13 +182,8 @@ i128
 i128_logical_right_shift(i128 a, unsigned int n)
 {
     i128 dst;
-    // Nothing to do?
-    if (n == 0) {
-        dst.lo = a.lo;
-        dst.hi = a.hi;
-    }
     // Resulting logical right-shift may result in both nonzero `lo` and `hi`?
-    else if (n < TYPE_BITS(dst.lo)) {
+    if (n < TYPE_BITS(dst.lo)) {
         dst.lo = (a.lo >> n) | (a.hi << (TYPE_BITS(a.hi) - n));
         dst.hi = (a.hi >> n);
     }
@@ -242,7 +253,7 @@ i128
 i128_add(i128 a, i128 b)
 {
     i128 dst;
-    i128_checked_add_signed(&dst, a, b);
+    i128_checked_add_unsigned(&dst, a, b);
     return dst;
 }
 
@@ -285,64 +296,104 @@ i128
 i128_sub(i128 a, i128 b)
 {
     i128 dst;
-    i128_checked_sub_signed(&dst, a, b);
+    i128_checked_sub_unsigned(&dst, a, b);
     return dst;
 }
 
 
 /** @link catid on stackoverflow: https://stackoverflow.com/a/51587262 */
 static i128
-internal_u64_mul_u64(u64 a, u64 b)
+u64_mul_u64(u64 a, u64 b)
 {
     i128 dst;
-    u64 a0, a1, b0, b1, a0b0, a1b0, a0b1, a1b1, mids;
+    u64 a0, a1, b0, b1, p00, p10, p01, p11, mid;
     const u64 mask = UINT32_MAX;
 
-    // 64-bit by 64-bit multiplication results in 128-bit results.
-    // We simulate it by chopping it into multiple 32-bit by 32-bit
-    // multiplications with 64-bit results.
-    a0 =  a        & mask;
-    a1 = (a >> 32) & mask;
-    b0 =  b        & mask;
-    b1 = (b >> 32) & mask;
+    // 64x64 multiplication results in 128-bit results. We simulate it by
+    // chopping it into multiple 32x32 multiplications with 64-bit results.
+    a0 =  a        & mask; // a[00:32]
+    a1 = (a >> 32) & mask; // a[32:64]
+    b0 =  b        & mask; // b[00:32]
+    b1 = (b >> 32) & mask; // b[32:64]
 
-    //  let BASE = 2**32
-    //                       (a1   * BASE**1) + (a0   * BASE**0)
-    //  x                    (b1   * BASE**1) + (b0   * BASE**0)
-    //=========================================================================
-    //                                          (a0b0 * BASE**0)  | LOW  00..32
-    //------------------------------------------------------------+------------
-    //  +                    (a1b0 * BASE**1)                     | MID  32..64
-    //  +                    (a0b1 * BASE**1)                     | MID  32..64
-    //------------------------------------------------------------+------------
-    //  + (a1b1 * BASE**2)                                        | HIGH 64..96
-    //------------------------------------------------------------+------------
-    a0b0 = a0 * b0;
-    a1b0 = a1 * b0;
-    a0b1 = a0 * b1;
-    a1b1 = a1 * b1;
-
-    // Prod[32:96] as a 64-bit product with two 32-bit values.
-    // This is because `a0b1` it may straddle both 64-bit halves.
-    // (i.e. it is split between Prod[32:64] and Prod[64:96])
+    // 32x32 products sans place values.
     //
-    //  `a1b0`: [:]     - Likely overlaps both 64-bit halves.
-    //  `a0b1`: [:32]   - Bits [32:64] overflow to Prod[64:96].
-    //  `a0b0`: [32:64] - Bits [:32] do not overflow to here.
-    mids = a1b0 + (a0b1 & mask) + (a0b0 >> 32);
+    // +----------------+---------------+---------------+---------------+
+    // |   dst[128.................64]  |  dst[64...................0]  |
+    // |   hi[64...00]  |  hi[32...00]  |  lo[64...32]  |  lo[32...00]  |
+    // +----------------+---------------+---------------+---------------+
+    // |                |               |           a1  |           a0  |
+    // | *              |               |           b1  |           b0  |
+    // +----------------+---------------+---------------+---------------+
+    // | =              |               |               |  p00 = a0*b0  |
+    // | +              |               |  p10 = a1*b0  |               |
+    // | +              |               |  p01 = a0*b1  |               |
+    // | +              |  p11 = a1*b1  |               |               |
+    // +----------------+---------------+---------------+---------------+
+    // | =              |               |  p00[64..32]  |  p00[32..00]  |
+    // | +              |  p10[64..32]  |  p10[32..00]  |               |
+    // | +              |  p01[64..32]  |  p01[32..00]  |               |
+    // | + p11[64..32]  |  p11[32..00]  |               |               |
+    // +----------------+---------------+---------------+---------------+
+    p00 = a0 * b0;
+    p10 = a1 * b0;
+    p01 = a0 * b1;
+    p11 = a1 * b1;
 
-    // Lower 64-bits of the 128-bit product. (Prod[0:64])
+    // Calculate part of 64x32 96-bit product `a * b0` that is to be
+    // part of dst[64...00].
+    //  = (a1 * b0) * (2**32)**1
+    //  + (a0 * b0) * (2**32)**0
     //
-    //  `mids`: [:32]   - The portion that goes in Prod[32:64]
-    //  `a0b0`: [:32]   - Bits [32:64] overflowed to `mids`.
-    dst.lo = (mids << 32) | (a0b0 & mask);
+    // The 64x32 product goes into dst[96..00].
+    // It is split between dst.lo[64..00] and dst.hi[32..00].
+    //
+    //  p10[64..00] - Overlaps both intermediates, never overflows.
+    //  p01[32..00] - Overlaps the dst[64..00].
+    //  p00[64..32] - Only the upper half overlaps the 96-bit product.
+    //
+    // Concept check: (using `digits.py`)
+    // ```py
+    // bits = 32
+    // mask = int_max(u32) # 0b11111111111111111111111111111111
+    // a0 = mask
+    // a1 = mask
+    // b0 = mask
+    // b1 = mask
+    //
+    // p00 = a0 * b0
+    // p10 = a1 * b0
+    // p01 = a0 * b1
+    // mid = p10 + (p01 & mask) + (p00 >> bits)
+    //
+    // print(int_bin(p10, min_groups=2, group_size=32))
+    // # '0b11111111111111111111111111111110_00000000000000000000000000000001'
+    //
+    // print(int_bin(p01 & mask, min_groups=2, group_size=32))
+    // # '0b00000000000000000000000000000000_00000000000000000000000000000001'
+    //
+    // print(int_bin(p00 >> bits, min_groups=2, group_size=32))
+    // # '0b00000000000000000000000000000000_11111111111111111111111111111110'
+    //
+    // print(int_bin(mid, min_groups=2, group_size=32))
+    // # '0b11111111111111111111111111111111_00000000000000000000000000000000'
+    // ```
+    mid = p10 + (p01 & mask) + (p00 >> 32);
 
-    // Upper 64 bits of the 128-bit product. (Prod[64:128])
+    // Lower 64-bits of the 64x64 128-bit product is in dst[64..00].
     //
-    //  `a1b1`: [:]     - Goes into Prod[64:128].
-    //  `mids`: [32:64] - The portion that goes in Prod[64:96].
-    //  `a0b1`: [32:64] - The portion that goes in Prod[64:96].
-    dst.hi = a1b1 + (mids >> 32) + (a0b1 >> 32);
+    //  mid[32..00] - 96-bit product a*b0 that goes in dst[64..32].
+    //  p00[32..00] - p00[32:64] was already added to `mids`.
+    dst.lo = (mid << 32) | (p00 & mask);
+
+    // Upper 64 bits of the 64x64 128-bit product is in dst[128..64].
+    // We know that 64x64 multiplication cannot possibly overflow
+    // the 128-bits hence we do not check for it.
+    //
+    //  p11[64..00] - Goes into dst[128..64].
+    //  mid[64..32] - 96-bit product a*b0 that goes in dst[96..64].
+    //  p01[64..32] - The portion that goes in dst[96..64].
+    dst.hi = p11 + (mid >> 32) + (p01 >> 32);
     return dst;
 }
 
@@ -359,9 +410,43 @@ internal_u64_mul_u64(u64 a, u64 b)
 i128
 i128_mul(i128 a, i128 b)
 {
+    // +--------------------------------+-------------------------------+
+    // |   overflow[256...........128]  |  dst[128................000]  |
+    // |   o[256..192]  | o[192...128]  |  hi[64...00]  |  lo[64...00]  |
+    // +----------------+---------------+---------------+---------------+
+    // |                |               |  a[128..................000]  |
+    // | *              |               |  b[128..................000]  |
+    // +----------------+---------------+-------------------------------+
+    // |                |               |           a1  |           a0  |
+    // | *              |               |           b1  |           b0  |
+    // +----------------+---------------+-------------------------------+
+    // | =              |               |               |  p00 = a0*b0  |
+    // | +              |               |  p10 = a1*b0  |               |
+    // | +              |               |  p01 = a0*b1  |               |
+    // | +              |  p11 = a1*b1  |               |               |
+    // +----------------+---------------+---------------+---------------+
+    // | =              |               | p00[128..64]  |  p00[64..00]  |
+    // | +              | p10[128..64]  | p10[64...00]  |               |
+    // | +              | p01[128..64]  | p01[64...00]  |               |
+    // | + p11[128..64] | p11[64...00]  |               |               |
+    // +----------------+---------------+---------------+---------------+
     i128 dst;
-    dst     = internal_u64_mul_u64(a.lo, b.lo);
-    dst.hi += (a.lo * b.hi) + (a.hi * b.lo);
+    u64 a0, a1, b0, b1, p01, p10;
+
+    a0 = a.lo;
+    a1 = a.hi;
+    b0 = b.lo;
+    b1 = b.hi;
+
+    // Overflow check for upper 64 bits:
+    //  dst.hi + p10 + p01 > UINT64_MAX
+    //  dst.hi > UINT64_MAX - p10 - p01
+    //
+    // Problem: p10 or p01 could themselves overflow! (See above).
+    dst     = u64_mul_u64(a0, b0);
+    p10     = a1 * b0;
+    p01     = a0 * b1;
+    dst.hi += p10 + p01;
     return dst;
 }
 
@@ -369,8 +454,20 @@ i128
 i128_mul_u64(i128 a, u64 b)
 {
     i128 dst;
-    dst     = internal_u64_mul_u64(a.lo, b);
-    dst.hi += a.hi * b;
+    u64 a0, a1, b0, p10;
+
+    a0 = a.lo;
+    b0 = b;
+    a1 = a.hi;
+
+    // Overflow check for upper 64 bits:
+    //  dst.hi + p10 > UINT64_MAX
+    //  dst.hi > UINT64_MAX - p10
+    //
+    // Problem: p10 (a.k.a. a1*b0) itself could overflow!
+    dst     = u64_mul_u64(a0, b0);
+    p10     = a1 * b0;
+    dst.hi += p10;
     return dst;
 }
 
@@ -379,7 +476,7 @@ i128_mul_u64(i128 a, u64 b)
 bool
 i128_eq(i128 a, i128 b)
 {
-    // Concept check: `(a ^ b) == 0` where `a == b`
+    // Concept check: `(a ^ b) == 0` iff `a == b`
     u64 xor_hi, xor_lo;
 
     xor_hi = a.hi ^ b.hi;
