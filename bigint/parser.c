@@ -184,7 +184,7 @@ parser_parse_unary(Parser *p, Value *left)
     case TOKEN_NUMBER:
         // Default type is integer anyway
         parser_check_integer_unary(p, left, t.lexeme);
-        left->integer = i128_from_lstring(s.data, s.len, NULL, 0);
+        left->integer = i128_from_string(s.data, s.len, NULL, 0);
         // bigint_set_base_lstring(left->integer, s.data, s.len, /*base=*/0);
         break;
 
@@ -256,10 +256,10 @@ parser_compare(Parser *p, const Parser_Rule *rule, Value *left, Value *right)
     switch (rule->op) {
     case BIN_EQ:    res = i128_eq(a, b);  break;
     case BIN_NEQ:   res = i128_neq(a, b); break;
-    case BIN_LT:    res = i128_lt_signed(a, b);  break;
-    case BIN_LEQ:   res = i128_leq_signed(a, b); break;
-    case BIN_GT:    res = i128_gt_signed(a, b);  break;
-    case BIN_GEQ:   res = i128_geq_signed(a, b); break;
+    case BIN_LT:    res = i128_lt(a, b);  break;
+    case BIN_LEQ:   res = i128_leq(a, b); break;
+    case BIN_GT:    res = i128_gt(a, b);  break;
+    case BIN_GEQ:   res = i128_geq(a, b); break;
     default:
         parser_syntax_error_at(p, "Unsupported binary comparison operation", &t);
         break;

@@ -24,20 +24,20 @@ DIGIT_BASE_DECIMAL  = 10**9
 DIGIT_MASK          = DIGIT_BASE - 1
 DIGIT_MAX           = DIGIT_MASK
 
-RADIX_TABLE = \
+__RADIX_TABLE = \
     b"0123456789" \
     b"ABCDEFGHIJKLMNOPQRSTUVWXYZ" \
     b"abcdefghijklmnopqrstuvwxyz+/"
 
-RADIX_TABLE_REVERSE = {chr(char): value for value, char in enumerate(RADIX_TABLE)}
-RADIX_PREFIX_TABLE = {
+__RADIX_TABLE_REVERSE = {chr(char): value for value, char in enumerate(__RADIX_TABLE)}
+__RADIX_PREFIX_TABLE = {
     'b': 2,  'B': 2,
     'o': 8,  'O': 8,
     'd': 10, 'D': 10,
     'x': 16, 'X': 16,
 }
 
-TYPE_MAX = {
+__TYPE_MAX = {
     u8:   u8(-1).value,
     u16: u16(-1).value,
     u32: u32(-1).value,
@@ -50,29 +50,29 @@ TYPE_MAX = {
     i64: u64(-1).value >> 1,
 }
 
-TYPE_MIN = {
+__TYPE_MIN = {
     u8:  0,
     u16: 0,
     u32: 0,
     u64: 0,
 
     # Assuming two's complement.
-    i8:  -TYPE_MAX[i8]  - 1,
-    i16: -TYPE_MAX[i16] - 1,
-    i32: -TYPE_MAX[i32] - 1,
-    i64: -TYPE_MAX[i64] - 1,
+    i8:  -__TYPE_MAX[i8]  - 1,
+    i16: -__TYPE_MAX[i16] - 1,
+    i32: -__TYPE_MAX[i32] - 1,
+    i64: -__TYPE_MAX[i64] - 1,
 }
 
 def int_max(*args) -> int:
-    if len(args) == 1 and args[0] in TYPE_MAX:
-        return TYPE_MAX[args[0]]
+    if len(args) == 1 and args[0] in __TYPE_MAX:
+        return __TYPE_MAX[args[0]]
     else:
         return max(*args)
 
 
 def int_min(*args) -> int:
-    if len(args) == 1 and args[0] in TYPE_MIN:
-        return TYPE_MIN[args[0]]
+    if len(args) == 1 and args[0] in __TYPE_MIN:
+        return __TYPE_MIN[args[0]]
     else:
         return min(*args)
 
@@ -207,7 +207,7 @@ def int_encode_base(value: int, base = 10, min_groups = 0, group_size = 0) -> st
         if base <= 36 and digit >= 36: # digit >= RADIX_TABLE_REVERSE['a']
             digit -= 32 # tolower(digit) = digit - ('a' - 'A')
 
-        sb += RADIX_TABLE[digit].to_bytes()
+        sb += __RADIX_TABLE[digit].to_bytes()
         value //= base
         skip_counter -= 1
 
@@ -262,7 +262,7 @@ def int_decode_base(value: str, base = 0) -> int:
     # Get base
     if len(value) > 2 and value[0] == '0':
         try:
-            tmp = RADIX_PREFIX_TABLE[value[1]]
+            tmp = __RADIX_PREFIX_TABLE[value[1]]
         except KeyError:
             tmp = 0
 
@@ -282,9 +282,101 @@ def int_decode_base(value: str, base = 0) -> int:
             continue
 
         result *= base
-        result += RADIX_TABLE_REVERSE[c]
+        result += __RADIX_TABLE_REVERSE[c]
 
     return -result if sign else result
+
+
+__INT_DIGIT_STRINGS = {
+    1: "one",   2: "two",   3: "three", 4:  "four", 5: "five", 6: "six",
+    7: "seven", 8: "eight", 9: "nine",  10: "ten", 11: "eleven", 12: "twelve",
+    13: "thirteen", 14: "fourteen", 15: "fifteen", 16: "sixteen", 17: "seventeen",
+    18: "eighteen", 19: "nineteen", 20: "twenty", 30: "thirty", 40: "fourty",
+    50: "fifty", 60: "sixty", 70: "seventy", 80: "eighty", 90: "ninety"
+}
+
+
+# http://sunshine.chpc.utah.edu/Labs/ScientificNotation/ManSciNot1/table.html
+# https://en.wikipedia.org/wiki/Names_of_large_numbers
+__INT_PLACE_VALUE_STRINGS = {
+    10**3: "thousand",
+    10**6: "million",
+    10**9: "billion",
+    10**12: "trillion",
+    10**15: "quadrillion",
+    10**18: "quintillion",
+    10**21: "sextillion",
+    10**24: "septillion",
+    10**27: "octillion",
+    10**30: "nonillion",
+    10**33: "decillion",
+    10**36: "undecillion",
+    10**39: "duodecllion",
+    10**42: "tredecillion",
+    10**45: "quattrodecillion",
+    10**48: "quindecillion",
+    10**51: "sexdecillion",
+    10**54: "septendecillion",
+    10**57: "octodecillion",
+    10**60: "novemdecillion",
+    10**64: "vigintillion",
+}
+
+def int_to_words(a: int) -> str:
+    if a < 0:
+        a = abs(a)
+        words = ["negative"]
+        start_i = 1
+    else:
+        words: list[str] = []
+        start_i = 0
+
+    power = 0
+    digits = int_split_digits(a, base=10)
+    n = len(digits)
+    # Iterate from LSD to MSD.
+    for i in range(0, len(digits), 3):
+        place = 10**power
+        ones = digits[i]
+        tens = digits[i + 1] if i + 1 < n else 0
+        hundreds = digits[i + 2] if i + 2 < n else 0
+
+        # print(f"power={power}: place={place}, ones={ones}, tens={tens}, hundreds={hundreds}")
+
+        s = ""
+        # [1,9] '-hundred' ( ' and ' )?
+        if hundreds:
+            s += f"{__INT_DIGIT_STRINGS[hundreds]}-hundred"
+            if tens or ones:
+                s += " and "
+
+        if tens:
+            # [10,19]
+            if tens == 1:
+                s += __INT_DIGIT_STRINGS[tens*10 + ones]
+            # [2,9]*10 '-' ( <ones> )?
+            else:
+                s += __INT_DIGIT_STRINGS[tens*10]
+                if ones:
+                    s += f"-{__INT_DIGIT_STRINGS[ones]}"
+        elif ones:
+            s += __INT_DIGIT_STRINGS[ones]
+
+        # Nonezero magnitude? i.e. hundreds*100 + tens*10 + ones != 0
+        if (hundreds or tens or ones) and (place in __INT_PLACE_VALUE_STRINGS):
+            s += f" {__INT_PLACE_VALUE_STRINGS[place]}"
+            # Opinion: trailing comma only needed for two or more groups
+            # of base-10 triples.
+            # TODO(2025-12-20): Get 'one million *and* one'
+            if i != 0 and len(words) > 1:
+                s += ','
+
+        # prepend
+        if s:
+            words.insert(start_i, s)
+        power += 3
+
+    return ' '.join(words)
 
 
 def int_digit_add(a: int, b: int) -> tuple[int, int]:
@@ -360,20 +452,22 @@ def int_get_base_fast(base: int) -> int:
 bits = 32
 base = 2**bits
 mask = int_max(u32)
-a = int_max(u64)
-b = a
+# a = int_max(u64)
+# b = a
 
+a = 1_234_567_891_011_121_314_151_617_181_920
+b =   212_223_242_526_272_829_303_132_333_435
 
-a0, a1 = int_split_digits(a, base)
-b0, b1 = int_split_digits(b, base)
+# a0, a1 = int_split_digits(a, base)
+# b0, b1 = int_split_digits(b, base)
 
-p00 = a0 * b0
-p10 = a1 * b0
-# p01 = a0 * b1
+# p00 = a0 * b0
+# p10 = a1 * b0
+# # p01 = a0 * b1
 
-# The following are equivalent.
-mid1 =   a * b0
-mid2 = (a1 * b0) * base**1 + (a0 * b0) * base**0
+# # The following are equivalent.
+# mid1 =   a * b0
+# mid2 = (a1 * b0) * base**1 + (a0 * b0) * base**0
 
 def int_print(value: int):
     print(f"bin({bin(value)})")

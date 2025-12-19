@@ -14,18 +14,17 @@
 static const char *
 i128_to_binary_string(i128 a, char *buf, size_t len, unsigned int base, unsigned int shift)
 {
-    i128 mask;
+    u128 a_abs, mask;
     size_t buf_prefix_i = 0, buf_i = 0;
 
-    mask = i128_from_u64(base - 1);
-
+    a_abs = i128_abs_unsigned(a);
+    mask  = u128_from_u64(base - 1);
     if (i128_sign(a)) {
         // Check if we can accomodate the unary negation.
         if (buf_prefix_i + 1 > len - 1) {
             goto nul_terminate;
         }
         buf[buf_prefix_i++] = '-';
-        a = i128_abs(a);
     }
 
     // Check if we can accomodate the base prefix.
@@ -41,7 +40,7 @@ i128_to_binary_string(i128 a, char *buf, size_t len, unsigned int base, unsigned
     case 16: buf[buf_prefix_i++] = 'x'; break;
     }
 
-    if (i128_eq(a, I128_ZERO)) {
+    if (u128_eq(a_abs, U128_ZERO)) {
         // Check if we can accomodate this character.
         if (buf_prefix_i + 1 <= len - 1) {
             buf[buf_prefix_i++] = '0';
@@ -51,13 +50,13 @@ i128_to_binary_string(i128 a, char *buf, size_t len, unsigned int base, unsigned
 
     // Write LSD to MSD into the buffer.
     buf_i = buf_prefix_i;
-    for (; buf_i < len - 1 && !i128_eq(a, I128_ZERO); buf_i++) {
+    for (; buf_i < len - 1 && !u128_eq(a_abs, U128_ZERO); buf_i++) {
         u64 digit;
 
         // digit = a % base
         // a     = a / base
-        digit = i128_and(a, mask).lo;
-        a     = i128_logical_right_shift(a, shift);
+        digit = u128_and(a_abs, mask).lo;
+        a_abs    = u128_shift_right_logical(a_abs, shift);
         if (digit < 10) {
             buf[buf_i] = cast(char)digit + '0';
         } else {
