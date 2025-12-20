@@ -102,7 +102,7 @@ internal_string_get_sign(String *s)
     BigInt_Sign sign = BIGINT_POSITIVE;
     for (; s->len > 1; s->data += 1, s->len -= 1) {
         char ch = s->data[0];
-        if (is_space(ch) || ch == '+') {
+        if (char_is_space(ch) || ch == '+') {
             // Unary plus does nothing, e.g. +2, -+2
             continue;
         } else if (ch == '-') {
@@ -140,34 +140,34 @@ static void
 internal_string_trim(String *s)
 {
     // Skip leading whitespace
-    while (is_space(s->data[0])) {
+    while (char_is_space(s->data[0])) {
         s->data += 1;
         s->len  -= 1;
     }
     // Skip trailing whitespace
-    while (s->len > 0 && is_space(s->data[s->len - 1])) {
+    while (s->len > 0 && char_is_space(s->data[s->len - 1])) {
         s->len -= 1;
     }
 }
 
-static int
-internal_char_to_int(char ch, int base)
+static BigInt_DIGIT
+internal_char_to_digit(char ch, int base)
 {
-    int i = -1;
+    BigInt_DIGIT i = BIGINT_DIGIT_MAX;
     // Convert character to potential integer representation up to base-36
-    if (is_digit(ch)) {
-        i = ch - '0';
-    } else if (is_lower(ch)) {
-        i = ch - 'a' + 10;
-    } else if (is_upper(ch)) {
-        i = ch - 'A' + 10;
+    if (char_is_digit(ch)) {
+        i = cast(BigInt_DIGIT)(ch - '0');
+    } else if (char_is_lower(ch)) {
+        i = cast(BigInt_DIGIT)(ch - 'a' + 10);
+    } else if (char_is_upper(ch)) {
+        i = cast(BigInt_DIGIT)(ch - 'A' + 10);
     }
 
     // Ensure above conversion is valid
-    if (0 <= i && i < base) {
+    if (i < cast(BigInt_DIGIT)base) {
         return i;
     }
-    return -1;
+    return BIGINT_DIGIT_MAX;
 }
 
 BigInt_Error
@@ -312,14 +312,16 @@ bigint_set_base_lstring(BigInt *dst, const char *data, size_t len, int base)
     const char *start = m.data;
     const char *end   = m.data + m.len;
     for (const char *it = start; it < end; it++) {
+        BigInt_DIGIT digit;
         char ch = *it;
         if (ch == '_' || ch == ',') {
             continue;
         }
-        int digit = internal_char_to_int(ch, base);
-        if (digit != -1) {
+
+        digit = internal_char_to_digit(ch, base);
+        if (digit != BIGINT_DIGIT_MAX) {
             bigint_mul_digit(dst, dst, cast(BigInt_DIGIT)base);
-            bigint_add_digit(dst, dst, cast(BigInt_DIGIT)digit);
+            bigint_add_digit(dst, dst, digit);
         } else {
             err = BIGINT_ERROR_DIGIT;
 fail:

@@ -26,6 +26,7 @@ struct i128be {
     u64 lo;
 };
 
+// Check: endianness
 // Windows is almost always little endian, else check what GCC/Clang say.
 #if defined(_MSC_VER) \
     || (defined(__BYTE_ORDER__) && (__BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__))
@@ -34,12 +35,12 @@ struct i128be {
 #define BIGINT_I128_ENDIAN_BIG      0
 
 // u128le
-#define BIGINT_U128_TYPE    u128le
+#define U128_NATIVE_TYPE    u128le
 #define U128_MAX            COMPOUND_LITERAL(u128le){U64_MAX,   U64_MAX}
 #define U128_ONE            COMPOUND_LITERAL(u128le){1,         0}
 
-// i128be
-#define BIGINT_I128_TYPE    i128le
+// i12lbe
+#define I128_NATIVE_TYPE    i128le
 #define I128_MAX            COMPOUND_LITERAL(i128le){U64_MAX,   I64_MAX}
 #define I128_MIN            COMPOUND_LITERAL(i128le){0,         I64_MIN}
 #define I128_ONE            COMPOUND_LITERAL(i128le){1,         0}
@@ -50,30 +51,28 @@ struct i128be {
 #define BIGINT_I128_ENDIAN_BIG      1
 
 // u128be
-#define BIGINT_U128_TYPE    u128be
+#define U128_NATIVE_TYPE    u128be
 #define U128_MAX            COMPOUND_LITERAL(u128be){U64_MAX,   U64_MAX}
 #define U128_ONE            COMPOUND_LITERAL(u128be){0,         1}
 
 // i128be
-#define BIGINT_I128_TYPE    i128be
+#define I128_NATIVE_TYPE    i128be
 #define I128_MAX            COMPOUND_LITERAL(i128be){U64_MAX,   U64_MAX}
 #define I128_MIN            COMPOUND_LITERAL(i128be){0,         I64_MIN}
 #define I128_ONE            COMPOUND_LITERAL(i128be){0,         1}
 
 #else
+#error Unsupported endianness!
+#endif // Check: endianness
 
-#define BIGINT_I128_ENDIAN_LITTLE   0
-#define BIGINT_I128_ENDIAN_BIG      0
 
-#endif
+// Check: signed representation
+#if (-1 & 3) != 3
+#error i128 assumes a Two's complement representation!
+#endif // Check: signed representation
 
-// Sanity check.
-#if BIGINT_I128_ENDIAN_LITTLE == BIGINT_I128_ENDIAN_BIG
-#error Imposible endianness!
-#endif
-
-typedef BIGINT_U128_TYPE u128;
-typedef BIGINT_I128_TYPE i128;
+typedef U128_NATIVE_TYPE u128;
+typedef I128_NATIVE_TYPE i128;
 
 #define U128_ZERO   COMPOUND_LITERAL(u128){0, 0}
 #define I128_ZERO   COMPOUND_LITERAL(i128){0, 0}
@@ -124,11 +123,32 @@ u128_or(u128 a, u128 b);
 u128
 u128_xor(u128 a, u128 b);
 
-u128
-u128_shift_left_logical(u128 a, unsigned int n);
+i128
+i128_not(i128 a);
+
+i128
+i128_and(i128 a, i128 b);
+
+i128
+i128_or(i128 a, i128 b);
+
+i128
+i128_xor(i128 a, i128 b);
 
 u128
-u128_shift_right_logical(u128 a, unsigned int n);
+u128_shift_left(u128 a, uint n);
+
+u128
+u128_shift_right(u128 a, uint n);
+
+i128
+i128_shift_left(i128 a, uint n);
+
+i128
+i128_shift_right_logical(i128 a, uint n);
+
+i128
+i128_shift_right_arithmetic(i128 a, uint n);
 
 
 // === }}} =====================================================================
@@ -224,7 +244,7 @@ i128_checked_add(i128 *dst, i128 a, i128 b);
  * @param [out] dst Always assigned no matter what.
  *
  * @return
- *  `true` if the addition resulted in signed overflow, else `false`.
+ *  `true` if the subtraction resulted in signed overflow, else `false`.
  */
 bool
 i128_checked_sub(i128 *dst, i128 a, i128 b);
@@ -268,6 +288,27 @@ i128_gt(i128 a, i128 b);
 bool
 i128_geq(i128 a, i128 b);
 
+// === DIGIT COMPARISON OPERATORS ========================================== {{{
+
+bool
+i128_eq_u64(i128 a, u64 b);
+
+bool
+i128_lt_u64(i128 a, u64 b);
+
+bool
+i128_leq_u64(i128 a, u64 b);
+
+bool
+i128_neq_u64(i128 a, u64 b);
+
+bool
+i128_gt_u64(i128 a, u64 b);
+
+bool
+i128_geq_u64(i128 a, u64 b);
+
+// === }}} =====================================================================
 // === }}} =====================================================================
 
 

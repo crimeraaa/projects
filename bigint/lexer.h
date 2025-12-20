@@ -14,7 +14,14 @@ typedef enum {
 
     // Balanced pairs
     TOKEN_PAREN_OPEN, TOKEN_PAREN_CLOSE, // ( )
-    TOKEN_PIPE, // |
+
+    // Bitwise
+    TOKEN_AMPERSAND,    // &
+    TOKEN_PIPE,         // |
+    TOKEN_CARET,        // ^
+    TOKEN_SHIFT_LEFT,   // <<
+    TOKEN_SHIFT_RIGHT,  // >>
+    TOKEN_TILDE,        // ~
 
     // Arithmetic
     TOKEN_PLUS, TOKEN_MINUS,                // + -
@@ -26,14 +33,15 @@ typedef enum {
     TOKEN_GREATER_THAN, TOKEN_GREATER_EQUAL,    // >  >=
 
     // Literals
-    TOKEN_NUMBER,
+    TOKEN_NUMBER,       // <number>     ::= [0-9][0-9,_ ]*
+    TOKEN_IDENTIFIER,   // <identifier> ::= [a-zA-Z_][0-9a-zA-Z_]*
     TOKEN_EOF,
 } Token_Type;
 
 #define TOKEN_COUNT     (TOKEN_EOF + 1)
 
 extern const String
-token_lstrings[TOKEN_COUNT];
+TOKEN_STRINGS[TOKEN_COUNT];
 
 typedef struct {
     Token_Type type;

@@ -158,22 +158,38 @@ def int_count_digits(value: int, base = 10) -> int:
     return count
 
 
-def int_bin(value: int, min_groups = 0, group_size = 8) -> str:
-    return int_encode_base(value, base=2, min_groups=min_groups, group_size=group_size)
+def int_bin(value: int, group_size = 64, group_min = 2) -> str:
+    value = __int_to_twos_complement(value, (group_min or 1) * group_size)
+    return int_encode_base(value, 2, group_size, group_min)
 
 
-def int_oct(value: int, min_groups = 0, group_size = 3) -> str:
-    return int_encode_base(value, base=8, min_groups=min_groups, group_size=group_size)
+# Not correct for signed values
+def int_oct(value: int, group_size = 16, group_min = 2) -> str:
+    bit_shift = 3
+    bit_count = (group_min or 1) * bit_shift * group_size
+    value     = __int_to_twos_complement(value, bit_count)
+    return int_encode_base(value, 8, group_size, group_min)
 
 
-def int_hex(value: int, min_groups = 0, group_size = 4) -> str:
-    return int_encode_base(value, base=16, min_groups=min_groups, group_size=group_size)
+def int_hex(value: int, group_size = 8, group_min = 4) -> str:
+    bit_shift = 4
+    bit_count = (group_min or 1) * bit_shift * group_size
+    value     = __int_to_twos_complement(value, bit_count)
+    return int_encode_base(value, 16, group_size, group_min)
 
 
-def int_encode_base(value: int, base = 10, min_groups = 0, group_size = 0) -> str:
+# Convert to an unsigned integer representing two's complement bits.
+def __int_to_twos_complement(value: int, bit_count: int):
+    if value < 0:
+        bit_mask = (1 << bit_count) - 1
+        value   &= bit_mask
+    return value
+
+
+def int_encode_base(value: int, base = 10, group_size = 0, group_min = 0) -> str:
     assert(2 <= base and base <= 64)
     assert(group_size == 0 or 2 <= group_size and group_size <= 64)
-    if value == 0 and min_groups == 0:
+    if value == 0 and group_min == 0:
         return '0'
 
     sb = bytearray()
@@ -216,7 +232,7 @@ def int_encode_base(value: int, base = 10, min_groups = 0, group_size = 0) -> st
 
         if skip_counter == 0 and skip_size > 0:
             skip_counter = skip_size
-            min_groups -= 1
+            group_min -= 1
             sb += b'_'
 
     # Add leading zeroes for binary, octal and hexadecimal.
@@ -225,8 +241,8 @@ def int_encode_base(value: int, base = 10, min_groups = 0, group_size = 0) -> st
             while skip_counter > 0:
                 skip_counter -= 1
                 sb += b'0'
-            min_groups -= 1
-            if min_groups <= 0:
+            group_min -= 1
+            if group_min <= 0:
                 break
             skip_counter = skip_size
             sb += b'_'
@@ -348,7 +364,7 @@ def int_to_words(a: int) -> str:
         if hundreds:
             s += f"{__INT_DIGIT_STRINGS[hundreds]}-hundred"
             if tens or ones:
-                s += " and "
+                s += ' '
 
         if tens:
             # [10,19]
@@ -368,7 +384,7 @@ def int_to_words(a: int) -> str:
             # Opinion: trailing comma only needed for two or more groups
             # of base-10 triples.
             # TODO(2025-12-20): Get 'one million *and* one'
-            if i != 0 and len(words) > 1:
+            if i != 0 and len(words) > 0:
                 s += ','
 
         # prepend

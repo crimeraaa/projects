@@ -12,8 +12,8 @@ vars:
     -Werror
     -Wconversion
     -pedantic
+    -fsanitize=address
     -I{{.ROOT_DIR}}
-  # -fsanitize=address
 
 includes:
   bigint:

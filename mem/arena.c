@@ -67,10 +67,10 @@ arena_resize(Arena *a, void *old_memory, size_t old_size, size_t new_size)
 
 void *
 arena_resize_align(Arena *a,
-    void                 *old_ptr,
-    size_t                old_size,
-    size_t                new_size,
-    size_t                align)
+    void  *old_ptr,
+    size_t old_size,
+    size_t new_size,
+    size_t align)
 {
     unsigned char *old_addr = cast(unsigned char *)old_ptr;
     assert(mem_is_power_of_two(align));
@@ -115,11 +115,11 @@ arena_free_all(Arena *a)
 
 static void *
 arena_allocator_fn(void *context,
-    Allocator_Mode       mode,
-    void                *old_ptr,
-    size_t               old_size,
-    size_t               new_size,
-    size_t               align)
+    Allocator_Mode mode,
+    void          *old_ptr,
+    size_t         old_size,
+    size_t         new_size,
+    size_t         align)
 {
     Arena *a = cast(Arena *)context;
     switch (mode) {

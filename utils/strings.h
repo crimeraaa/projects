@@ -43,19 +43,22 @@ struct String_Builder {
 };
 
 bool
-is_digit(char ch);
+char_is_alpha(char ch);
 
 bool
-is_upper(char ch);
+char_is_alnum(char ch);
 
 bool
-is_lower(char ch);
+char_is_digit(char ch);
 
 bool
-is_alnum(char ch);
+char_is_upper(char ch);
 
 bool
-is_space(char ch);
+char_is_lower(char ch);
+
+bool
+char_is_space(char ch);
 
 String
 string_sub(String s, size_t start, size_t stop);
@@ -83,6 +86,8 @@ string_builder_init(String_Builder *sb, Allocator allocator);
 
 void
 string_builder_destroy(String_Builder *sb);
+
+#define string_write_literal(sb, s) string_write_string(sb, s, sizeof(s) - 1)
 
 bool
 string_write_string(String_Builder *sb, const char *data, size_t len);

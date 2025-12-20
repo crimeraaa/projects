@@ -9,14 +9,15 @@ typedef enum {
     VALUE_INTEGER,
 } Value_Type;
 
-typedef struct {
+typedef struct Value Value;
+struct Value {
     Value_Type type;
     union {
         // BigInt *integer;
         i128 integer;
         bool boolean;
     };
-} Value;
+};
 
 #define value_type(v)       ((v).type)
 #define value_is_boolean(v) (value_type(v)== VALUE_BOOLEAN)

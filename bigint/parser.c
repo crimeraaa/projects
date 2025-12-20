@@ -13,7 +13,10 @@
 typedef enum {
     BIN_NONE,
 
-    // Arith
+    // Bitwise sans binary not
+    BIN_BAND, BIN_BOR, BIN_BXOR, BIN_SHL, BIN_SHR,
+
+    // Arithmetic
     BIN_ADD, BIN_SUB, BIN_MUL, BIN_DIV, BIN_MOD,
 
     // Comparison
@@ -48,6 +51,7 @@ parser_parse_expression(Parser *p, Value *dst);
 static void
 parser_parse_precedence(Parser *p, Precedence prec, Value *dst);
 
+__attribute__((__noreturn__))
 static void
 parser_throw(Parser *p, Parser_Error err)
 {
@@ -63,6 +67,7 @@ parser_throw(Parser *p, Parser_Error err)
     longjmp(p->error_handler, 1);
 }
 
+__attribute__((__noreturn__))
 static void
 parser_syntax_error_at(Parser *p, const char *info, const Token *where)
 {
@@ -70,19 +75,21 @@ parser_syntax_error_at(Parser *p, const char *info, const Token *where)
 
     s = where->lexeme;
     if (s.len == 0) {
-        s = token_lstrings[where->type];
+        s = TOKEN_STRINGS[where->type];
     }
     eprintfln("%s at " STRING_QFMTSPEC ".", info, string_expand(s));
     parser_throw(p, PARSER_ERROR_SYNTAX);
 }
 
 // Generally we want to throw errors for the lookahead token.
+__attribute__((__noreturn__))
 static void
 parser_syntax_error(Parser *p, const char *info)
 {
     parser_syntax_error_at(p, info, &p->lookahead);
 }
 
+__attribute__((__noreturn__))
 static void
 parser_syntax_error_consumed(Parser *p, const char *info)
 {
@@ -113,7 +120,7 @@ parser_expect(Parser *p, Token_Type t)
 {
     if (!parser_match(p, t)) {
         char tmp[64];
-        sprintf(tmp, "Expected '%s'", token_lstrings[t].data);
+        sprintf(tmp, "Expected '%s'", TOKEN_STRINGS[t].data);
         parser_syntax_error(p, tmp);
     }
     // Store the lookahead in the consumed since we now know it's valid.
@@ -188,22 +195,43 @@ parser_parse_unary(Parser *p, Value *left)
         // bigint_set_base_lstring(left->integer, s.data, s.len, /*base=*/0);
         break;
 
+    // Named function calls
+    case TOKEN_IDENTIFIER:
+        parser_syntax_error_consumed(p, "Function calls not yet supported");
+        break;
+
     // Groupings
     case TOKEN_PAREN_OPEN:
         parser_parse_expression(p, left);
         parser_expect(p, TOKEN_PAREN_CLOSE);
         break;
 
-    // Absolute value
-    case TOKEN_PIPE:
-        parser_parse_expression(p, left);
-        parser_expect(p, TOKEN_PIPE);
-        left->integer = i128_abs(left->integer);
+    // Bitwise NOT
+    case TOKEN_TILDE:
+        parser_parse_precedence(p, PREC_UNARY, left);
+        parser_check_integer_unary(p, left, t.lexeme);
+        left->integer = i128_not(left->integer);
         break;
 
     default:
         parser_syntax_error_consumed(p, "Expected an expression");
         break;
+    }
+}
+
+static void
+parser_check_shift(Parser *p, i128 n, const char *name)
+{
+    char buf[256];
+    // Shifting by negative values is never a good idea.
+    if (i128_sign(n)) {
+        snprintf(buf, sizeof(buf), "%s is negative", name);
+        parser_syntax_error(p, buf);
+    }
+    // Shifting more than the bit width is probably an error.
+    else if (i128_geq_u64(n, TYPE_BITS(i128))) {
+        snprintf(buf, sizeof(buf), "%s is too large", name);
+        parser_syntax_error(p, buf);
     }
 }
 
@@ -226,9 +254,22 @@ parser_arith(Parser *p, const Parser_Rule *rule, Value *left, Value *right)
     // case BIN_SUB: err = bigint_sub(dst, a, b); break;
     // case BIN_MUL: err = bigint_mul(dst, a, b); break;
 
-    case BIN_ADD: *dst = i128_add(a, b); break;
-    case BIN_SUB: *dst = i128_sub(a, b); break;
-    case BIN_MUL: *dst = i128_mul(a, b); break;
+    case BIN_BAND:  *dst = i128_and(a, b); break;
+    case BIN_BOR:   *dst = i128_or(a, b); break;
+    case BIN_BXOR:  *dst = i128_xor(a, b); break;
+    case BIN_SHL:
+        parser_check_shift(p, b, "Logical left shift");
+        *dst = i128_shift_left(a, cast(uint)b.lo);
+        break;
+    case BIN_SHR:
+        parser_check_shift(p, b, "Arithmetic right shift");
+        *dst = i128_shift_right_arithmetic(a, cast(uint)b.lo);
+        break;
+
+    // Arithmetci
+    case BIN_ADD:   *dst = i128_add(a, b); break;
+    case BIN_SUB:   *dst = i128_sub(a, b); break;
+    case BIN_MUL:   *dst = i128_mul(a, b); break;
     default:
         parser_syntax_error_at(p, "Unsupported binary arithmetic operation", &t);
         break;
@@ -330,26 +371,32 @@ parser_parse_precedence(Parser *p, Precedence prec, Value *left)
 
 static const Parser_Rule
 parser_rules[TOKEN_COUNT] = {
-    // Token_Type                prec             op        binary_fn
-    /* TOKEN_UNKNOWN */         {PREC_NONE,       BIN_NONE, NULL},
-    /* TOKEN_AND */             {PREC_AND,        BIN_AND,  parser_logical},
-    /* TOKEN_OR */              {PREC_OR,         BIN_OR,   parser_logical},
-    /* TOKEN_PAREN_OPEN */      {PREC_NONE,       BIN_NONE, NULL},
-    /* TOKEN_PAREN_CLOSE */     {PREC_NONE,       BIN_NONE, NULL},
-    /* TOKEN_PIPE */            {PREC_NONE,       BIN_NONE, NULL},
-    /* TOKEN_PLUS */            {PREC_TERMINAL,   BIN_ADD,  parser_arith},
-    /* TOKEN_MINUS */           {PREC_TERMINAL,   BIN_SUB,  parser_arith},
-    /* TOKEN_STAR */            {PREC_FACTOR,     BIN_MUL,  parser_arith},
-    /* TOKEN_SLASH */           {PREC_FACTOR,     BIN_DIV,  parser_arith},
-    /* TOKEN_PERCENT */         {PREC_FACTOR,     BIN_MOD,  parser_arith},
-    /* TOKEN_EQUALS */          {PREC_EQUALITY,   BIN_EQ,   parser_compare},
-    /* TOKEN_NOT_EQUAL */       {PREC_EQUALITY,   BIN_NEQ,  parser_compare},
-    /* TOKEN_LESS_THAN */       {PREC_COMPARISON, BIN_LT,   parser_compare},
-    /* TOKEN_LESS_EQUAL */      {PREC_COMPARISON, BIN_LEQ,  parser_compare},
-    /* TOKEN_GREATER_THAN */    {PREC_COMPARISON, BIN_GT,   parser_compare},
-    /* TOKEN_GREATER_EQUAL */   {PREC_COMPARISON, BIN_GEQ,  parser_compare},
-    /* TOKEN_NUMBER */          {PREC_NONE,       BIN_NONE, NULL},
-    /* TOKEN_EOF */             {PREC_NONE,       BIN_NONE, NULL},
+    // Token_Type                prec               op          binary_fn
+    /* TOKEN_UNKNOWN */         {PREC_NONE,         BIN_NONE,   NULL},
+    /* TOKEN_AND */             {PREC_AND,          BIN_AND,    parser_logical},
+    /* TOKEN_OR */              {PREC_OR,           BIN_OR,     parser_logical},
+    /* TOKEN_PAREN_OPEN */      {PREC_NONE,         BIN_NONE,   NULL},
+    /* TOKEN_PAREN_CLOSE */     {PREC_NONE,         BIN_NONE,   NULL},
+    /* TOKEN_AMPERSAND */       {PREC_FACTOR,       BIN_BAND,   parser_arith},
+    /* TOKEN_PIPE */            {PREC_TERMINAL,     BIN_BOR,    parser_arith},
+    /* TOKEN_CARET */           {PREC_TERMINAL,     BIN_BXOR,   parser_arith},
+    /* TOKEN_SHIFT_LEFT */      {PREC_FACTOR,       BIN_SHL,    parser_arith},
+    /* TOKEN_SHIFT_RIGHT */     {PREC_FACTOR,       BIN_SHR,    parser_arith},
+    /* TOKEN_TILDE */           {PREC_NONE,         BIN_NONE,   NULL},
+    /* TOKEN_PLUS */            {PREC_TERMINAL,     BIN_ADD,    parser_arith},
+    /* TOKEN_MINUS */           {PREC_TERMINAL,     BIN_SUB,    parser_arith},
+    /* TOKEN_STAR */            {PREC_FACTOR,       BIN_MUL,    parser_arith},
+    /* TOKEN_SLASH */           {PREC_FACTOR,       BIN_DIV,    parser_arith},
+    /* TOKEN_PERCENT */         {PREC_FACTOR,       BIN_MOD,    parser_arith},
+    /* TOKEN_EQUALS */          {PREC_EQUALITY,     BIN_EQ,     parser_compare},
+    /* TOKEN_NOT_EQUAL */       {PREC_EQUALITY,     BIN_NEQ,    parser_compare},
+    /* TOKEN_LESS_THAN */       {PREC_COMPARISON,   BIN_LT,     parser_compare},
+    /* TOKEN_LESS_EQUAL */      {PREC_COMPARISON,   BIN_LEQ,    parser_compare},
+    /* TOKEN_GREATER_THAN */    {PREC_COMPARISON,   BIN_GT,     parser_compare},
+    /* TOKEN_GREATER_EQUAL */   {PREC_COMPARISON,   BIN_GEQ,    parser_compare},
+    /* TOKEN_NUMBER */          {PREC_NONE,         BIN_NONE,   NULL},
+    /* TOKEN_IDENTIFIER */      {PREC_NONE,         BIN_NONE,   NULL},
+    /* TOKEN_EOF */             {PREC_NONE,         BIN_NONE,   NULL},
 };
 
 static const Parser_Rule *

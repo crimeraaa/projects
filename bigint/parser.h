@@ -31,15 +31,16 @@ typedef struct {
     Allocator             allocator; // Used to allocate for temporaries.
 } Parser;
 
+
+/** @link https://odin-lang.org/docs/overview/#operator-precedence */
 typedef enum {
     PREC_NONE,
-    PREC_NUMBER,
     PREC_OR,         // or
     PREC_AND,        // and
     PREC_EQUALITY,   // == !=
     PREC_COMPARISON, // < <= >= >
-    PREC_TERMINAL,   // + -
-    PREC_FACTOR,     // * / %
+    PREC_TERMINAL,   // + - | ^
+    PREC_FACTOR,     // * / % & << >>
     PREC_UNARY,      // + -
 } Precedence;
 

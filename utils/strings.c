@@ -3,31 +3,37 @@
 #include "strings.h"
 
 bool
-is_digit(char ch)
+char_is_alpha(char ch)
+{
+    return char_is_upper(ch) || char_is_lower(ch);
+}
+
+bool
+char_is_alnum(char ch)
+{
+    return char_is_alpha(ch) || char_is_digit(ch);
+}
+
+bool
+char_is_digit(char ch)
 {
     return '0' <= ch && ch <= '9';
 }
 
 bool
-is_upper(char ch)
+char_is_upper(char ch)
 {
     return 'A' <= ch && ch <= 'Z';
 }
 
 bool
-is_lower(char ch)
+char_is_lower(char ch)
 {
     return 'a' <= ch && ch <= 'z';
 }
 
 bool
-is_alnum(char ch)
-{
-    return is_digit(ch) || is_upper(ch) || is_lower(ch);
-}
-
-bool
-is_space(char ch)
+char_is_space(char ch)
 {
     switch (ch) {
     case ' ':
@@ -59,7 +65,7 @@ string_split(String s, Allocator allocator)
     for (size_t stop = 0; stop < s.len; stop += 1) {
         char c = s.data[stop];
         // Split on whitespaces.
-        if (is_space(c)) {
+        if (char_is_space(c)) {
             // Mark substring (if any) before splitting the whitespace.
             if (start != stop) {
                 if (!string_dynamic_append(&d, string_sub(s, start, stop))) {

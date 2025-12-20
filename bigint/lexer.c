@@ -43,7 +43,7 @@ lexer_match(Lexer *x, char ch)
 static void
 lexer_skip_whitespace(Lexer *x)
 {
-    while (!lexer_is_eof(x) && is_space(lexer_peek(x))) {
+    while (!lexer_is_eof(x) && char_is_space(lexer_peek(x))) {
         lexer_advance(x);
     }
 }
@@ -70,7 +70,7 @@ static Token
 lexer_make_number(Lexer *x)
 {
     char ch = lexer_peek(x);
-    while (is_alnum(ch) || ch == ',' || ch == '_') {
+    while (char_is_alnum(ch) || ch == ',' || ch == '_') {
         lexer_advance(x);
         ch = lexer_peek(x);
     }
@@ -78,7 +78,7 @@ lexer_make_number(Lexer *x)
 }
 
 static Token_Type
-lexer_check_keyword(String s)
+lexer_check_keyword_or_identifier(String s)
 {
     switch (s.len) {
     case 2:
@@ -92,19 +92,24 @@ lexer_check_keyword(String s)
     default:
         break;
     }
-    return TOKEN_UNKNOWN;
+    return TOKEN_IDENTIFIER;
 }
 
 static Token
-lexer_make_keyword(Lexer *x)
+lexer_make_keyword_or_identifier(Lexer *x)
 {
-    char ch = lexer_peek(x);
-    while (is_alnum(ch)) {
+    String s;
+    Token t;
+    char ch;
+
+    ch = lexer_peek(x);
+    while (char_is_alnum(ch) || ch == '_') {
         lexer_advance(x);
         ch = lexer_peek(x);
     }
-    String s = string_slice(x->input, x->start, x->cursor);
-    Token  t = {lexer_check_keyword(s), s};
+    s        = string_slice(x->input, /*start=*/x->start, /*stop=*/x->cursor);
+    t.type   = lexer_check_keyword_or_identifier(s);
+    t.lexeme = s;
     return t;
 }
 
@@ -119,17 +124,20 @@ lexer_lex(Lexer *x)
 
     char ch = lexer_peek(x);
     lexer_advance(x);
-    if (is_digit(ch)) {
+    if (char_is_digit(ch)) {
         return lexer_make_number(x);
-    } else if (is_lower(ch)) {
-        return lexer_make_keyword(x);
+    } else if (char_is_alpha(ch) || ch == '_') {
+        return lexer_make_keyword_or_identifier(x);
     }
 
     Token_Type t = TOKEN_UNKNOWN;
     switch (ch) {
     case '(': t = TOKEN_PAREN_OPEN;  break;
     case ')': t = TOKEN_PAREN_CLOSE; break;
+    case '&': t = TOKEN_AMPERSAND;   break;
     case '|': t = TOKEN_PIPE;        break;
+    case '^': t = TOKEN_CARET;       break;
+    case '~': t = TOKEN_TILDE;       break;
     case '+': t = TOKEN_PLUS;        break;
     case '-': t = TOKEN_MINUS;       break;
     case '*': t = TOKEN_STAR;        break;
@@ -141,8 +149,23 @@ lexer_lex(Lexer *x)
             t = TOKEN_EQUALS;
         }
         break;
-    case '<': t = lexer_match(x, '=') ? TOKEN_LESS_EQUAL    : TOKEN_LESS_THAN;    break;
-    case '>': t = lexer_match(x, '=') ? TOKEN_GREATER_EQUAL : TOKEN_GREATER_THAN; break;
+    case '<':
+        if (lexer_match(x, '=')) {
+            t = TOKEN_LESS_EQUAL;
+        } else if (lexer_match(x, '<')) {
+            t = TOKEN_SHIFT_LEFT;
+        } else {
+            t = TOKEN_LESS_THAN;
+        }
+        break;
+    case '>':
+        if (lexer_match(x, '=')) {
+            t = TOKEN_GREATER_EQUAL;
+        } else if (lexer_match(x, '>')) {
+            t = TOKEN_SHIFT_RIGHT;
+        } else {
+            t = TOKEN_GREATER_THAN;
+        }
     case '!':
         if (lexer_match(x, '=')) {
             t = TOKEN_NOT_EQUAL;
@@ -156,13 +179,18 @@ lexer_lex(Lexer *x)
 #define s_ string_literal
 
 const String
-token_lstrings[TOKEN_COUNT] = {
+TOKEN_STRINGS[TOKEN_COUNT] = {
     /* TOKEN_UNKNOWN */         s_("<unknown>"),
     /* TOKEN_AND */             s_("and"),
     /* TOKEN_OR */              s_("or"),
     /* TOKEN_PAREN_OPEN */      s_("("),
     /* TOKEN_PAREN_CLOSE */     s_(")"),
+    /* TOKEN_AMPERSAND */       s_("&"),
     /* TOKEN_PIPE */            s_("|"),
+    /* TOKEN_CARET */           s_("^"),
+    /* TOKEN_SHIFT_LEFT */      s_("<<"),
+    /* TOKEN_SHIFT_RIGHT */     s_(">>"),
+    /* TOKEN_TILDE */           s_("~"),
     /* TOKEN_PLUS */            s_("+"),
     /* TOKEN_MINUS */           s_("-"),
     /* TOKEN_STAR */            s_("*"),
@@ -175,6 +203,7 @@ token_lstrings[TOKEN_COUNT] = {
     /* TOKEN_GREATER_THAN */    s_(">"),
     /* TOKEN_GREATER_EQUAL */   s_(">="),
     /* TOKEN_NUMBER */          s_("<number>"),
+    /* TOKEN_IDENTIFIER */      s_("<identifier>"),
     /* TOKEN_EOF */             s_("<eof>"),
 };
 

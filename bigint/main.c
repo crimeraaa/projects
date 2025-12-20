@@ -4,117 +4,180 @@
 #include <string.h> // strlen
 
 // main
+#include <mem/arena.c>
 #include "parser.c"
+
+static void
+internal_string_builder_reverse(String_Builder *sb, size_t start, size_t stop)
+{
+    char *buf;
+    size_t left, right;
+
+    buf   = sb->data;
+    left  = start;
+    right = stop - 1;
+    for (; left < right; left++, right--) {
+        char tmp   = buf[left];
+        buf[left]  = buf[right];
+        buf[right] = tmp;
+    }
+}
+
+static char
+internal_int_to_char(int digit)
+{
+    if (0 <= digit && digit <= 9) {
+        return cast(char)('0' + digit);
+    } else {
+        return cast(char)('a' - 10 + digit);
+    }
+}
 
 
 /** @brief Writes at most `len - 2` characters (i.e. `buf[:len - 1]`),
- *  writing the nul character at `len - 1`.
- */
-
+ *  writing the nul character at `len - 1`. */
 static const char *
-i128_to_binary_string(i128 a, char *buf, size_t len, unsigned int base, unsigned int shift)
+i128_to_binary_string(i128 a, uint base, uint shift, Allocator allocator)
 {
+    String_Builder sb;
     u128 a_abs, mask;
-    size_t buf_prefix_i = 0, buf_i = 0;
+    size_t group_size, group_iter, group_total, group_count = 0, prefix_i = 0;
+    char leader_char;
 
-    a_abs = i128_abs_unsigned(a);
+    string_builder_init(&sb, allocator);
+    a_abs = u128_from_i128(a);
     mask  = u128_from_u64(base - 1);
-    if (i128_sign(a)) {
-        // Check if we can accomodate the unary negation.
-        if (buf_prefix_i + 1 > len - 1) {
-            goto nul_terminate;
-        }
-        buf[buf_prefix_i++] = '-';
-    }
-
-    // Check if we can accomodate the base prefix.
-    if (buf_prefix_i + 2 > len - 1) {
-        goto nul_terminate;
-    }
+    leader_char = internal_int_to_char(i128_sign(a) ? cast(int)base - 1 : 0);
 
     // Write base prefix.
-    buf[buf_prefix_i++] = '0';
     switch (base) {
-    case 2:  buf[buf_prefix_i++] = 'b'; break;
-    case 8:  buf[buf_prefix_i++] = 'o'; break;
-    case 16: buf[buf_prefix_i++] = 'x'; break;
-    }
-
-    if (u128_eq(a_abs, U128_ZERO)) {
-        // Check if we can accomodate this character.
-        if (buf_prefix_i + 1 <= len - 1) {
-            buf[buf_prefix_i++] = '0';
+    case 2:
+        // group_size=64 * shift=1 * group_total=2 = 128
+        // group_size=32 * shift=1 * group_total=4 = 128
+        // group_size=16 * shift=1 * group_total=8 = 128
+        // group_size=8  * shift=1 * group_total=8 = 128
+        group_size  = 8;
+        group_total = 8;
+        if (!string_write_literal(&sb, "0b")) {
+            goto nul_terminate;
         }
-        goto nul_terminate;
+        break;
+    case 8:
+        // group_size=21 * shift=3 * group_total=2 == 128
+        // group_size=10 * shift=3 * group_total=4 == 128
+        group_size  = 10;
+        group_total = 2;
+        if (!string_write_literal(&sb, "0o")) {
+            goto nul_terminate;
+        }
+        break;
+    case 16:
+        // group_size=16 * shift=4 * group_total=2 == 128
+        // group_size=8  * shift=4 * group_total=4 == 128
+        group_size  = 8;
+        group_total = 4;
+        if (!string_write_literal(&sb, "0x")) {
+            goto nul_terminate;
+        }
+        break;
+    }
+    group_iter = group_size;
+
+    prefix_i = sb.len;
+    if (u128_eq(a_abs, U128_ZERO)) {
+        string_write_char(&sb, '0');
+        goto add_leading_zeroes;
     }
 
     // Write LSD to MSD into the buffer.
-    buf_i = buf_prefix_i;
-    for (; buf_i < len - 1 && !u128_eq(a_abs, U128_ZERO); buf_i++) {
-        u64 digit;
+    while (!u128_eq(a_abs, U128_ZERO)) {
+        int digit;
+        char ch;
 
         // digit = a % base
         // a     = a / base
-        digit = u128_and(a_abs, mask).lo;
-        a_abs    = u128_shift_right_logical(a_abs, shift);
-        if (digit < 10) {
-            buf[buf_i] = cast(char)digit + '0';
-        } else {
-            buf[buf_i] = cast(char)digit - 10 + 'a';
+        //
+        // NOTE: wrong output for signed octal since 3 is not a clean
+        //      quotient of 128. However, we can't arithmetic right
+        //      shift because we'll never reach zero.
+        digit = cast(int)u128_and(a_abs, mask).lo;
+        a_abs = u128_shift_right(a_abs, shift);
+        ch    = internal_int_to_char(digit);
+
+        if (group_iter == 0) {
+            if (!string_write_char(&sb, '_')) {
+                goto nul_terminate;
+            }
+            group_iter   = group_size;
+            group_count += 1;
+        }
+        group_iter -= 1;
+
+        if (!string_write_char(&sb, ch)) {
+            goto nul_terminate;
+        }
+    }
+
+add_leading_zeroes:
+    if (group_count < group_total) {
+        while (group_iter > 0) {
+            if (!string_write_char(&sb, leader_char)) {
+                goto nul_terminate;
+            }
+            group_iter -= 1;
         }
     }
 
     // Rewrite to be MSD to LSD.
-    for (size_t left = buf_prefix_i, right = buf_i - 1; left < right; left++, right--) {
-        char tmp;
-
-        tmp        = buf[left];
-        buf[left]  = buf[right];
-        buf[right] = tmp;
-    }
+    internal_string_builder_reverse(&sb, prefix_i, sb.len);
 nul_terminate:
-    buf[buf_i] = '\0';
-    return buf;
+    return string_to_cstring(&sb, NULL);
 }
 
 static const char *
-i128_bin(i128 a, char *buf, size_t len)
+i128_bin(i128 a, Allocator allocator)
 {
-    return i128_to_binary_string(a, buf, len, 2, 1);
+    const uint base = 2, shift = 1;
+    return i128_to_binary_string(a, base, shift, allocator);
 }
 
 static const char *
-i128_oct(i128 a, char *buf, size_t len)
+i128_oct(i128 a, Allocator allocator)
 {
-    return i128_to_binary_string(a, buf, len, 8, 3);
+    const uint base = 8, shift = 3;
+    return i128_to_binary_string(a, base, shift, allocator);
 }
 
 static const char *
-i128_hex(i128 a, char *buf, size_t len)
+i128_hex(i128 a, Allocator allocator)
 {
-    return i128_to_binary_string(a, buf, len, 16, 4);
+    const uint base = 16, shift = 4;
+    return i128_to_binary_string(a, base, shift, allocator);
 }
 
 int
 main(void)
 {
+    Arena arena;
+    Allocator allocator;
     char buf[BUFSIZ];
+
+    arena_init(&arena, buf, sizeof(buf));
+    allocator = arena_allocator(&arena);
     for (;;) {
         Parser p;
         Value v;
-        const char *s;
-        size_t n;
+        String s;
         Parser_Error err;
 
-        fputs(">>> ", stdout);
-        if (fgets(buf, sizeof(buf), stdin) == NULL) {
+        fputs("bigint> ", stdout);
+        s.data = fgets(buf, sizeof(buf), stdin);
+        if (s.data == NULL) {
             fputc('\n', stdout);
             break;
         }
-        s = buf;
-        n = strcspn(buf, "\r\n");
-
-        parser_init(&p, (String){s, n}, (Allocator){NULL, NULL});
+        s.len = strcspn(buf, "\r\n");
+        parser_init(&p, s, (Allocator){NULL, NULL});
 
         v.type    = VALUE_INTEGER;
         v.integer = I128_ZERO;
@@ -125,12 +188,13 @@ main(void)
                 printfln("%s", v.boolean ? "true" : "false");
                 break;
             case VALUE_INTEGER:
-                printfln("bin(%s)", i128_bin(v.integer, buf, sizeof(buf)));
-                printfln("oct(%s)", i128_oct(v.integer, buf, sizeof(buf)));
-                printfln("hex(%s)", i128_hex(v.integer, buf, sizeof(buf)));
+                printfln("bin(%s)", i128_bin(v.integer, allocator));
+                printfln("oct(%s)", i128_oct(v.integer, allocator));
+                printfln("hex(%s)", i128_hex(v.integer, allocator));
                 break;
             }
         }
+        arena_free_all(&arena);
     }
 
     return 0;

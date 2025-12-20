@@ -77,7 +77,7 @@ u128_from_string(const char *restrict s, size_t n, const char **restrict end_ptr
         char ch;
 
         ch = s[i];
-        if (ch == '+' || is_space(ch)) {
+        if (ch == '+' || char_is_space(ch)) {
             continue;
         } else if (ch == '-') {
             sign = !sign;
@@ -119,15 +119,15 @@ u128_from_string(const char *restrict s, size_t n, const char **restrict end_ptr
         char ch;
 
         ch = s[i];
-        if (ch == '_' || ch == ',' || is_space(ch)) {
+        if (ch == '_' || ch == ',' || char_is_space(ch)) {
             continue;
         }
 
-        if (is_digit(ch)) {
+        if (char_is_digit(ch)) {
             digit = cast(u64)(ch - '0');
-        } else if (is_upper(ch)) {
+        } else if (char_is_upper(ch)) {
             digit = cast(u64)(ch - 'A' + 10);
-        } else if (is_lower(ch)) {
+        } else if (char_is_lower(ch)) {
             digit = cast(u64)(ch - 'a' + 10);
         } else {
             break;
@@ -201,8 +201,44 @@ u128_xor(u128 a, u128 b)
     return dst;
 }
 
+i128
+i128_not(i128 a)
+{
+    i128 dst;
+    dst.lo = ~a.lo;
+    dst.hi = ~a.hi;
+    return dst;
+}
+
+i128
+i128_and(i128 a, i128 b)
+{
+    i128 dst;
+    dst.lo = a.lo & b.lo;
+    dst.hi = a.hi & b.hi;
+    return dst;
+}
+
+i128
+i128_or(i128 a, i128 b)
+{
+    i128 dst;
+    dst.lo = a.lo | b.lo;
+    dst.hi = a.hi | b.hi;
+    return dst;
+}
+
+i128
+i128_xor(i128 a, i128 b)
+{
+    i128 dst;
+    dst.lo = a.lo ^ b.lo;
+    dst.hi = a.hi ^ b.hi;
+    return dst;
+}
+
 u128
-u128_shift_left_logical(u128 a, unsigned int n)
+u128_shift_left(u128 a, uint n)
 {
     u128 dst;
     // Resulting logical left-shift may result in nonzero `lo` and `hi`?
@@ -220,7 +256,7 @@ u128_shift_left_logical(u128 a, unsigned int n)
 }
 
 u128
-u128_shift_right_logical(u128 a, unsigned int n)
+u128_shift_right(u128 a, uint n)
 {
     u128 dst;
     // Resulting logical right-shift may result in both nonzero `lo` and `hi`?
@@ -233,6 +269,87 @@ u128_shift_right_logical(u128 a, unsigned int n)
         n -= TYPE_BITS(a.hi);
         dst.lo = a.hi >> n;
         dst.hi = 0;
+    }
+    return dst;
+}
+
+static i128
+internal_i128_shift_logical(i128 a, u128 (*shift_fn)(u128 a, uint n), uint n)
+{
+    u128 tmp;
+    i128 dst;
+    tmp = u128_from_i128(a);
+    tmp = shift_fn(tmp, n);
+    dst = i128_from_u128(tmp);
+    return dst;
+}
+
+i128
+i128_shift_left(i128 a, uint n)
+{
+    return internal_i128_shift_logical(a, u128_shift_left, n);
+}
+
+i128
+i128_shift_right_logical(i128 a, uint n)
+{
+    return internal_i128_shift_logical(a, u128_shift_right, n);
+}
+
+i128
+i128_shift_right_arithmetic(i128 a, uint n)
+{
+    i128 dst;
+
+    // Resulting arithmetic right-shift may result in both nonzero `lo` and `hi`?
+    if (n < TYPE_BITS(dst.lo)) {
+        u64 sx_hi = 0;
+        uint bits_lo;
+
+        bits_lo = TYPE_BITS(a.hi) - n;
+        if (i128_sign(a)) {
+            // Concept check:
+            //     (0b1001_1101 >> 2)
+            //  ==  0bxx10_0111
+            //
+            //  bits = 8
+            //  n = 2
+            //  bits_lo = bits - n
+            //          = 6
+            //
+            //  sx_hi   = ~((0b0000_0001 << bits_right)  - 1)
+            //          = ~((0b0000_0001 << 6)           - 1)
+            //          = ~( 0b0100_0000                 - 1)
+            //          = ~  0b0011_1111
+            //          =    0b1100_0000
+            sx_hi = ~((cast(u64)1 << bits_lo) - 1);
+        }
+        dst.lo = (a.lo >> n) | (cast(u64)a.hi << bits_lo);
+        dst.hi = (a.hi >> n) | cast(i64)sx_hi;
+    }
+    // Resulting arithmetic right-shift completely clears out `hi`?
+    else {
+        // Concept check:
+        //    (0b1001_1101_0000_0011 >> n)
+        // ==  0bxxxx_xxxx_xx10_0111
+        //
+        //  bits = 8, n = 10
+        //  bits_right = n - bits
+        //  = 10 - 8
+        //  = 2
+        //
+        //  sx_left =
+        u64 sx_hi = 0, sx_lo = 0;
+        uint bits_lo;
+
+        bits_lo = n - TYPE_BITS(a.hi);
+        if (i128_sign(a)) {
+            sx_hi = U64_MAX;
+            sx_lo = ~((cast(u64)1 << bits_lo) - 1);
+        }
+
+        dst.lo = cast(u64)(a.hi >> bits_lo) | sx_lo;
+        dst.hi = cast(i64)sx_hi;
     }
     return dst;
 }
@@ -313,7 +430,7 @@ u128_sub(u128 a, u128 b)
 
 /** @link catid on stackoverflow: https://stackoverflow.com/a/51587262 */
 static u128
-u128_from_u64_mul_u64(u64 a, u64 b)
+internal_u64_mul_u64(u64 a, u64 b)
 {
     u128 dst;
     u64 a0, a1, b0, b1, p00, p10, p01, p11, mid;
@@ -481,8 +598,8 @@ u128_mul_u64(u128 a, u64 b)
     b0 = b;
     a1 = a.hi;
 
-    // No `b1`, so we can save a few instructions.
-    dst     = u128_from_u64_mul_u64(a0, b0);
+    // No `b1`, meaning no `a0 * b1`, so we can save a few instructions.
+    dst     = internal_u64_mul_u64(a0, b0);
     p10     = a1 * b0;
     dst.hi += p10;
     return dst;
@@ -494,7 +611,7 @@ i128_add(i128 a, i128 b)
     i128 dst;
     u128 tmp, _a, _b;
 
-    // Two's complement addition is the exact as unsigned addition.
+    // Two's complement addition is the same as unsigned addition.
     _a  = u128_from_i128(a);
     _b  = u128_from_i128(b);
     tmp = u128_add(_a, _b);
@@ -508,7 +625,7 @@ i128_sub(i128 a, i128 b)
     i128 dst;
     u128 tmp, _a, _b;
 
-    // Two's complement addition is the exact as unsigned subtraction.
+    // Two's complement subtraction is the same as unsigned subtraction.
     _a  = u128_from_i128(a);
     _b  = u128_from_i128(b);
     tmp = u128_sub(_a, _b);
@@ -569,7 +686,7 @@ u128_checked_mul(u128 *dst, u128 a, u128 b)
     b0 = b.lo;
     b1 = b.hi;
 
-    *dst = u128_from_u64_mul_u64(a0, b0);
+    *dst = internal_u64_mul_u64(a0, b0);
 
     // Overflow check for upper 64 bits:
     //  dst.hi + p10 + p01 > max(u64)
@@ -764,6 +881,54 @@ bool
 i128_geq(i128 a, i128 b)
 {
     return i128_leq(b, a);
+}
+
+bool
+i128_eq_u64(i128 a, u64 b)
+{
+    return !i128_sign(a) && a.hi == 0 && a.lo == b;
+}
+
+bool
+i128_lt_u64(i128 a, u64 b)
+{
+    // Simulate `a - b < 0` without actually doing the full subtraction.
+    bool less, carry;
+    // No `b.hi` so we can save a few instructions.
+    carry = a.lo < b;
+    less  = a.hi < cast(i64)carry;
+    return less;
+}
+
+bool
+i128_leq_u64(i128 a, u64 b)
+{
+    // Simulate `a - b < 0` without actually doing the full subtraction.
+    bool less_eq, carry;
+    // No `b.hi` so we can save a few instructions.
+    carry   = a.lo < b;
+    less_eq = a.hi <= cast(i64)carry;
+    return less_eq;
+}
+
+bool
+i128_neq_u64(i128 a, u64 b)
+{
+    return !i128_eq_u64(a, b);
+}
+
+bool
+i128_gt_u64(i128 a, u64 b)
+{
+    // a > b == !(a <= b)
+    return !i128_leq_u64(a, b);
+}
+
+bool
+i128_geq_u64(i128 a, u64 b)
+{
+    // a >= b == !(a < b)
+    return !i128_lt_u64(a, b);
 }
 
 // === }}} =====================================================================
