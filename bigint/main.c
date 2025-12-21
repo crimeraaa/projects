@@ -56,8 +56,8 @@ i128_to_binary_string(i128 a, uint base, uint shift, Allocator allocator)
         // group_size=32 * shift=1 * group_total=4 = 128
         // group_size=16 * shift=1 * group_total=8 = 128
         // group_size=8  * shift=1 * group_total=8 = 128
-        group_size  = 8;
-        group_total = 8;
+        group_size  = 64;
+        group_total = 2;
         if (!string_write_literal(&sb, "0b")) {
             goto nul_terminate;
         }
@@ -96,10 +96,6 @@ i128_to_binary_string(i128 a, uint base, uint shift, Allocator allocator)
 
         // digit = a % base
         // a     = a / base
-        //
-        // NOTE: wrong output for signed octal since 3 is not a clean
-        //      quotient of 128. However, we can't arithmetic right
-        //      shift because we'll never reach zero.
         digit = cast(int)u128_and(a_abs, mask).lo;
         a_abs = u128_shift_right(a_abs, shift);
         ch    = internal_int_to_char(digit);

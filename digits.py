@@ -416,7 +416,7 @@ def int_digit_mul(a: int, b: int) -> tuple[int, int]:
     return prod, carry
 
 
-def int_split_digits(value: int, base = DIGIT_BASE) -> tuple[int]:
+def int_split_digits(value: int, base = DIGIT_BASE) -> tuple[int, ...]:
     if value == 0:
         return [0]
 
@@ -489,3 +489,23 @@ def int_print(value: int):
     print(f"bin({bin(value)})")
     print(f"oct({oct(value)})")
     print(f"hex({hex(value)})")
+
+
+# def __int_from_twos_complement(value: int, bit_count: int) -> int:
+#     bit_mask  = (1 << bit_count) - 1
+#     sign_mask = 1 << (bit_count - 1)
+#     value &= bit_mask
+#     if value & sign_mask:
+#         value = -abs(~value + 1)
+#     return value
+
+
+# for a_i in range(-8, 8):
+#     a_bin = int_bin(a_i, group_size=4, group_min=1)
+#     print(f"{a_i:2} => {a_bin}")
+#     for b_i in range(-8, 8):
+#         b_bin = int_bin(b_i, group_size=4, group_min=1)
+#         diff  = a_i - b_i
+#         diff_bin = int_bin(diff, group_size=4, group_min=1)
+#         diff = __int_from_twos_complement(diff, 4)
+#         print(f"\t{a_bin} ({a_i:2}) - {b_bin} ({b_i:2}) = {diff_bin} ({diff})")

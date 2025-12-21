@@ -1,15 +1,30 @@
+// i128
 #include "i128.h"
-
 #include <utils/strings.h>
+#include <math/checked.c>
 
 // === CONVERSION OPERATIONS =============================================== {{{
+
+static inline u64
+internal_i64_to_twos_complement(i64 a)
+{
+    // e.g. `cast(u64)-1 == max(u64)` is guaranteed by the C standard.
+    u64 dst = cast(u64)a;
+
+    // If negative, force it into Two's complement representation as
+    // given by the formula: `~abs(a) + 1`.
+    if (a < 0) {
+        dst = ~(0 - dst) + 1;
+    }
+    return dst;
+}
 
 u128
 u128_from_i64(i64 a)
 {
     u128 dst;
     // For negative values, do sign extension.
-    dst.lo = cast(u64)a;
+    dst.lo = internal_i64_to_twos_complement(a);
     dst.hi = (a < 0) ? U64_MAX : 0;
     return dst;
 }
@@ -28,16 +43,18 @@ u128_from_i128(i128 a)
 {
     u128 dst;
     dst.lo = a.lo;
-    dst.hi = cast(u64)a.hi;
+    dst.hi = a.hi;
     return dst;
 }
+
 
 i128
 i128_from_i64(i64 a)
 {
     i128 dst;
-    dst.lo = cast(u64)a;
-    dst.hi = (a < 0) ? cast(i64)U64_MAX : 0;
+    // For negative values, do sign extension.
+    dst.lo = internal_i64_to_twos_complement(a);
+    dst.hi = (a < 0) ? U64_MAX : 0;
     return dst;
 }
 
@@ -55,14 +72,26 @@ i128_from_u128(u128 a)
 {
     i128 dst;
     dst.lo = a.lo;
-    dst.hi = cast(i64)a.hi;
+    dst.hi = a.hi;
     return dst;
+}
+
+static inline bool
+internal_u64_sign(u64 a)
+{
+    return cast(bool)(a >> (TYPE_BITS(a) - 1));
+}
+
+static inline bool
+internal_u128_sign(u128 a)
+{
+    return internal_u64_sign(a.hi);
 }
 
 bool
 i128_sign(i128 a)
 {
-    return cast(bool)(a.hi >> (TYPE_BITS(a.hi) - 1));
+    return internal_u64_sign(a.hi);
 }
 
 u128
@@ -278,8 +307,7 @@ internal_i128_shift_logical(i128 a, u128 (*shift_fn)(u128 a, uint n), uint n)
 {
     u128 tmp;
     i128 dst;
-    tmp = u128_from_i128(a);
-    tmp = shift_fn(tmp, n);
+    tmp = shift_fn(u128_from_i128(a), n);
     dst = i128_from_u128(tmp);
     return dst;
 }
@@ -324,8 +352,8 @@ i128_shift_right_arithmetic(i128 a, uint n)
             //          =    0b1100_0000
             sx_hi = ~((cast(u64)1 << bits_lo) - 1);
         }
-        dst.lo = (a.lo >> n) | (cast(u64)a.hi << bits_lo);
-        dst.hi = (a.hi >> n) | cast(i64)sx_hi;
+        dst.lo = (a.lo >> n) | (a.hi << bits_lo);
+        dst.hi = (a.hi >> n) | sx_hi;
     }
     // Resulting arithmetic right-shift completely clears out `hi`?
     else {
@@ -348,8 +376,8 @@ i128_shift_right_arithmetic(i128 a, uint n)
             sx_lo = ~((cast(u64)1 << bits_lo) - 1);
         }
 
-        dst.lo = cast(u64)(a.hi >> bits_lo) | sx_lo;
-        dst.hi = cast(i64)sx_hi;
+        dst.lo = (a.hi >> bits_lo) | sx_lo;
+        dst.hi = sx_hi;
     }
     return dst;
 }
@@ -391,8 +419,7 @@ i128_neg(i128 a)
     u128 tmp;
     i128 dst;
 
-    tmp = u128_from_i128(a);
-    tmp = u128_neg(tmp);
+    tmp = u128_neg(u128_from_i128(a));
     dst = i128_from_u128(tmp);
     return dst;
 }
@@ -401,14 +428,7 @@ u128
 u128_add(u128 a, u128 b)
 {
     u128 dst;
-    bool carry;
-
-    // Overflow check (lower 64 bits, 64-bit unsigned addition):
-    //  a.lo + b.lo > max(u64)
-    //  a.lo        > max(u64) - b.lo
-    carry  = a.lo > U64_MAX - b.lo;
-    dst.lo = a.lo + b.lo;
-    dst.hi = a.hi + b.hi + cast(u64)carry;
+    u128_checked_add(&dst, a, b);
     return dst;
 }
 
@@ -416,14 +436,7 @@ u128
 u128_sub(u128 a, u128 b)
 {
     u128 dst;
-    bool carry;
-
-    // Overflow check (lower 64 bits, 64-bit unsigned subtraction)
-    //  a.lo - b.lo < 0
-    //  a.lo        < b.lo
-    carry  = a.lo < b.lo;
-    dst.lo = a.lo - b.lo;
-    dst.hi = a.hi - b.hi - cast(u64)carry;
+    u128_checked_sub(&dst, a, b);
     return dst;
 }
 
@@ -567,10 +580,8 @@ i128
 i128_mul(i128 a, i128 b)
 {
     i128 dst;
-    u128 tmp, _a, _b;
-    _a  = u128_from_i128(a);
-    _b  = u128_from_i128(b);
-    tmp = u128_mul(_a, _b);
+    u128 tmp;
+    tmp = u128_mul(u128_from_i128(a), u128_from_i128(b));
     dst = i128_from_u128(tmp);
     return dst;
 }
@@ -609,12 +620,10 @@ i128
 i128_add(i128 a, i128 b)
 {
     i128 dst;
-    u128 tmp, _a, _b;
+    u128 tmp;
 
     // Two's complement addition is the same as unsigned addition.
-    _a  = u128_from_i128(a);
-    _b  = u128_from_i128(b);
-    tmp = u128_add(_a, _b);
+    tmp = u128_add(u128_from_i128(a), u128_from_i128(b));
     dst = i128_from_u128(tmp);
     return dst;
 }
@@ -623,12 +632,10 @@ i128
 i128_sub(i128 a, i128 b)
 {
     i128 dst;
-    u128 tmp, _a, _b;
+    u128 tmp;
 
     // Two's complement subtraction is the same as unsigned subtraction.
-    _a  = u128_from_i128(a);
-    _b  = u128_from_i128(b);
-    tmp = u128_sub(_a, _b);
+    tmp = u128_sub(u128_from_i128(a), u128_from_i128(b));
     dst = i128_from_u128(tmp);
     return dst;
 }
@@ -638,48 +645,59 @@ i128_sub(i128 a, i128 b)
 bool
 u128_checked_add(u128 *dst, u128 a, u128 b)
 {
-    bool carry_lo, overflow;
+    bool carry_in, carry_out;
 
-    // Overflow check (lower 64 bits, 64-bit unsigned addition):
-    //      a.lo + b.lo > max(u64)
-    //      a.lo        > max(u64) - b.lo
+    // Overflow check (128-bit unsigned addition):
     //
-    // Overflow check (upper 64 bits, 64-bit unsigned addition with carry)
-    //      a.hi + b.hi + carry_lo > max(u64)
-    //      a.hi                   > max(u64) - b.hi - carry_lo
-    carry_lo = a.lo > U64_MAX - b.lo;
-    overflow = a.hi > U64_MAX - b.hi - cast(u64)carry_lo;
-
-    dst->lo  = a.lo + b.lo;
-    dst->hi  = a.hi + b.hi + cast(u64)carry_lo;
-    return overflow;
+    //      a + b > max(u128)
+    //
+    // Can be divided into:
+    //
+    //      carry_in  := a.lo + b.lo > max(u64)
+    //      carry_out := a.hi + b.hi + carry_in > max(u64)
+    //
+    carry_in  = u64_checked_add(&dst->lo, a.lo, b.lo);
+    carry_out = u64_checked_add_carry(&dst->hi, a.hi, b.hi, cast(u64)carry_in);
+    return carry_out;
 }
 
 bool
 u128_checked_sub(u128 *dst, u128 a, u128 b)
 {
-    bool carry_lo, overflow;
+    bool carry_in, carry_out;
 
-    // Overflow check (lower 64 bits, 64-bit unsigned subtraction):
-    //      a.lo - b.lo < 0
-    //      a.lo        < b.lo
+    // Overflow check (128-bit unsigned subtraction):
     //
-    // Overflow check (upper 64 bits, 64-bit unsigned subraction with carry):
-    //      a.hi - b.hi - carry_lo < 0
-    //      a.hi                   < b.hi + carry_lo
-    carry_lo = a.lo < b.lo;
-    overflow = a.hi < b.hi + cast(u64)carry_lo;
+    //      a - b < 0
+    //
+    // Can be divided into:
+    //
+    //      carry_in  := a.lo - b.lo < 0
+    //      carry_out := a.hi - b.hi - carry_in < 0
+    //
+    carry_in  = u64_checked_sub(&dst->lo, a.lo, b.lo);
+    carry_out = u64_checked_sub_carry(&dst->hi, a.hi, b.hi, cast(u64)carry_in);
+    return carry_out;
+}
 
-    dst->lo = a.lo - b.lo;
-    dst->hi = a.hi - b.hi - cast(u64)carry_lo;
-    return overflow;
+bool
+u128_checked_sub_u64(u128 *dst, u128 a, u64 b)
+{
+    bool carry_in, carry_out;
+    // carry_in  := a.lo - b < 0
+    //            = a.lo < b
+    // carry_out := a.hi - carry_in < 0
+    //            = a.hi < carry_in
+    carry_in  = u64_checked_sub(&dst->lo, a.lo, b);
+    carry_out = u64_checked_sub(&dst->hi, a.hi, cast(u64)carry_in);
+    return carry_out;
 }
 
 bool
 u128_checked_mul(u128 *dst, u128 a, u128 b)
 {
-    u64 a0, a1, b0, b1, p10, p01;
-    bool overflow = false;
+    u64 tmp, a0, a1, b0, b1, p10, p01;
+    bool carry = false;
 
     a0 = a.lo;
     a1 = a.hi;
@@ -689,8 +707,9 @@ u128_checked_mul(u128 *dst, u128 a, u128 b)
     *dst = internal_u64_mul_u64(a0, b0);
 
     // Overflow check for upper 64 bits:
-    //  dst.hi + p10 + p01 > max(u64)
-    //  dst.hi             > max(u64) - p10 - p01
+    //
+    //      dst.hi + p10 + p01 > max(u64)
+    //      dst.hi > max(u64) - p10 - p01
     //
     // Problem: p10 and p01 could themselves overflow! (See above).
     // Note that p11 is not included because it always overflows.
@@ -698,66 +717,51 @@ u128_checked_mul(u128 *dst, u128 a, u128 b)
     p01 = a0 * b1;
     dst->hi += p10 + p01;
 
-    // Avoid division by zero for:
-    //  a1 * b0 > max(u64)
-    //  a1      > max(u64) / b0
-    if (a1 > 0 && b0 > 0) {
-        overflow = a1 > U64_MAX / b0;
-    }
-
-    // Avoid division by zero for:
-    //  a0 * b1 > max(u64)
-    //  a0      > max(u64) / b1
-    if (!overflow && b1 > 0) {
-        if (a0 > 0) {
-            overflow = a0 > U64_MAX / b1;
-        }
-
-        // a1 * b1 > 0 always overflows the 128-bit product.
-        if (!overflow) {
-            overflow = a1 != 0;
-        }
+    // a1 * b0 > max(u64)
+    // a0 * b1 > max(u64)
+    // a1 * b1 > 0 always overflows the 128-bit product.
+    carry = u64_checked_mul(&tmp, a1, b0);
+    if (!carry && b1 > 0) {
+        carry = u64_checked_mul(&tmp, a0, b1);
+        carry = !carry && a1 != 0;
     }
 
     // Lastly, if we know the terms themselves didn't overflow,
     // then try to check the result of subtraction.
-    //
-    // @todo(2025-12-20): There are multiple terms, we may overflow one
-    // of the intermediates `p10 - p01` or in `U64_MAX - p10`.
-    if (!overflow) {
-        overflow = dst->hi > U64_MAX - p10 - p01;
+    if (!carry) {
+        u64 diff;
+
+        // Might overflow `p10 - p01` or `U64_MAX - p10`.
+        carry = u64_checked_sub_carry(&diff, U64_MAX, p10, p01);
+        carry = !carry && dst->hi > diff;
     }
-    return overflow;
+    return carry;
 }
 
 bool
 i128_checked_add(i128 *dst, i128 a, i128 b)
 {
-    bool carry_lo, overflow;
-
-    // Same idea as unsigned, but treat the higher 64 bits as signed
-    // when doing comparisons.
-    carry_lo = a.lo > U64_MAX - b.lo;
-    overflow = a.hi > I64_MAX - b.hi - carry_lo;
-
-    dst->lo  = a.lo + b.lo;
-    dst->hi  = a.hi + b.hi + cast(i64)carry_lo;
-    return overflow;
+    bool carry;
+    // Overflow check: (128-bit signed addition)
+    //  a + b > max(i128)
+    //  a > max(i128) - b
+    carry = i128_gt(a, i128_sub(I128_MAX, b));
+    *dst  = i128_add(a, b);
+    return carry;
 }
 
 bool
 i128_checked_sub(i128 *dst, i128 a, i128 b)
 {
-    bool carry_lo, overflow;
+    bool carry;
 
-    // Same idea as unsigned, but treat the higher 64 bits as signed
-    // when doing comparisons.
-    carry_lo = a.lo < b.lo;
-    overflow = a.hi < b.hi + carry_lo;
-
-    dst->lo = a.lo - b.lo;
-    dst->hi = a.hi - b.hi - cast(i64)carry_lo;
-    return overflow;
+    // Overflow check (128-bit signed subtraction):
+    //
+    //      a - b < 0
+    //      a < b
+    carry = i128_lt(a, b);
+    *dst  = i128_sub(a, b);
+    return carry;
 }
 
 // === }}} =====================================================================
@@ -775,38 +779,94 @@ u128_eq(u128 a, u128 b)
     return (xor_hi | xor_lo) == 0;
 }
 
+#define FLAG_ZERO       0x1
+#define FLAG_SIGN       0x2
+
+// If unsigned arithmetic resulted in a value too large.
+#define FLAG_CARRY      0x4
+
+// If signed arithmetic resulted in a value too small or too large and had
+// to be truncated.
+#define FLAG_OVERFLOW   0x8
+
+// Check the flags of `a - b`, similar to the x86 `cmp` instruction.
+static uint
+internal_u128_cmp(u128 a, u128 b)
+{
+    u128 diff;
+    uint flags = 0;
+    bool a_sign, b_sign, diff_sign, carry;
+
+    a_sign  = internal_u128_sign(a);
+    b_sign  = internal_u128_sign(b);
+    carry   = u128_checked_sub(&diff, a, b);
+    if (u128_eq(diff, U128_ZERO)) {
+        flags |= FLAG_ZERO;
+    }
+
+    // Sign bit is toggled?
+    diff_sign = internal_u128_sign(diff);
+    if (diff_sign) {
+        flags |= FLAG_SIGN;
+    }
+
+    if (carry) {
+        flags |= FLAG_CARRY;
+    }
+
+    // Signed overflow occured?
+    if (a_sign != b_sign && diff_sign != a_sign) {
+        flags |= FLAG_OVERFLOW;
+    }
+
+    return flags;
+}
+
+static uint
+internal_u128_cmp_u64(u128 a, u64 b)
+{
+    u128 diff;
+    uint flags = 0;
+    bool a_sign, b_sign, diff_sign, carry_out;
+
+    a_sign    = internal_u128_sign(a);
+    b_sign    = internal_u64_sign(b);
+    carry_out = u128_checked_sub_u64(&diff, a, b);
+    if (u128_eq(diff, U128_ZERO)) {
+        flags |= FLAG_ZERO;
+    }
+
+    // Sign bit is toggled?
+    diff_sign = internal_u128_sign(diff);
+    if (diff_sign) {
+        flags |= FLAG_SIGN;
+    }
+
+    if (carry_out) {
+        flags |= FLAG_CARRY;
+    }
+
+    // Signed overflow occured?
+    if (a_sign != b_sign && diff_sign != a_sign) {
+        flags |= FLAG_OVERFLOW;
+    }
+    return flags;
+}
+
 bool
 u128_lt(u128 a, u128 b)
 {
-    // Simulate `a - b < 0` without actually doing the full subtraction.
-    bool less, carry;
-
-    // Overflow checks:
-    //  carry = a.lo - b.lo < 0
-    //  carry = a.lo        < b.lo
-    //
-    //  a.hi - b.hi - carry < 0
-    //  a.hi                < b.hi + carry
-    carry = a.lo < b.lo;
-    less  = a.hi < b.hi + cast(u64)carry;
-    return less;
+    uint flags;
+    flags = internal_u128_cmp(a, b);
+    return (flags & FLAG_CARRY) != 0;
 }
 
 bool
 u128_leq(u128 a, u128 b)
 {
-    // Simulate `a - b <= 0` without actually doing the full subtraction.
-    bool less_eq, carry;
-
-    // Overflow checks:
-    //  carry = a.lo - b.lo < 0
-    //  carry = a.lo        < b.lo
-    //
-    //  a.hi - b.hi - carry <= 0
-    //  a.hi                <= b.hi + carry
-    carry   = a.lo <  b.lo;
-    less_eq = a.hi <= b.hi + cast(u64)carry;
-    return less_eq;
+    uint flags;
+    flags = internal_u128_cmp(a, b);
+    return (flags & (FLAG_ZERO | FLAG_CARRY)) != 0;
 }
 
 bool
@@ -833,53 +893,55 @@ u128_geq(u128 a, u128 b)
 bool
 i128_eq(i128 a, i128 b)
 {
-    u128 _a, _b;
-    _a = u128_from_i128(a);
-    _b = u128_from_i128(b);
-    return u128_eq(_a, _b);
+    return u128_eq(u128_from_i128(a), u128_from_i128(b));
 }
 
 bool
 i128_lt(i128 a, i128 b)
 {
-    // Simulate `a - b < 0` without actually doing the full subtraction.
-    bool less, carry;
-
-    // Same idea as unsigned comparison except we treat the upper 64 bits
-    // as signed.
-    carry = a.lo < b.lo;
-    less  = a.hi < b.hi + cast(i64)carry;
-    return less;
+    uint flags;
+    bool sign, overflow;
+    flags    = internal_u128_cmp(u128_from_i128(a), u128_from_i128(b));
+    sign     = (flags & FLAG_SIGN) != 0;
+    overflow = (flags & FLAG_OVERFLOW) != 0;
+    return sign != overflow;
 }
 
 bool
 i128_leq(i128 a, i128 b)
 {
-    // Simulate `a - b <= 0` without actually doing the full subtraction.
-    bool less_eq, carry;
-
-    // Same idea as unsigned comparison except we treat the upper 64 bits
-    // as signed.
-    carry   = a.lo < b.lo;
-    less_eq = a.hi <= b.hi + cast(i64)carry;
-    return less_eq;
+    uint flags;
+    bool zero, sign, overflow;
+    flags    = internal_u128_cmp(u128_from_i128(a), u128_from_i128(b));
+    zero     = (flags & FLAG_ZERO) != 0;
+    sign     = (flags & FLAG_SIGN) != 0;
+    overflow = (flags & FLAG_OVERFLOW) != 0;
+    return zero || (sign != overflow);
 }
 
 bool
 i128_neq(i128 a, i128 b)
 {
+    //  (a != b)
+    // !(a == b)
     return !i128_eq(a, b);
 }
 
 bool
 i128_gt(i128 a, i128 b)
 {
+    // a > b
+    // b < a
+    // !(a <= b)
     return i128_lt(b, a);
 }
 
 bool
 i128_geq(i128 a, i128 b)
 {
+    // a >= b
+    // b <= a
+    // !(a < b)
     return i128_leq(b, a);
 }
 
@@ -892,23 +954,24 @@ i128_eq_u64(i128 a, u64 b)
 bool
 i128_lt_u64(i128 a, u64 b)
 {
-    // Simulate `a - b < 0` without actually doing the full subtraction.
-    bool less, carry;
-    // No `b.hi` so we can save a few instructions.
-    carry = a.lo < b;
-    less  = a.hi < cast(i64)carry;
-    return less;
+    uint flags;
+    bool sign, overflow;
+    flags    = internal_u128_cmp_u64(u128_from_i128(a), b);
+    sign     = (flags & FLAG_SIGN) != 0;
+    overflow = (flags & FLAG_OVERFLOW) != 0;
+    return sign != overflow;
 }
 
 bool
 i128_leq_u64(i128 a, u64 b)
 {
-    // Simulate `a - b < 0` without actually doing the full subtraction.
-    bool less_eq, carry;
-    // No `b.hi` so we can save a few instructions.
-    carry   = a.lo < b;
-    less_eq = a.hi <= cast(i64)carry;
-    return less_eq;
+    uint flags;
+    bool zero, sign, overflow;
+    flags    = internal_u128_cmp_u64(u128_from_i128(a), b);
+    zero     = (flags & FLAG_ZERO) != 0;
+    sign     = (flags & FLAG_SIGN) != 0;
+    overflow = (flags & FLAG_OVERFLOW) != 0;
+    return zero || (sign != overflow);
 }
 
 bool
@@ -930,5 +993,10 @@ i128_geq_u64(i128 a, u64 b)
     // a >= b == !(a < b)
     return !i128_lt_u64(a, b);
 }
+
+#undef FLAG_ZERO
+#undef FLAG_SIGN
+#undef FLAG_CARRY
+#undef FLAG_OVERFLOW
 
 // === }}} =====================================================================

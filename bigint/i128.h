@@ -9,10 +9,10 @@ struct u128le {
     u64 lo, hi;
 };
 
+// Bit pattern is Two's Complement.
 typedef struct i128le i128le;
 struct i128le {
-    u64 lo;
-    i64 hi;
+    u64 lo, hi;
 };
 
 typedef struct u128be u128be;
@@ -20,10 +20,10 @@ struct u128be {
     u64 hi, lo;
 };
 
+// Bit pattern is Two's Complement.
 typedef struct i128be i128be;
 struct i128be {
-    i64 hi;
-    u64 lo;
+    u64 hi, lo;
 };
 
 // Check: endianness
@@ -64,12 +64,6 @@ struct i128be {
 #else
 #error Unsupported endianness!
 #endif // Check: endianness
-
-
-// Check: signed representation
-#if (-1 & 3) != 3
-#error i128 assumes a Two's complement representation!
-#endif // Check: signed representation
 
 typedef U128_NATIVE_TYPE u128;
 typedef I128_NATIVE_TYPE i128;
@@ -195,7 +189,7 @@ i128
 i128_mul(i128 a, i128 b);
 
 
-/** @brief `*dst = a + b`.
+/** @brief `*dst = a + b` with an overflow check.
  *
  * @param [out] dst Always assigned no matter what.
  *
@@ -206,7 +200,7 @@ bool
 u128_checked_add(u128 *dst, u128 a, u128 b);
 
 
-/** @brief `*dst = a - b`.
+/** @brief `*dst = a - b` with an overflow check.
  *
  * @param [out] dst Always assigned no matter what.
  *
@@ -217,7 +211,18 @@ bool
 u128_checked_sub(u128 *dst, u128 a, u128 b);
 
 
-/** @brief `*dst = a * b`.
+/** @brief `*dst = a - b` with an overflow check.
+ *
+ * @param [out] dst Always assigned no matter what.
+ *
+ * @return
+ *  `true` if the subtraction resulted in unsigned overflow, else `false`.
+ */
+bool
+u128_checked_sub_u64(u128 *dst, u128 a, u64 b);
+
+
+/** @brief `*dst = a * b` with an overflow check.
  *
  * @param [out] dst Always assigned no matter what.
  *
@@ -228,7 +233,7 @@ bool
 u128_checked_mul(u128 *dst, u128 a, u128 b);
 
 
-/** @brief `*dst = a + b`.
+/** @brief `*dst = a + b` with an overflow check.
  *
  * @param [out] dst Always assigned no matter what.
  *
@@ -239,7 +244,7 @@ bool
 i128_checked_add(i128 *dst, i128 a, i128 b);
 
 
-/** @brief `*dst = a - b`.
+/** @brief `*dst = a - b` with an overflow check.
  *
  * @param [out] dst Always assigned no matter what.
  *
