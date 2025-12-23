@@ -36,14 +36,14 @@ struct i128be {
 
 // u128le
 #define U128_NATIVE_TYPE    u128le
-#define U128_MAX            COMPOUND_LITERAL(u128le){U64_MAX,   U64_MAX}
-#define U128_ONE            COMPOUND_LITERAL(u128le){1,         0}
+#define U128_MAX            CLITERAL(u128le){U64_MAX, U64_MAX}
+#define U128_ONE            CLITERAL(u128le){1, 0}
 
 // i12lbe
 #define I128_NATIVE_TYPE    i128le
-#define I128_MAX            COMPOUND_LITERAL(i128le){U64_MAX,   I64_MAX}
-#define I128_MIN            COMPOUND_LITERAL(i128le){0,         I64_MIN}
-#define I128_ONE            COMPOUND_LITERAL(i128le){1,         0}
+#define I128_MAX            CLITERAL(i128le){U64_MAX, U64_MAX >> 1}
+#define I128_MIN            CLITERAL(i128le){0, ~(U64_MAX >> 1)}
+#define I128_ONE            CLITERAL(i128le){1, 0}
 
 #elif defined(__BYTE_ORDER__) && (__BYTE_ORDER__ == __ORDER_BIG_ENDIAN__)
 
@@ -52,14 +52,14 @@ struct i128be {
 
 // u128be
 #define U128_NATIVE_TYPE    u128be
-#define U128_MAX            COMPOUND_LITERAL(u128be){U64_MAX,   U64_MAX}
-#define U128_ONE            COMPOUND_LITERAL(u128be){0,         1}
+#define U128_MAX            CLITERAL(u128be){U64_MAX, U64_MAX}
+#define U128_ONE            CLITERAL(u128be){0, 1}
 
 // i128be
 #define I128_NATIVE_TYPE    i128be
-#define I128_MAX            COMPOUND_LITERAL(i128be){U64_MAX,   U64_MAX}
-#define I128_MIN            COMPOUND_LITERAL(i128be){0,         I64_MIN}
-#define I128_ONE            COMPOUND_LITERAL(i128be){0,         1}
+#define I128_MAX            CLITERAL(i128be){U64_MAX >> 1, U64_MAX}
+#define I128_MIN            CLITERAL(i128be){~(U64_MAX >> 1), 0}
+#define I128_ONE            CLITERAL(i128be){0, 1}
 
 #else
 #error Unsupported endianness!
@@ -68,8 +68,8 @@ struct i128be {
 typedef U128_NATIVE_TYPE u128;
 typedef I128_NATIVE_TYPE i128;
 
-#define U128_ZERO   COMPOUND_LITERAL(u128){0, 0}
-#define I128_ZERO   COMPOUND_LITERAL(i128){0, 0}
+#define U128_ZERO   CLITERAL(u128){0, 0}
+#define I128_ZERO   CLITERAL(i128){0, 0}
 
 #define BIGINT_I128_IMPLEMENTATION
 

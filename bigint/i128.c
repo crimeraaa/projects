@@ -279,7 +279,7 @@ u128_shift_left(u128 a, uint n)
     else {
         n -= TYPE_BITS(dst.lo);
         dst.lo = 0;
-        dst.hi = a.lo << n;
+        dst.hi = (n < TYPE_BITS(dst.hi)) ? (a.lo << n) : 0;
     }
     return dst;
 }
@@ -295,33 +295,33 @@ u128_shift_right(u128 a, uint n)
     }
     // Resulting logical right-shift completely clears out `hi`?
     else {
-        n -= TYPE_BITS(a.hi);
-        dst.lo = a.hi >> n;
-        dst.hi = 0;
-    }
-    return dst;
-}
+        uint bits_lo;
 
-static i128
-internal_i128_shift_logical(i128 a, u128 (*shift_fn)(u128 a, uint n), uint n)
-{
-    u128 tmp;
-    i128 dst;
-    tmp = shift_fn(u128_from_i128(a), n);
-    dst = i128_from_u128(tmp);
+        bits_lo = n - TYPE_BITS(a.hi);
+        dst.lo  = bits_lo < TYPE_BITS(a.hi) ? (a.hi >> bits_lo) : 0;
+        dst.hi  = 0;
+    }
     return dst;
 }
 
 i128
 i128_shift_left(i128 a, uint n)
 {
-    return internal_i128_shift_logical(a, u128_shift_left, n);
+    u128 tmp;
+    i128 dst;
+    tmp = u128_shift_left(u128_from_i128(a), n);
+    dst = i128_from_u128(tmp);
+    return dst;
 }
 
 i128
 i128_shift_right_logical(i128 a, uint n)
 {
-    return internal_i128_shift_logical(a, u128_shift_right, n);
+    u128 tmp;
+    i128 dst;
+    tmp = u128_shift_right(u128_from_i128(a), n);
+    dst = i128_from_u128(tmp);
+    return dst;
 }
 
 i128
@@ -376,7 +376,7 @@ i128_shift_right_arithmetic(i128 a, uint n)
             sx_lo = ~((cast(u64)1 << bits_lo) - 1);
         }
 
-        dst.lo = (a.hi >> bits_lo) | sx_lo;
+        dst.lo = bits_lo < TYPE_BITS(dst.lo) ? ((a.hi >> bits_lo) | sx_lo) : sx_hi;
         dst.hi = sx_hi;
     }
     return dst;
@@ -741,27 +741,39 @@ u128_checked_mul(u128 *dst, u128 a, u128 b)
 bool
 i128_checked_add(i128 *dst, i128 a, i128 b)
 {
-    bool carry;
+    i128 sum;
+    bool a_sign, b_sign, overflow;
+
     // Overflow check: (128-bit signed addition)
-    //  a + b > max(i128)
-    //  a > max(i128) - b
-    carry = i128_gt(a, i128_sub(I128_MAX, b));
-    *dst  = i128_add(a, b);
-    return carry;
+    //
+    //      a + b < min(i128)
+    //  or  a + b > max(i128)
+    //
+    sum      = i128_add(a, b);
+    a_sign   = i128_sign(a);
+    b_sign   = i128_sign(b);
+    overflow = a_sign == b_sign && i128_sign(sum) != a_sign;
+    *dst     = sum;
+    return overflow;
 }
 
 bool
 i128_checked_sub(i128 *dst, i128 a, i128 b)
 {
-    bool carry;
+    i128 diff;
+    bool a_sign, b_sign, overflow;
 
     // Overflow check (128-bit signed subtraction):
     //
-    //      a - b < 0
-    //      a < b
-    carry = i128_lt(a, b);
-    *dst  = i128_sub(a, b);
-    return carry;
+    //      a - b < min(i128)
+    //   or a - b > max(i128)
+    //
+    diff     = i128_sub(a, b);
+    a_sign   = i128_sign(a);
+    b_sign   = i128_sign(b);
+    overflow = a_sign != b_sign && i128_sign(diff) != a_sign;
+    *dst     = diff;
+    return overflow;
 }
 
 // === }}} =====================================================================
@@ -916,7 +928,7 @@ i128_leq(i128 a, i128 b)
     zero     = (flags & FLAG_ZERO) != 0;
     sign     = (flags & FLAG_SIGN) != 0;
     overflow = (flags & FLAG_OVERFLOW) != 0;
-    return zero || (sign != overflow);
+    return zero || sign != overflow;
 }
 
 bool
@@ -971,7 +983,7 @@ i128_leq_u64(i128 a, u64 b)
     zero     = (flags & FLAG_ZERO) != 0;
     sign     = (flags & FLAG_SIGN) != 0;
     overflow = (flags & FLAG_OVERFLOW) != 0;
-    return zero || (sign != overflow);
+    return zero || sign != overflow;
 }
 
 bool

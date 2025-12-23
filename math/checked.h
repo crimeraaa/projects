@@ -28,6 +28,31 @@ bool
 u64_checked_add_carry(u64 *dst, u64 a, u64 b, u64 carry);
 
 
+/** @brief `*dst = a + b` with an overflow check for
+ *  `a + b < min(i64) or a + b > max(i64)`.
+ *
+ * @param [out] dst Always assigned no matter what.
+ *
+ * @return
+ *  `true` if the addition resulted in signed overflow else `false`.
+ */
+bool
+i64_checked_add(i64 *dst, i64 a, i64 b);
+
+
+/** @brief `*dst = a + b + carry` with an overflow check for
+ *  `a + b < min(i64) or a + b > max(i64)`.
+ *
+ * @param [out] dst     Always assigned no matter what.
+ * @param [in]  carry   Can be any value, but boolean is most optimal.
+ *
+ * @return
+ *  `true` if the addition resulted in signed overflow else `false`.
+ */
+bool
+i64_checked_add_carry(i64 *dst, i64 a, i64 b, i64 carry);
+
+
 /** @brief `*dst = a - b` with an overflow check for `a - b < 0`.
  *
  * @param [out] dst Always assigned no matter what.
@@ -50,6 +75,31 @@ u64_checked_sub(u64 *dst, u64 a, u64 b);
  */
 bool
 u64_checked_sub_carry(u64 *dst, u64 a, u64 b, u64 carry);
+
+
+/** @brief `*dst = a - b` with an overflow check for
+ *  `a - b < min(i64) or a - b > max(i64)`.
+ *
+ * @param [out] dst Always assigned no matter what.
+ *
+ * @return
+ *  `true` if the subtraction resulted in signed overflow else `false`.
+ */
+bool
+i64_checked_sub(i64 *dst, i64 a, i64 b);
+
+
+/** @brief `*dst = a - b - carry` with an overflow check for
+ *  `a - b < min(i64) or a - b > max(i64)`.
+ *
+ * @param [out] dst     Always assigned no matter what.
+ * @param [in]  carry   Can be any value, but boolean is most optimal.
+ *
+ * @return
+ *  `true` if the subtraction resulted in signed overflow else `false`.
+ */
+bool
+i64_checked_sub_carry(i64 *dst, i64 a, i64 b, i64 carry);
 
 
 /** @brief `*dst = a * b` with an overflow check for `a * b > max(u64)`.

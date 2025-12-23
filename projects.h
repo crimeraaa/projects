@@ -58,6 +58,9 @@ typedef int64_t     i64;
 #define I64_MAX     INT64_MAX
 #define I64_MIN     INT64_MIN
 
+typedef float  f32;
+typedef double f64;
+
 
 /* Compiler-specific: GCC or GCC-like */
 #if defined(__GNUC__)
@@ -111,11 +114,15 @@ do {                                                                           \
 
 #define assertln(expr, msg) assertfln(expr, "%s", msg)
 
+#ifndef CLITERAL
+
 /* Semantics for C99 compound literals are different in C++. */
 #ifdef __cplusplus
-#define COMPOUND_LITERAL(T)    T
+#define CLITERAL(T)    T
 #else
-#define COMPOUND_LITERAL(T)   (T)
+#define CLITERAL(T)   (T)
 #endif
+
+#endif /* CLITERAL */
 
 #endif /* PROJECTS_COMMON_H */
