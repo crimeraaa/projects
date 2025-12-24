@@ -65,7 +65,7 @@ i128_to_binary_string(i128 a, uint base, uint shift, Allocator allocator)
     case 8:
         // group_size=21 * shift=3 * group_total=2 == 128
         // group_size=10 * shift=3 * group_total=4 == 128
-        group_size  = 10;
+        group_size  = 21;
         group_total = 2;
         if (!string_write_literal(&sb, "0o")) {
             goto nul_terminate;

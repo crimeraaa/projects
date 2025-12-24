@@ -33,7 +33,7 @@ struct Parser_Rule {
     void (*binary_fn)(Parser *p, const Parser_Rule *rule, Value *left, Value *right);
 };
 
-static const Parser_Rule *
+static Parser_Rule
 parser_get_rule(Token_Type t);
 
 void
@@ -173,6 +173,29 @@ parser_parse_unary(Parser *p, Value *left)
     s = t.lexeme;
     // Check the consumed prefix operand/operator
     switch (t.type) {
+    case TOKEN_FALSE:
+        left->type    = VALUE_BOOLEAN;
+        left->boolean = false;
+        break;
+
+    case TOKEN_TRUE:
+        left->type    = VALUE_BOOLEAN;
+        left->boolean = true;
+        break;
+
+    // Groupings
+    case TOKEN_PAREN_OPEN:
+        parser_parse_expression(p, left);
+        parser_expect(p, TOKEN_PAREN_CLOSE);
+        break;
+
+    // Bitwise NOT
+    case TOKEN_TILDE:
+        parser_parse_precedence(p, PREC_UNARY, left);
+        parser_check_integer_unary(p, left, t.lexeme);
+        left->integer = i128_not(left->integer);
+        break;
+
     // Essentially a no-op, but we do care if it's an integer.
     case TOKEN_PLUS:
         parser_parse_precedence(p, PREC_UNARY, left);
@@ -198,19 +221,6 @@ parser_parse_unary(Parser *p, Value *left)
     // Named function calls
     case TOKEN_IDENTIFIER:
         parser_syntax_error_consumed(p, "Function calls not yet supported");
-        break;
-
-    // Groupings
-    case TOKEN_PAREN_OPEN:
-        parser_parse_expression(p, left);
-        parser_expect(p, TOKEN_PAREN_CLOSE);
-        break;
-
-    // Bitwise NOT
-    case TOKEN_TILDE:
-        parser_parse_precedence(p, PREC_UNARY, left);
-        parser_check_integer_unary(p, left, t.lexeme);
-        left->integer = i128_not(left->integer);
         break;
 
     default:
@@ -255,7 +265,7 @@ parser_arith(Parser *p, const Parser_Rule *rule, Value *left, Value *right)
     // case BIN_MUL: err = bigint_mul(dst, a, b); break;
 
     case BIN_BAND:  *dst = i128_and(a, b); break;
-    case BIN_BOR:   *dst = i128_or(a, b); break;
+    case BIN_BOR:   *dst = i128_or(a, b);  break;
     case BIN_BXOR:  *dst = i128_xor(a, b); break;
     case BIN_SHL:
         parser_check_shift(p, b, "Logical left shift");
@@ -352,15 +362,13 @@ parser_parse_precedence(Parser *p, Precedence prec, Value *left)
     // right->integer = &tmp;
 
     for (;;) {
-        const Parser_Rule *rule;
-
-        rule = parser_get_rule(p->lookahead.type);
-        if (prec > rule->prec || rule->binary_fn == NULL) {
+        Parser_Rule rule = parser_get_rule(p->lookahead.type);
+        if (prec > rule.prec || rule.binary_fn == NULL) {
             break;
         }
         parser_advance(p);
         // bigint_clear(&tmp);
-        rule->binary_fn(p, rule, left, right);
+        rule.binary_fn(p, &rule, left, right);
     }
 
     // bigint_destroy(&tmp);
@@ -374,7 +382,9 @@ parser_rules[TOKEN_COUNT] = {
     // Token_Type                prec               op          binary_fn
     /* TOKEN_UNKNOWN */         {PREC_NONE,         BIN_NONE,   NULL},
     /* TOKEN_AND */             {PREC_AND,          BIN_AND,    parser_logical},
+    /* TOKEN_FALSE */           {PREC_NONE,         BIN_NONE,   NULL},
     /* TOKEN_OR */              {PREC_OR,           BIN_OR,     parser_logical},
+    /* TOKEN_TRUE */            {PREC_NONE,         BIN_NONE,   NULL},
     /* TOKEN_PAREN_OPEN */      {PREC_NONE,         BIN_NONE,   NULL},
     /* TOKEN_PAREN_CLOSE */     {PREC_NONE,         BIN_NONE,   NULL},
     /* TOKEN_AMPERSAND */       {PREC_FACTOR,       BIN_BAND,   parser_arith},
@@ -399,8 +409,8 @@ parser_rules[TOKEN_COUNT] = {
     /* TOKEN_EOF */             {PREC_NONE,         BIN_NONE,   NULL},
 };
 
-static const Parser_Rule *
+static Parser_Rule
 parser_get_rule(Token_Type t)
 {
-    return &parser_rules[t];
+    return parser_rules[t];
 }

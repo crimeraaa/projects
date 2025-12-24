@@ -40,6 +40,10 @@ includes:
       OUT: ./bin/gol
     dir: ./gol
 
+  lulu:
+    taskfile: ./lulu/Build.yml
+    dir: ./lulu
+
 tasks:
   fix-whitespace:
     desc: Remove trailing whitespace from all project files.

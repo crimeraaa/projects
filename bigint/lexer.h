@@ -6,11 +6,11 @@
 
 #include <utils/strings.h>
 
-typedef enum {
+enum Token_Type {
     TOKEN_UNKNOWN,
 
     // Keywords
-    TOKEN_AND, TOKEN_OR,
+    TOKEN_AND, TOKEN_FALSE, TOKEN_OR, TOKEN_TRUE,
 
     // Balanced pairs
     TOKEN_PAREN_OPEN, TOKEN_PAREN_CLOSE, // ( )
@@ -36,23 +36,26 @@ typedef enum {
     TOKEN_NUMBER,       // <number>     ::= [0-9][0-9,_ ]*
     TOKEN_IDENTIFIER,   // <identifier> ::= [a-zA-Z_][0-9a-zA-Z_]*
     TOKEN_EOF,
-} Token_Type;
+};
 
 #define TOKEN_COUNT     (TOKEN_EOF + 1)
 
 extern const String
 TOKEN_STRINGS[TOKEN_COUNT];
 
-typedef struct {
+typedef enum Token_Type Token_Type;
+typedef struct Token Token;
+struct Token {
     Token_Type type;
-    String     lexeme;
-} Token;
+    String lexeme;
+};
 
-typedef struct {
+typedef struct Lexer Lexer;
+struct Lexer {
     String input;
     size_t start;
     size_t cursor;
-} Lexer;
+};
 
 void
 lexer_init(Lexer *x, String input);

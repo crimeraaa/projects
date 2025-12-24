@@ -3,8 +3,12 @@
 
 #include <assert.h>     // assert
 #include <limits.h>     // CHAR_BIT
+
+#if defined(__STDC_VERSION__) && !defined(__cplusplus)
 #include <stdalign.h>   // alignof
 #include <stdbool.h>    // bool, true, false
+#endif // C++ check
+
 #include <stddef.h>     // NULL, size_t, ptrdiff_t, max_align_t
 #include <stdint.h>     // u?int[\d]+_t, uintptr_t
 
@@ -30,6 +34,27 @@
 
 
 #define TYPE_BITS(T)        (sizeof(T) * CHAR_BIT)
+
+#ifdef __cplusplus
+
+// Semantics for C99 compound literals are different in C++.
+#define CLITERAL(T)    T
+
+#if defined(__GNUC__) || defined(__clang__)
+#define restrict    __restrict__
+// https://learn.microsoft.com/en-us/cpp/cpp/extension-restrict?view=msvc-170
+#elif defined(_MSC_VER)
+#define restrict    __restrict
+#else
+#define restrict
+#endif // C++ compiler specific extensions
+
+#else // !__cplusplus
+
+// C99 compound literals.
+#define CLITERAL(T)   (T)
+
+#endif // __cplusplus
 
 typedef unsigned char uchar;
 typedef unsigned int  uint;
@@ -62,42 +87,43 @@ typedef float  f32;
 typedef double f64;
 
 
-/* Compiler-specific: GCC or GCC-like */
+// Compiler-specific: GCC or GCC-like
 #if defined(__GNUC__)
-#   define trap()           __builtin_trap()
-/*  If C23, we already have this in <stddef.h>. */
-#   ifndef unreachable
-#   define unreachable()    __builtin_unreachable()
-#   endif
-
-/* Compiler-specific: MSVC */
-#elif defined(_MSC_VER)
-#   define trap()          __debugbreak()
-/*  If C23, we already have this in <stddef.h> */
-#   ifndef unreachable
-#   define unreachable()   __assume(0)
-#   endif
-#endif /* __GNUC__, _MSC_VER */
-
-
-/* Fallbacks */
+#define trap()           __builtin_debugtrap()
+//  If C23, we already have this in <stddef.h>.
 #ifndef unreachable
-#   if __STDC_VERSION__ >= 201703L
+#define unreachable()    __builtin_unreachable()
+#endif /* unreachable */
+
+// Compiler-specific: MSVC
+#elif defined(_MSC_VER)
+#define trap()          __debugbreak()
+//  If C23, we already have this in <stddef.h>
+#ifndef unreachable
+#define unreachable()   __assume(0)
+#endif // unreachable
+
+#endif // __GNUC__, _MSC_VER
+
+
+// Fallbacks
+#ifndef unreachable
+#if __STDC_VERSION__ >= 201703L
 
 [[noreturn]]
 static inline void
 unreachable() {}
 
-#   elif __STDC_VERSION__ >= 201112L
+#elif __STDC_VERSION__ >= 201112L
 
 _Noreturn
 static inline void
 unreachable(void) {}
 
-#   else
-#   error  Cannot define `unreachable`.
-#   endif
-#endif /* unreachable */
+#else
+#error  Cannot define `unreachable`.
+#endif
+#endif // unreachable
 
 #ifndef NDEBUG
 #define assertfln(expr, fmt, ...)                                              \
@@ -108,21 +134,10 @@ do {                                                                           \
         trap();                                                                \
     }                                                                          \
 } while (0)
-#else /* !NDEBUG */
+#else // !NDEBUG
 #define assertfln(expr, fmt, ...)       ((void)0)
-#endif /* NDEBUG */
+#endif // NDEBUG
 
 #define assertln(expr, msg) assertfln(expr, "%s", msg)
 
-#ifndef CLITERAL
-
-/* Semantics for C99 compound literals are different in C++. */
-#ifdef __cplusplus
-#define CLITERAL(T)    T
-#else
-#define CLITERAL(T)   (T)
-#endif
-
-#endif /* CLITERAL */
-
-#endif /* PROJECTS_COMMON_H */
+#endif // PROJECTS_COMMON_H

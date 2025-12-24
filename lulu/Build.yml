@@ -1,0 +1,24 @@
+# https://taskfile.dev
+
+version: '3'
+
+vars:
+  OUT: ./bin/lulu
+  FLAGS: -vet -debug -sanitize=address -out:"{{.OUT}}"
+
+tasks:
+  run:
+    desc: Build the `lulu` executable unconditionally and run it.
+    deps:
+      - task: build
+    cmds:
+      - '{{.OUT}} {{.CLI_ARGS}}'
+    interactive: true
+
+  build:
+    desc: Build the `lulu` executable unconditionally.
+    cmds:
+      - mkdir -p bin
+      - odin build . {{.FLAGS}}
+    sources:
+      - ./*.odin

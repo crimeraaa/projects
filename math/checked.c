@@ -202,3 +202,20 @@ u64_checked_mul(u64 *dst, u64 a, u64 b)
     *dst  = prod;
     return carry;
 }
+
+bool
+i64_checked_mul(i64 *dst, i64 a, i64 b)
+{
+    i64 prod;
+    bool carry;
+
+    // Overflow check (64-bit signed multiplication):
+    //
+    //      a * b < IMIN or IMAX < a * b
+    //      a < IMIN / b or IMAX / b < a
+    //
+    prod  = a * b;
+    carry = prod != 0 && (a < I64_MIN / b || I64_MAX / b < a);
+    *dst  = prod;
+    return carry;
+}

@@ -89,6 +89,14 @@ lexer_check_keyword_or_identifier(String s)
         if (s.data[0] == 'a' && s.data[1] == 'n' && s.data[2] == 'd') {
             return TOKEN_AND;
         }
+    case 4:
+        if (s.data[0] == 't' && s.data[1] == 'r' && s.data[2] == 'u' && s.data[3] == 'e') {
+            return TOKEN_TRUE;
+        }
+    case 5:
+        if (s.data[0] == 'f' && s.data[1] == 'a' && s.data[2] == 'l' && s.data[3] == 's' && s.data[4] == 'e') {
+            return TOKEN_FALSE;
+        }
     default:
         break;
     }
@@ -182,7 +190,9 @@ const String
 TOKEN_STRINGS[TOKEN_COUNT] = {
     /* TOKEN_UNKNOWN */         s_("<unknown>"),
     /* TOKEN_AND */             s_("and"),
+    /* TOKEN_FALSE */           s_("false"),
     /* TOKEN_OR */              s_("or"),
+    /* TOKEN_TRUE */            s_("true"),
     /* TOKEN_PAREN_OPEN */      s_("("),
     /* TOKEN_PAREN_CLOSE */     s_(")"),
     /* TOKEN_AMPERSAND */       s_("&"),
