@@ -3,26 +3,27 @@ package lulu
 
 import "base:intrinsics"
 import "core:mem"
-import "core:fmt"
-
-assertf :: fmt.assertf
-panicf  :: fmt.panicf
 
 Object :: struct #raw_union {
-    base:    Object_Header,
-    ostring: OString,
+    using base: Object_Header,
+    ostring:    OString,
+    chunk:      Chunk,
 }
+
+// Aliases to document intention. Generally meant for iteration.
+Object_List :: Object
 
 // Aliases to document intention.
-Object_List :: Object
 GC_List     :: Object
 
+// Only exists to be 'inherited from'. Do not create lone instances of this type.
 Object_Header :: struct #packed {
-    next: ^Object,
+    next: ^Object_List,
     type:  Value_Type,
-    mark:  bit_set[Object_Mark],
+    mark:  bit_set[Object_Mark; u8],
 }
 
+// Flags for the garbage collector.
 Object_Mark :: enum u8 {
     // This object has not yet been processed in this particular GC run.
     White,
@@ -33,10 +34,6 @@ Object_Mark :: enum u8 {
 
     // This object is never collectible, e.g. interned keywords.
     Fixed,
-}
-
-Value_Type :: enum u8 {
-    String,
 }
 
 /*
@@ -76,6 +73,8 @@ where intrinsics.type_is_subtype_of(T, Object_Header) {
     list^  = cast(^Object)o
     when T == OString {
         o.type = Value_Type.String
+    } else when T == Chunk {
+        o.type = Value_Type.Chunk
     } else {
         #panic("Invalid T")
     }
@@ -87,6 +86,8 @@ where intrinsics.type_is_subtype_of(T, Object_Header) {
 /*
 Free an object and without unlinking it.
 
+*Deallocates using `context.allocator`.*
+
 **Parameters**
 - o: The object instance to be freed.
 
@@ -94,37 +95,25 @@ Free an object and without unlinking it.
 - The linked list containing `o` is not (yet) invalidated. It is the duty of
 the garbage collector to handle the unlinking for us.
  */
-object_free :: proc(L: ^VM, o: ^Object) {
-    switch o.base.type {
+object_free :: proc(o: ^Object) {
+    switch o.type {
     case .String:
         s    := &o.ostring
         size := size_of(s^) + s.len + 1
         mem.free_with_size(&o.ostring, size, context.allocator)
-    case:
-        panicf("Invalid object (Value_Type=%s)")
+    case .Chunk:
+        chunk_free(&o.chunk)
+    case .Nil, .Boolean, .Number:
+        unreachable("Invalid object (Value_Type=%s)")
     }
 }
 
-/*
-Iterate a linked list of objects using `for ... in` syntax.
-
-**Parameters**
-- list: The address of some `^Object_List` which will be mutated to help keep
-loop state. Do not pass addresses of external state members directly,
-e.g. `&G(L).objects`. Rather, copy the pointer value to a stack local and pass
-the address of said local.
-
-**Returns**
-- node: The current node. May be `nil`.
-- ok: `true` if `node` is non-`nil`, indicating the loop can continue,
-else `false.`, indicating the loop should stop.
- */
-object_nodes :: proc(list: ^^Object_List) -> (node: ^Object, ok: bool) {
-    node = list^
-    ok   = node != nil
-    if ok {
-        list^ = node.base.next
+object_free_all :: proc(L: ^VM, list: ^Object_List) {
+    node := list
+    for node != nil {
+        // Save here because contents are about to be freed.
+        next := node.next
+        object_free(node)
+        node = next
     }
-    return node, ok
 }
-

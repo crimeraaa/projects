@@ -81,7 +81,12 @@ Token_Type :: enum u8 {
     Number, String, Identifier, EOF,
 }
 
-@(private="package", rodata)
+@(private="package")
+token_type_string :: proc(type: Token_Type) -> string {
+    return TOKEN_TYPE_STRINGS[type]
+}
+
+@rodata
 TOKEN_TYPE_STRINGS := [Token_Type]string{
     // Default Type
     .Unknown = "<unknown>",
@@ -162,7 +167,7 @@ lexer_read_rune :: proc(x: ^Lexer) -> (r: rune) {
 /*
 Reports a formatted error message and throws a syntax error to the parent VM.
  */
-lexer_throw :: proc(x: ^Lexer, format: string, args: ..any) -> ! {
+lexer_error :: proc(x: ^Lexer, format: string, args: ..any) -> ! {
     fmt.eprintf("%s:%i(%i): ", x.name, x.line, x.cursor)
     fmt.eprintfln(format, ..args)
     vm_throw(x.L, .Syntax)
@@ -251,7 +256,7 @@ syntax error is thrown.
  */
 lexer_expect :: proc(x: ^Lexer, want: rune) {
     if !lexer_match_rune(x, want) {
-        lexer_throw(x, "Expected '%c'", want)
+        lexer_error(x, "Expected '%c'", want)
     }
 }
 
@@ -266,7 +271,7 @@ lexer_advance :: proc(x: ^Lexer) {
     // assert(utf8.rune_size(prev_rune) == size)
     x.cursor += lexer_peek_size(x)
     if x.curr_rune == utf8.RUNE_ERROR {
-        lexer_throw(x, "Invalid rune '%c' (%i)", x.curr_rune, x.curr_rune)
+        lexer_error(x, "Invalid rune '%c' (%i)", x.curr_rune, x.curr_rune)
     }
     lexer_read_rune(x)
 }
@@ -285,7 +290,7 @@ lexer_skip_comment_multi :: proc(x: ^Lexer, nest_open: int) {
         }
         lexer_advance(x)
     }
-    lexer_throw(x, "Unterminated multiline comment")
+    lexer_error(x, "Unterminated multiline comment")
 }
 
 lexer_skip_comment :: proc(x: ^Lexer) {
@@ -425,7 +430,7 @@ lexer_consume_proc :: proc(x: ^Lexer, p: proc(rune) -> bool) {
 lexer_check_keyword :: proc(x: ^Lexer, s: string) -> (type: Token_Type) {
     // Helper
     check :: proc(s: string, type: Token_Type, offset: int) -> Token_Type {
-        kw := TOKEN_TYPE_STRINGS[type]
+        kw := token_type_string(type)
         return type if s[offset:] == kw[offset:] else .Identifier
     }
 
@@ -504,12 +509,12 @@ lexer_make_number_token :: proc(x: ^Lexer, leader: rune) -> Token {
             token := token_make(x, Token_Type.Number)
             i, ok := strconv.parse_uint(token.lexeme[2:], base)
             if !ok {
-                lexer_throw(x, "Malformed integer '%s'", token.lexeme)
+                lexer_error(x, "Malformed integer '%s'", token.lexeme)
             }
             f := cast(f64)i
             // `i` as an `f64` might not be accurately represented?
             if cast(uint)f != i {
-                lexer_throw(x, "Invalid f64 integer '%s'", token.lexeme)
+                lexer_error(x, "Invalid f64 integer '%s'", token.lexeme)
             }
             token.data = f
             return token
@@ -537,7 +542,7 @@ lexer_make_number_token :: proc(x: ^Lexer, leader: rune) -> Token {
     token := token_make(x, Token_Type.Number)
     n, ok := strconv.parse_f64(token.lexeme)
     if !ok {
-        lexer_throw(x, "Malformed number '%s'", token.lexeme)
+        lexer_error(x, "Malformed number '%s'", token.lexeme)
     }
     token.data = n
     return token
@@ -616,7 +621,7 @@ lexer_make_string_token :: proc(x: ^Lexer, q: rune) -> Token {
 
     consume_loop: for {
         if lexer_is_eof(x) {
-            lexer_throw(x, "Unfinished string")
+            lexer_error(x, "Unfinished string")
         }
 
         r, r_size := lexer_peek(x), lexer_peek_size(x)
@@ -640,13 +645,13 @@ lexer_make_string_token :: proc(x: ^Lexer, q: rune) -> Token {
             case '\n', '\\', '\"', '\'', '[', ']':
                 break
             case:
-                lexer_throw(x, "Unsupported escape sequence '%c'", esc)
+                lexer_error(x, "Unsupported escape sequence '%c'", esc)
             }
             write(L, b, esc, esc_size)
 
         // Unescaped newline. If explicitly escaped then it's valid.
         case '\n':
-            lexer_throw(x, "Unfinished string")
+            lexer_error(x, "Unfinished string")
         case:
             write(L, b, r, r_size)
         }

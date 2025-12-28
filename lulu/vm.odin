@@ -76,8 +76,16 @@ vm_run_protected :: proc(L: ^VM, p: proc(^VM, rawptr), ud: rawptr) -> Error {
 
 vm_throw :: proc(L: ^VM, code: Error) -> ! {
     h := L.handler
+    // Unprotected call?
+    if h == nil {
+        panic("lulu panic: unprotected call")
+    }
     intrinsics.volatile_store(&h.code, code)
     libc.longjmp(&h.buffer, 1)
+}
+
+vm_error_syntax :: proc(L: ^VM) -> ! {
+    vm_throw(L, .Syntax)
 }
 
 vm_error_memory :: proc(L: ^VM) -> ! {

@@ -4,19 +4,7 @@ import "core:fmt"
 import "core:strings"
 import os "core:os/os2"
 
-// token_formatter :: proc(fi: ^fmt.Info, arg: any, verb: rune) -> bool {
-//     t := (cast(^Token)arg.data)^
-//     q := '\'' if len(t.lexeme) == 1 else '\"'
-//     fi.n += fmt.wprintf(fi.writer, "%s %c%s%c", t.type, q, t.lexeme, q)
-//     return true
-// }
-
 main :: proc() {
-    // m: map[typeid]fmt.User_Formatter
-    // fmt.set_user_formatters(&m)
-    // fmt.register_user_formatter(Token, token_formatter)
-    // defer delete(m)
-
     g := &Global_State{}
     L := &VM{global=g}
     // lulu/cpp/src/vm.cpp:lulu_open()
@@ -28,11 +16,14 @@ main :: proc() {
         o.mark += {.Fixed}
 
         for kw_type in Token_Type.And..=Token_Type.While {
-            o       = ostring_new(L, TOKEN_TYPE_STRINGS[kw_type])
+            o       = ostring_new(L, token_type_string(kw_type))
             o.mark += {.Fixed}
         }
     }
-    defer intern_destroy(L, &g.intern)
+    defer {
+        intern_destroy(L, &g.intern)
+        object_free_all(L, g.objects)
+    }
 
     switch len(os.args) {
     case 1: run_repl(L)
@@ -76,37 +67,17 @@ run_input :: proc(L: ^VM, name, input: string) {
 
     Data :: struct {
         builder:    ^strings.Builder,
-        name, input: string
+        name, input: string,
     }
 
-    data := Data{builder=&b, name=name, input=input}
-    lex :: proc(L: ^VM, ud: rawptr) {
-        data := (cast(^Data)ud)^
-        x    := lexer_make(L, data.builder, data.name, data.input)
-        line := -1
-        fmt.println("[FILE]:", x.name)
-        for {
-            t := lexer_scan_token(&x)
-            if t.type == .EOF {
-                break
-            }
-            if t.line != line {
-                fmt.printf("% -4i ", t.line)
-                line = t.line
-            } else {
-                fmt.print("|--- ")
-            }
-            q := '\'' if len(t.lexeme) == 1 else '\"'
-            fmt.printf("%-16v %c%s%c ", t.type, q, t.lexeme, q)
-            switch v in t.data {
-            case nil:
-                fmt.println()
-            case f64:
-                fmt.println(v)
-            case ^OString:
-                fmt.printfln("%q", ostring_to_string(v))
-            }
-        }
+    parse :: proc(L: ^VM, ud: rawptr) {
+        data     := (cast(^Data)ud)^
+        chunk    := chunk_new(L, data.name)
+        parser   := parser_make(L, data.builder, data.name, data.input)
+        compiler := compiler_make(L, &parser, chunk)
+        parser_parse(&parser, &compiler)
     }
-    vm_run_protected(L, lex, &data)
+
+    data := Data{&b, name, input}
+    vm_run_protected(L, parse, &data)
 }

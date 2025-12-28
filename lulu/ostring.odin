@@ -1,9 +1,6 @@
 #+private package
 package lulu
 
-import "core:fmt"
-import "core:math"
-
 Intern :: struct {
     // Each entry in the string table is actually a linked list.
     table: []^Object_List,
@@ -15,11 +12,11 @@ Intern :: struct {
 OString :: struct {
     using base: Object_Header,
 
-    // Actual number of `byte` in `data`.
-    len: int,
-
     // Hash value of `data[:len]` used for quick comparisons.
     hash: u32,
+
+    // Actual number of `byte` in `data`.
+    len: int,
 
     // Flexible array member. The actual character array is stored right
     // after the previous member in memory.
@@ -32,8 +29,8 @@ Iterate a linked list of interned strings using a `for ... in` loop.
 **Parameters**
 - list: The address of some `^OString` which will be mutated to help keep
 loop state. Do not pass addresses of global state members directly, e.g.
-`&G(L).intern.table[i].ostring`. Rather, copy the pointer value to a stack
-local and pass the address of said local.
+`&G(L).intern.table[i].ostring`. Rather, copy the state member's value to a
+stack local and pass the address of said local.
 
 **Returns**
 - node: The current node. May be `nil`.
@@ -98,11 +95,11 @@ Reuse an existing interned copy of `text`, or creates a new one.
 ostring_new :: proc(L: ^VM, text: string) -> ^OString {
     intern    := &G(L).intern
     table     := intern.table
-    table_len := len(table)
-    assert(table_len >= 2)
+    table_cap := len(table)
+    assert(table_cap >= 2)
 
     hash   := hash_string(text)
-    index  := intern_clamp_index(hash, table_len)
+    index  := hash_index(hash, table_cap)
     list   := &table[index].ostring
     for s in ostring_nodes(&list) {
         if hash == s.hash && text == ostring_to_string(s) {
@@ -122,8 +119,8 @@ ostring_new :: proc(L: ^VM, text: string) -> ^OString {
     // Count refers to the total number of linked list nodes, including chains,
     // rather than occupied array slots. Even so we probably want to rehash
     // anyway to reduce clustering.
-    if intern.count + 1 > table_len {
-        intern_resize(L, intern, table_len << 1)
+    if intern.count + 1 > table_cap {
+        intern_resize(L, intern, table_cap << 1)
     }
     intern.count += 1
     return s
@@ -131,11 +128,19 @@ ostring_new :: proc(L: ^VM, text: string) -> ^OString {
 
 /*
 Given a string's hash value, return the primary index into the intern table.
+
+**Parameters**
+- hash: The value returned from `hash_string()`.
+- table_cap: The slice length of the intern table. Must be a power of 2.
+
+**Assumptions**
+- `table_cap` is a power of 2. This is necessary to optimize modulo into
+a bitwise AND.
  */
 @(private="file")
-intern_clamp_index :: proc(hash: u32, table_len: int) -> uint {
+hash_index :: proc(hash: u32, table_cap: int) -> uint {
     a := cast(uint)hash
-    n := cast(uint)table_len
+    n := cast(uint)table_cap
     return a & (n - 1)
 }
 
@@ -150,50 +155,38 @@ Resize the intern table to fit more strings.
 `ostring_new` never see a zero-length table.
  */
 intern_resize :: proc(L: ^VM, intern: ^Intern, new_cap: int) {
-    new_table := slice_make(^Object_List, L, new_cap)
-    table_len := len(intern.table)
+    old_table   := intern.table
+    new_table   := slice_make(^Object_List, L, new_cap)
+    intern.table = new_table
+    defer slice_delete(old_table)
 
     // Rehash all strings from the old table into the new table.
-    for list in intern.table {
+    for list in old_table {
         this_node := list
         // Rehash all children for this list.
         for this_node != nil {
-            child := &this_node.ostring
-            index := intern_clamp_index(child.hash, table_len)
+            ostring := &this_node.ostring
+            index   := hash_index(ostring.hash, new_cap)
 
             // Save because it's about to be replaced.
-            next_node := child.next
+            next_node := ostring.next
 
             // Chain this node in the NEW table, using the NEW main index.
-            child.next       = new_table[index]
+            ostring.next     = new_table[index]
             new_table[index] = this_node
             this_node        = next_node
         }
     }
-    slice_delete(intern.table)
-    intern.table = new_table
 }
 
 /*
 Free all the memory used by the interned strings table and the strings themselves.
+
+*Deallocates using `context.allocator`.*
  */
 intern_destroy :: proc(L: ^VM, intern: ^Intern) {
-    pad := math.count_digits_of_base(len(intern.table) - 1, base=10)
-    for list, index in intern.table {
-        node := list
-        fmt.printf("[%*i]: ", pad, index)
-        for node != nil {
-            child := &node.ostring
-            next  := child.next
-            fmt.printf("%q", ostring_to_string(child))
-            if next != nil {
-                fmt.print(" -> ")
-            }
-
-            object_free(L, node)
-            node = next
-        }
-        fmt.println()
+    for list in intern.table {
+        object_free_all(L, list)
     }
     slice_delete(intern.table)
 }
