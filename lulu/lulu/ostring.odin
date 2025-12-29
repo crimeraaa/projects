@@ -9,14 +9,14 @@ Intern :: struct {
     count: int,
 }
 
-OString :: struct {
+Ostring :: struct {
     using base: Object_Header,
-
-    // Hash value of `data[:len]` used for quick comparisons.
-    hash: u32,
 
     // Actual number of `byte` in `data`.
     len: int,
+
+    // Hash value of `data[:len]` used for quick comparisons.
+    hash: u32,
 
     // Flexible array member. The actual character array is stored right
     // after the previous member in memory.
@@ -27,7 +27,7 @@ OString :: struct {
 Iterate a linked list of interned strings using a `for ... in` loop.
 
 **Parameters**
-- list: The address of some `^OString` which will be mutated to help keep
+- list: The address of some `^Ostring` which will be mutated to help keep
 loop state. Do not pass addresses of global state members directly, e.g.
 `&G(L).intern.table[i].ostring`. Rather, copy the state member's value to a
 stack local and pass the address of said local.
@@ -37,7 +37,7 @@ stack local and pass the address of said local.
 - ok: `true` if `node` is non-`nil`, indicating the loop can continue,
 else `false.`, indicating the loop should stop.
  */
-ostring_nodes :: proc(list: ^^OString) -> (node: ^OString, ok: bool) {
+ostring_nodes :: proc(list: ^^Ostring) -> (node: ^Ostring, ok: bool) {
     node = list^
     ok   = node != nil
     if ok {
@@ -51,7 +51,7 @@ ostring_nodes :: proc(list: ^^OString) -> (node: ^OString, ok: bool) {
 Convert `s` to an Odin-readable `string`.
 
 **Parameters**
-- s: The `^OString` instance to be converted.
+- s: The `^Ostring` instance to be converted.
 
 **Returns**
 - The `string` representation of `s`.
@@ -60,7 +60,7 @@ Convert `s` to an Odin-readable `string`.
 - If needed, `s` is also nul-terminated. The returned `string` can be safely
 converted to `cstring`.
  */
-ostring_to_string :: proc(s: ^OString) -> string #no_bounds_check {
+ostring_to_string :: proc(s: ^Ostring) -> string #no_bounds_check {
     assert(s.data[s.len] == 0)
     return string(s.data[:s.len])
 }
@@ -92,7 +92,7 @@ Reuse an existing interned copy of `text`, or creates a new one.
 **Returns**
 - A pointer to the interned string.
  */
-ostring_new :: proc(L: ^VM, text: string) -> ^OString {
+ostring_new :: proc(L: ^VM, text: string) -> ^Ostring {
     intern    := &G(L).intern
     table     := intern.table
     table_cap := len(table)
@@ -107,7 +107,7 @@ ostring_new :: proc(L: ^VM, text: string) -> ^OString {
         }
     }
 
-    s := object_new(OString, L, &table[index], len(text) + 1)
+    s := object_new(Ostring, L, &table[index], len(text) + 1)
     s.len  = len(text)
     s.hash = hash
     #no_bounds_check {

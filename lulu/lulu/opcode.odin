@@ -34,7 +34,6 @@ A_SIZE   :: 8
 B_SIZE   :: 9
 C_SIZE   :: 9
 Bx_SIZE  :: B_SIZE + C_SIZE
-sBx_SIZE :: Bx_SIZE
 
 A_MAX   :: (1 << A_SIZE)  - 1
 B_MAX   :: (1 << B_SIZE)  - 1

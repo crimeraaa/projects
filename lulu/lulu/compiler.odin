@@ -113,65 +113,35 @@ compiler_pop_reg :: proc(c: ^Compiler, reg: u16) {
     c.free_reg = prev
 }
 
-/*
-Emits the bytecode necessary to load the value represented by `e` without
-yet pushing it to a destination register.
-
-**Guarantees**
-- `e` is transformed to type `.Pc_Pending_Register`. Use `e.pc` to manipulate
-the instruction that loads the value.
-- No register allocation for the result in `e` is performed. Temporary
-registers may be allocated, but they are popped immediately.
- */
-@(private="file")
-load_expr_value :: proc(c: ^Compiler, e: ^Expr, line: int) {
-    pc := -1
-    switch e.type {
-    case .Nil:
-        pc = compiler_load_nil(c, 1, line)
-
-    case .Boolean:
-        b := cast(u16)e.boolean
-        pc = compiler_code_abc(c, .Load_Bool, 0, b, 0, line)
-
-    case .Number:
-        value := value_make(e.number)
-        index := compiler_add_constant(c, value)
-        pc = compiler_code_abx(c, .Load_Const, 0, index, line)
-
-    case .Constant:
-        index := e.index
-        pc = compiler_code_abx(c, .Load_Const, 0, index, line)
-
-    case .Pc_Pending_Register:
-        return
-
-    case .Register:
-        return
-    }
-    assert(pc != -1)
-    expr_set_pc(e, pc)
-}
-
-compiler_load_nil :: proc(c: ^Compiler, count: u16, line: int) -> (pc: int) {
+compiler_load_nil :: proc(c: ^Compiler, reg, count: u16, line: int) {
     // We might be able to fold consecutive nil loads into one?
-    if prev_pc := c.pc - 1; prev_pc > 0 {
-        if ip := &c.chunk.code[prev_pc]; ip.op == .Load_Nil {
-            from_reg := ip.a
-            to_reg   := from_reg + count
-            // We are definitely increasing the number of nils being loaded?
-            if ip.b <= to_reg {
-                ip.b = to_reg
-                return prev_pc
-            }
+    fold: if prev_pc := c.pc - 1; prev_pc > 0 {
+        ip := &c.chunk.code[prev_pc]
+        if ip.op != .Load_Nil {
+            break fold
         }
+
+        prev_from := ip.a
+        prev_to   := ip.b
+        // `reg` (our start register for this hypothetical load nil) is not in
+        // range of this load nil, so connecting them would be erroneous?
+        if !(prev_from <= reg && reg <= prev_to + 1) {
+            break fold
+        }
+
+        next_to := reg + count
+        if next_to > prev_to {
+            ip.b = next_to
+        }
+        return
     }
-    return compiler_code_abc(c, .Load_Nil, 0, count, 0, line)
+    // Otherwise, no optimization.
+    compiler_code_abc(c, .Load_Nil, reg, reg + count, 0, line)
 }
 
 /*
 Pushes `e` to the first free register if it is not already in a register.
-This one of the (if not the) simplest register allocation strategies.
+This is the 2nd simplest register allocation strategy.
 
 **Parameters**
 - e: The expression to be pushed to a register.
@@ -180,22 +150,87 @@ This one of the (if not the) simplest register allocation strategies.
 - reg: The index of the register where `e` is found in.
 
 **Guarantees**
-- `e` is transformed to type `.Register`.
+- `e` is transformed to type `.Register` if it was not already in one.
+
+**Analogous to**
+- `lcode.c:luaK_exp2anyreg(FuncState *fs, expdesc *e)` in Lua 5.1.5.
  */
 compiler_push_expr_any :: proc(c: ^Compiler, e: ^Expr, line: int) -> (reg: u16) {
-    load_expr_value(c, e, line)
+    if e.type == .Register {
+        return e.reg
+    }
+    return compiler_push_expr_next(c, e, line)
+}
+
+/* 
+Unconditionally pushes `e` to the first free register even if it already
+residing in one. This is the simplest register alloocation strategy, although
+care should be taken to ensure needlessly redundant work is avoided.
+
+**Returns**
+- reg: The register which `e` now resides in.
+
+**Guarantees**
+- `e` is transformed to type `.Register`.
+
+**Analogous to**
+- `lcode.c:luaK_exp2nextreg(FuncState *fs, expdesc *e)` in Lua 5.1.5.
+ */
+compiler_push_expr_next :: proc(c: ^Compiler, e: ^Expr, line: int) -> (reg: u16) {
+    reg = compiler_push_reg(c)
+    discharge_expr_to_reg(c, e, reg, line)
+    return reg
+
+}
+
+
+/*
+Emits the bytecode necessary to load the value represented by `e` into
+the register `reg`. This function is mainly used to help implement actual
+register allocation strategies.
+
+**Guarantees**
+- `e` is transformed to type `.Register`. This is its register allocation for
+the destination, hence it is termed 'discharged' (i.e. finalized).
+
+**Analogous to**
+- `lcode.c:discharge2reg(FuncState *fs, expdesc *e, int reg)` in Lua 5.1.5.
+ */
+@(private="file")
+discharge_expr_to_reg :: proc(c: ^Compiler, e: ^Expr, reg: u16, line: int) {
     #partial switch e.type {
+    case .Nil:
+        compiler_load_nil(c, reg, 1, line)
+
+    case .Boolean:
+        b := cast(u16)e.boolean
+        compiler_code_abc(c, .Load_Bool, reg, b, 0, line)
+
+    case .Number:
+        value := value_make(e.number)
+        index := compiler_add_constant(c, value)
+        compiler_code_abx(c, .Load_Const, reg, index, line)
+
+    case .Constant:
+        index := e.index
+        compiler_code_abx(c, .Load_Const, reg, index, line)
+
     case .Pc_Pending_Register:
         pc := e.pc
-        reg = compiler_push_reg(c)
-        c.chunk.code[pc].a = reg
-        expr_set_reg(e, reg)
+        ip := &c.chunk.code[pc]
+        ip.a = reg
 
     case .Register:
-        reg = e.reg
+        dst := reg
+        src := e.reg
+        // Differing registers, so we need to explicitly move?
+        // Otherwise, they are the same so we don't do anything as that would
+        // be redundant.
+        if dst != src {
+            compiler_code_abc(c, .Move, dst, src, 0, line)
+        }
     }
-    assert(e.type == .Register)
-    return reg
+    expr_set_reg(e, reg)
 }
 
 /*
@@ -260,9 +295,9 @@ in-place. No bytecode is emitted nor does any register allocation occur.
 register allocation for its result by the caller.
  */
 compiler_code_unary :: proc(c: ^Compiler, op: Opcode, e: ^Expr, line: int) {
-    // // Constant folding to avoid unnecessary work.
+    // Constant folding to avoid unnecessary work.
     if op == .Unm && e.type == .Number {
-        e.number = -e.number
+        e.number = fneg(e.number)
         return
     }
 
@@ -294,6 +329,9 @@ compiler_code_arith :: proc(c: ^Compiler, op: Opcode, left, right: ^Expr, line: 
         pop_expr(c, left)
     }
 
+    // For high precedence recursive calls, remember that we are the
+    // right-hand-side of our parent expression. So in those cases, `right`
+    // is already of type `.Pc_Needs_Register`.
     pc := compiler_code_abc(c, op, 0, r0, r1, line)
     expr_set_pc(left, pc)
 }

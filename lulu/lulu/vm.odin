@@ -123,16 +123,16 @@ vm_error_runtime :: proc(L: ^VM, format := "", args: ..any) -> ! {
 }
 
 @(private="file")
-get_rk :: #force_inline proc(reg: u16, f: ^Frame) -> Value {
+get_rk :: #force_inline proc(reg: u16, f: ^Frame) -> ^Value {
     if reg_is_k(reg) {
         i := reg_get_k(reg)
-        return f.constants[i]
+        return &f.constants[i]
     }
-    return f.stack[reg]
+    return &f.stack[reg]
 }
 
 @(private="file")
-get_rkb_rkc :: #force_inline proc(i: Instruction, f: ^Frame) -> (b, c: Value) {
+get_rkb_rkc :: #force_inline proc(i: Instruction, f: ^Frame) -> (b, c: ^Value) {
     b = get_rk(i.b, f)
     c = get_rk(i.c, f)
     return b, c
@@ -164,13 +164,13 @@ vm_to_number :: proc(v: Value) -> (n: f64, ok: bool) {
         i, ok = strconv.parse_uint(s[2:], base)
         if ok {
             n = cast(f64)i
-            return n, ok
         }
+        return n, ok
     }
     return strconv.parse_f64(s)
 }
 
-funm :: proc "contextless" (a: f64)    -> f64 {return -a}
+fneg :: proc "contextless" (a: f64)    -> f64 {return -a}
 fadd :: proc "contextless" (a, b: f64) -> f64 {return a + b}
 fsub :: proc "contextless" (a, b: f64) -> f64 {return a - b}
 fmul :: proc "contextless" (a, b: f64) -> f64 {return a * b}
@@ -180,21 +180,19 @@ fpow :: math.pow_f64
 
 @(private="file")
 arith :: #force_inline proc(L: ^VM,
-    i: Instruction,
     pc: int,
     ra: ^Value,
-    op: proc "contextless" (a, b: f64) -> f64)
+    op: proc "contextless" (a, b: f64) -> f64,
+    rkb, rkc: ^Value)
 {
-    b, c := get_rkb_rkc(i, &L.frame)
     try: {
-        left   := vm_to_number(b) or_break try
-        right  := vm_to_number(c) or_break try
-        result := op(left, right)
-        ra^     = value_make(result)
+        left   := vm_to_number(rkb^) or_break try
+        right  := vm_to_number(rkc^) or_break try
+        ra^     = value_make(op(left, right))
         return
     }
     protect(L, pc)
-    arith_error(L, b, c)
+    arith_error(L, rkb, rkc)
 }
 
 @(private="file")
@@ -203,18 +201,21 @@ protect :: proc(L: ^VM, pc: int) {
 }
 
 @(private="file")
-arith_error :: proc(L: ^VM, a, b: Value) -> ! {
-    what := value_type_name(b if value_is_number(a) else a)
+arith_error :: proc(L: ^VM, a, b: ^Value) -> ! {
+    what := value_type_name(b^ if value_is_number(a^) else a^)
     vm_error_runtime(L, "Attempt to perform arithmetic on a %s value", what)
 }
 
 vm_execute :: proc(L: ^VM, chunk: ^Chunk) {
     L.frame = Frame{chunk, 0, L.stack[:chunk.stack_used], chunk.constants[:]}
-    code  := raw_data(chunk.code)
-    ip: [^]Instruction = code
+    code   := raw_data(chunk.code)
+    ip     := code
+    frame  := &L.frame
 
-    frame := &L.frame
+    // Registers array.
     r := frame.stack
+    
+    // Constants array.
     k := frame.constants
 
     // Zero-initalize the stack frame.
@@ -274,21 +275,21 @@ vm_execute :: proc(L: ^VM, chunk: ^Chunk) {
             ra^    = value_make(not_b)
 
         case .Unm:
-            rb := r[i.b]
-            if !value_is_number(rb) {
+            rb := &r[i.b]
+            if !value_is_number(rb^) {
                 arith_error(L, rb, rb)
             }
-            n := value_to_number(rb)
-            n = funm(n)
+            n := value_to_number(rb^)
+            n = fneg(n)
             ra^ = value_make(n)
 
         // Arithmetic
-        case .Add: arith(L, i, pc, ra, fadd)
-        case .Sub: arith(L, i, pc, ra, fsub)
-        case .Mul: arith(L, i, pc, ra, fmul)
-        case .Div: arith(L, i, pc, ra, fdiv)
-        case .Mod: arith(L, i, pc, ra, fmod)
-        case .Pow: arith(L, i, pc, ra, fpow)
+        case .Add: arith(L, pc, ra, fadd, get_rkb_rkc(i, frame))
+        case .Sub: arith(L, pc, ra, fsub, get_rkb_rkc(i, frame))
+        case .Mul: arith(L, pc, ra, fmul, get_rkb_rkc(i, frame))
+        case .Div: arith(L, pc, ra, fdiv, get_rkb_rkc(i, frame))
+        case .Mod: arith(L, pc, ra, fmod, get_rkb_rkc(i, frame))
+        case .Pow: arith(L, pc, ra, fpow, get_rkb_rkc(i, frame))
 
         // Comparison
         case .Eq:

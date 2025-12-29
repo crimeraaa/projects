@@ -19,6 +19,6 @@ tasks:
     desc: Build the `lulu` executable unconditionally.
     cmds:
       - mkdir -p bin
-      - odin build {{.TASKFILE_DIR}} {{.FLAGS}}
+      - odin build {{.TASKFILE_DIR}}/lulu/ {{.FLAGS}}
     sources:
-      - ./*.odin
+      - '{{.TASKFILE_DIR}}/lulu/*.odin'

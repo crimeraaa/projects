@@ -202,7 +202,7 @@ prefix :: proc(p: ^Parser, c: ^Compiler) -> (e: Expr) {
     case .True:     return expr_make_boolean(true)
     case .Number:   return expr_make_number(p.consumed.data.(f64))
     case .String:
-        value := value_make(p.consumed.data.(^OString))
+        value := value_make(p.consumed.data.(^Ostring))
         index := compiler_add_constant(c, value)
         expr_set_constant(&e, index)
         return e

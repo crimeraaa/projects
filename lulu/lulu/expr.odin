@@ -3,7 +3,7 @@ package lulu
 
 Expr :: struct {
     type: Expr_Type,
-    using _: struct #raw_union {
+    using data: struct #raw_union {
         // Number literal. Useful for constant folding.
         number: f64,
 

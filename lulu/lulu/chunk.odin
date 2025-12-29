@@ -131,7 +131,7 @@ chunk_disassemble_at :: proc(c: ^Chunk, i: Instruction, pc: int, pad := 0) {
         }
     }
 
-    fmt.printf("%-16s", i.op)
+    fmt.printf("%-12s", i.op)
     switch i.op {
     case .Move:      print_abc(i, "r%i := r%i", i.a, i.b)
     case .Load_Nil:  print_abc(i, "r%i..<r%i := nil", i.a, i.b)

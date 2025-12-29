@@ -6,7 +6,7 @@ import "core:mem"
 
 Object :: struct #raw_union {
     using base: Object_Header,
-    ostring:    OString,
+    ostring:    Ostring,
     chunk:      Chunk,
 }
 
@@ -47,7 +47,7 @@ Create a new object of type `T`, appending it to `list`.
 - list: Address of some external state member, e.g. `G(L).objects` which
 links objects together in a list.
 - extra: Number of extra bytes to be allocated in case of flexible array
-members, e.g. `OString`. If `T` is fixed-size then it should remain zero.
+members, e.g. `Ostring`. If `T` is fixed-size then it should remain zero.
 
 **Returns**
 - A pointer to some object `T` which has been linked and initialized.
@@ -71,7 +71,7 @@ where intrinsics.type_is_subtype_of(T, Object_Header) {
     // Chain the new object.
     o.next = list^
     list^  = cast(^Object)o
-    when T == OString {
+    when T == Ostring {
         o.type = Value_Type.String
     } else when T == Chunk {
         o.type = Value_Type.Chunk

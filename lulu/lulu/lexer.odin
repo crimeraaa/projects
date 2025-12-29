@@ -17,7 +17,7 @@ Token :: struct {
 
 @(private="package")
 Token_Data :: union {
-    f64, ^OString,
+    f64, ^Ostring,
 }
 
 @(private="package")

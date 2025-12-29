@@ -5,11 +5,12 @@ import "core:fmt"
 
 Value :: struct {
     type: Value_Type,
-    using _: struct #raw_union {
+    using data: struct #raw_union {
         boolean:  bool,
         number:   f64,
-        pointer:  rawptr,
+        integer:  int,
         object:  ^Object,
+        pointer:  rawptr,
     },
 }
 
@@ -43,7 +44,7 @@ value_make_number :: proc(n: f64) -> Value {
     return Value{type=.Number, number=n}
 }
 
-value_make_ostring :: proc(s: ^OString) -> Value {
+value_make_ostring :: proc(s: ^Ostring) -> Value {
     return Value{type=.String, object=cast(^Object)s}
 }
 
@@ -98,7 +99,7 @@ value_to_number :: proc(v: Value) -> f64 {
     return v.number
 }
 
-value_to_ostring :: proc(v: Value) -> ^OString {
+value_to_ostring :: proc(v: Value) -> ^Ostring {
     assert(value_is_string(v), "Expected 'string' but got '%s'", value_type_name(v))
     return &v.object.ostring
 }
