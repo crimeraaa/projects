@@ -20,11 +20,6 @@ Parser :: struct {
     lookahead: Token,
 }
 
-Parser_Rule :: struct {
-    infix:  proc(p: ^Parser, c: ^Compiler, left: ^Expr, prec: Precedence),
-    prec:   Precedence,
-}
-
 Precedence :: enum u8 {
     None,
     Equality,   // == ~=
@@ -35,18 +30,32 @@ Precedence :: enum u8 {
     Unary,      // - not #
 }
 
+Rule :: struct {
+    // Knowing the opcode already helps us dispatch to more specific
+    // infix expression parsers.
+    op: Opcode,
+
+    // Left-hand-side precedence. Helps determine when we should terminate
+    // recursion in the face of higher-precedence parent expressions.
+    left:  Precedence,
+
+    // Right-hand-side precedence. Helps determine when we should recursively
+    // parse higher-precedence child expressions.
+    right: Precedence,
+}
+
 @(private="package")
 parser_make :: proc(L: ^VM, builder: ^strings.Builder, name, input: string) -> Parser {
     p := Parser{L=L, lexer=lexer_make(L, builder, name, input)}
-    parser_advance(&p)
+    advance_token(&p)
     return p
 }
 
 @(private="package")
 parser_parse :: proc(p: ^Parser, c: ^Compiler) {
     e := expression(p, c)
-    compiler_push_expr(c, &e, p.consumed.line)
-    parser_expect(p, .EOF)
+    compiler_push_expr_any(c, &e, p.consumed.line)
+    expect_token(p, .EOF)
     compiler_end(c, p.consumed.line)
 }
 
@@ -58,24 +67,24 @@ Unconditionally consumes a new token.
 - The old lookahead is now the new consumed token.
 - The next scanned token is now the new lookahead token.
  */
-parser_advance :: proc(p: ^Parser) {
+advance_token :: proc(p: ^Parser) {
     p.consumed, p.lookahead = p.lookahead, lexer_scan_token(&p.lexer)
-    if p.lookahead.type == .Unknown {
-        parser_error_lookahead(p, "Unexpected token")
+    if p.lookahead.type == nil {
+        error_lookahead(p, "Unexpected token")
     }
 }
 
-parser_expect :: proc(p: ^Parser, want: Token_Type, info := "") {
-    if !parser_match(p, want) {
+expect_token :: proc(p: ^Parser, want: Token_Type, info := "") {
+    if !match_token(p, want) {
         buf: [256]byte
         msg: string
-        what := token_type_string(want)
+        what := token_string(want)
         if info == "" {
             msg = fmt.bprintf(buf[:], "Expected '%s'", what)
         } else {
             msg = fmt.bprintf(buf[:], "Expected '%s' %s", what, info)
         }
-        parser_error_lookahead(p, msg)
+        error_lookahead(p, msg)
     }
 }
 
@@ -85,10 +94,10 @@ Consumes the lookahead token iff it matches `want`.
 **Returns**
 - `true` if the lookahead token matched `want`, else `false`.
  */
-parser_match :: proc(p: ^Parser, want: Token_Type) -> (found: bool) {
+match_token :: proc(p: ^Parser, want: Token_Type) -> (found: bool) {
     found = p.lookahead.type == want
     if found {
-        parser_advance(p)
+        advance_token(p)
     }
     return found
 }
@@ -98,20 +107,20 @@ Throws a syntax error at the consumed token.
  */
 @(private="package")
 parser_error :: proc(p: ^Parser, msg: string) -> ! {
-    parser_error_at(p, p.consumed, msg)
+    error_at(p, p.consumed, msg)
 }
 
 /*
 Throws a syntax error at the lookahead token.
  */
-parser_error_lookahead :: proc(p: ^Parser, msg: string) -> ! {
-    parser_error_at(p, p.lookahead, msg)
+error_lookahead :: proc(p: ^Parser, msg: string) -> ! {
+    error_at(p, p.lookahead, msg)
 }
 
-parser_error_at :: proc(p: ^Parser, t: Token, msg: string) -> ! {
+error_at :: proc(p: ^Parser, t: Token, msg: string) -> ! {
     file := p.lexer.name
     line := t.line
-    loc  := t.lexeme if len(t.lexeme) > 0 else token_type_string(t.type)
+    loc  := t.lexeme if len(t.lexeme) > 0 else token_string(t.type)
     fmt.eprintfln("%s:%i: %s near '%s'", file, line, msg, loc)
     vm_error_syntax(p.L)
 }
@@ -123,7 +132,8 @@ with a complete parse tree- nodes are discarded along with their associated
 stack frames.
 
 **Parameters**
-- prec: Mainly useful for parsing sub-expressions.
+- prec: Parent caller expression precedence. Useful to enforce operator
+precedence and left/right associativity.
 
 **Returns**
 - e: An expression with a pending register for the result.
@@ -132,94 +142,88 @@ stack frames.
 - Register allocation of `e` is the caller's responsibility.
  */
 expression :: proc(p: ^Parser, c: ^Compiler, prec: Precedence = nil) -> Expr {
-    parser_advance(p)
+    advance_token(p)
     left := prefix(p, c)
     for {
-        rule := parser_get_rule(p.lookahead.type)
-        // Don't advance yet if break- parent caller will need the token!
-        if prec > rule.prec || rule.infix == nil {
+        rule := get_rule(p.lookahead.type)
+        // No binary operation OR parent caller is of a higher precedence?
+        if rule.op == nil || prec > rule.left {
             break
         }
-        parser_advance(p)
-        rule.infix(p, c, &left, rule.prec)
+
+        advance_token(p)
+        #partial switch rule.op {
+        case .Add..=.Pow:
+            arith(p, c, rule.op, &left, rule.right)
+        case:
+            unreachable()
+        }
     }
     return left
 }
 
-/*
-Every expression starts with a prefix expression.
- */
+get_rule  :: proc(type: Token_Type) -> Rule {
+    #partial switch type {
+    // right = left + 0: Enforce right-associativity for exponentiation.
+    // right = left + 1: Enforce left-associativity for all other operators.
+    case .Plus:     return Rule{.Add, .Terminal, .Factor}
+    case .Minus:    return Rule{.Sub, .Terminal, .Factor}
+    case .Asterisk: return Rule{.Mul, .Factor,   .Exponent}
+    case .Slash:    return Rule{.Div, .Factor,   .Exponent}
+    case .Percent:  return Rule{.Mod, .Factor,   .Exponent}
+    case .Caret:    return Rule{.Pow, .Exponent, .Exponent}
+    }
+    return Rule{}
+}
+
 prefix :: proc(p: ^Parser, c: ^Compiler) -> (e: Expr) {
+    // The 3 unary expressions are parsed in the exact same ways.
+    unary :: proc(p: ^Parser, c: ^Compiler, op: Opcode) -> (e: Expr) {
+        e = expression(p, c, .Unary)
+        compiler_code_unary(c, op, &e, p.consumed.line)
+        return e
+    }
+
     #partial switch p.consumed.type {
     // Grouping
     case .Paren_Open:
         e = expression(p, c)
-        parser_expect(p, .Paren_Close, "after expression")
+        expect_token(p, .Paren_Close, "after expression")
+        return e
 
     // Unary
-    case .Not, .Sharp, .Minus:
-        op: OpCode
-        #partial switch p.consumed.type {
-        case .Minus: op = OpCode.Unm
-        case .Not:   op = OpCode.Not
-        case .Sharp: op = OpCode.Len
-        case:
-            unreachable()
-        }
-        e = expression(p, c, .Unary)
-        compiler_code_unary(c, op, &e, p.consumed.line)
+    case .Not:      return unary(p, c, .Not)
+    case .Minus:    return unary(p, c, .Unm)
+    case .Sharp:    return unary(p, c, .Len)
 
     // Literal values
-    case .False:    expr_set_boolean(&e, false)
-    case .True:     expr_set_boolean(&e, true)
-    case .Number:   expr_set_number(&e, p.consumed.data.(f64))
+    case .Nil:      return expr_make_nil()
+    case .False:    return expr_make_boolean(false)
+    case .True:     return expr_make_boolean(true)
+    case .Number:   return expr_make_number(p.consumed.data.(f64))
     case .String:
         value := value_make(p.consumed.data.(^OString))
         index := compiler_add_constant(c, value)
         expr_set_constant(&e, index)
+        return e
 
     case:
         parser_error(p, "Expected an expression")
     }
-    return e
 }
 
 // INFIX EXPRESSIONS
 
-arith :: proc(p: ^Parser, c: ^Compiler, left: ^Expr, prec: Precedence) {
-    // 0: Enforce right-associativity for exponentiation.
-    // 1: Enforce left-associativity for all other operators.
-    assoc := cast(Precedence)1
-    op: OpCode
-    #partial switch p.consumed.type {
-    case .Plus:     op = .Add
-    case .Minus:    op = .Sub
-    case .Asterisk: op = .Mul
-    case .Slash:    op = .Div
-    case .Percent:  op = .Mod
-    case .Caret:    op = .Pow; assoc = cast(Precedence)0
-    case:
-        unreachable()
-    }
 
+/*
+**Parameters**
+- prec: Parent expression right-hand-side precedence.
+ */
+arith :: proc(p: ^Parser, c: ^Compiler, op: Opcode, left: ^Expr, prec: Precedence) {
     // Left MUST be pushed BEFORE parsing the right side to ensure correct
     // register ordering and thus correct operations. We cannot assume that
     // `a op b` is equal to `b op a` for all operations.
-    compiler_push_expr(c, left, p.consumed.line)
-    right := expression(p, c, prec + assoc)
+    compiler_push_expr_rk(c, left, p.consumed.line)
+    right := expression(p, c, prec)
     compiler_code_arith(c, op, left, &right, p.consumed.line)
-}
-
-parser_get_rule :: proc(type: Token_Type) -> Parser_Rule {
-    @(static, rodata)
-    PARSER_RULES := #partial [Token_Type]Parser_Rule{
-        // Arithmetic
-        .Plus       = {infix = arith,   prec = .Terminal},
-        .Minus      = {infix = arith,   prec = .Terminal},
-        .Asterisk   = {infix = arith,   prec = .Factor},
-        .Slash      = {infix = arith,   prec = .Factor},
-        .Percent    = {infix = arith,   prec = .Factor},
-        .Caret      = {infix = arith,   prec = .Exponent},
-    }
-    return PARSER_RULES[type]
 }

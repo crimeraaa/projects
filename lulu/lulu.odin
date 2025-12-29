@@ -16,7 +16,7 @@ main :: proc() {
         o.mark += {.Fixed}
 
         for kw_type in Token_Type.And..=Token_Type.While {
-            o       = ostring_new(L, token_type_string(kw_type))
+            o       = ostring_new(L, token_string(kw_type))
             o.mark += {.Fixed}
         }
     }
@@ -76,6 +76,7 @@ run_input :: proc(L: ^VM, name, input: string) {
         parser   := parser_make(L, data.builder, data.name, data.input)
         compiler := compiler_make(L, &parser, chunk)
         parser_parse(&parser, &compiler)
+        vm_execute(L, chunk)
     }
 
     data := Data{&b, name, input}

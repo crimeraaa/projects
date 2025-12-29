@@ -23,7 +23,7 @@ Expr :: struct {
 
 Expr_Type :: enum u8 {
     // Value literals.
-    Boolean, Number,
+    Nil, Boolean, Number,
 
     // Expression is the index of a constant value as found in the current
     // chunk's constants array? See `Expr.index`.
@@ -53,12 +53,19 @@ expr_set_constant :: proc(e: ^Expr, index: u32) {
     e.index = index
 }
 
-expr_set_number :: proc(e: ^Expr, number: f64) {
-    e.type   = .Number
-    e.number = number
+expr_make_nil :: proc() -> (e: Expr) {
+    e.type = .Nil
+    return e
 }
 
-expr_set_boolean :: proc(e: ^Expr, boolean: bool) {
+expr_make_boolean :: proc(boolean: bool) -> (e: Expr) {
     e.type    = .Boolean
     e.boolean = boolean
+    return e
+}
+
+expr_make_number :: proc(number: f64) -> (e: Expr) {
+    e.type   = .Number
+    e.number = number
+    return e
 }
