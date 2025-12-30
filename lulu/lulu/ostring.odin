@@ -1,6 +1,8 @@
 #+private package
 package lulu
 
+import "core:mem"
+
 Intern :: struct {
     // Each entry in the string table is actually a linked list.
     table: []^Object_List,
@@ -11,12 +13,17 @@ Intern :: struct {
 
 Ostring :: struct {
     using base: Object_Header,
-
-    // Actual number of `byte` in `data`.
-    len: int,
+    
+    // Keyword type, used to help speed up string comparisons in the lexer.
+    // 0 (`nil`) indicates it is not a keyword, otherwise it should be in
+    // the range `.And..=.While`.
+    kw_type: Token_Type,
 
     // Hash value of `data[:len]` used for quick comparisons.
     hash: u32,
+
+    // Actual number of `byte` in `data`.
+    len: int,
 
     // Flexible array member. The actual character array is stored right
     // after the previous member in memory.
@@ -66,15 +73,15 @@ ostring_to_string :: proc(s: ^Ostring) -> string #no_bounds_check {
 }
 
 /*
-Hashes `text` using the 32-bit FNV-1A hash algorithm.
+Hashes `data` using the 32-bit FNV-1A hash algorithm.
  */
-hash_string :: proc(text: string) -> u32 {
-    FNV1A_OFFSET :: 0x811c9dc5
-    FNV1A_PRIME  :: 0x01000193
+hash_bytes :: proc(data: []byte) -> u32 {
+    FNV1A_OFFSET :: 0x811c_9dc5
+    FNV1A_PRIME  :: 0x0100_0193
 
     hash := u32(FNV1A_OFFSET)
-    for c in text {
-        hash ~= cast(u32)c
+    for b in data {
+        hash ~= cast(u32)b
         hash *= FNV1A_PRIME
     }
     return hash
@@ -98,7 +105,7 @@ ostring_new :: proc(L: ^VM, text: string) -> ^Ostring {
     table_cap := len(table)
     assert(table_cap >= 2)
 
-    hash   := hash_string(text)
+    hash   := hash_bytes(transmute([]byte)text)
     index  := hash_index(hash, table_cap)
     list   := &table[index].ostring
     for s in ostring_nodes(&list) {
@@ -124,6 +131,20 @@ ostring_new :: proc(L: ^VM, text: string) -> ^Ostring {
     }
     intern.count += 1
     return s
+}
+
+/* 
+Frees the contents of `s`. Since we are a flexible-array similar to Pascal
+strings, we allocated everything in one go and can thus free it in the same way.
+
+*Deallocates using `context.allocator`.*
+
+**Assumptions**
+- Freeing memory never fails.
+ */
+ostring_free :: proc(s: ^Ostring) {
+    size := size_of(s^) + s.len + 1
+    mem.free_with_size(s, size, context.allocator)
 }
 
 /*

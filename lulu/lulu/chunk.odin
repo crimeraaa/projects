@@ -18,10 +18,10 @@ Chunk :: struct {
     constants: [dynamic]Value,
 
     // List of all instructions to be executed.
-    code: [dynamic]Instruction,
+    code: []Instruction,
 
     // Maps each index in `code` to its corresponding line.
-    lines: [dynamic]int,
+    lines: []int,
 }
 
 /*
@@ -43,14 +43,26 @@ chunk_new :: proc(L: ^VM, name: string) -> ^Chunk {
     return c
 }
 
+/* 
+'Fixes' the chunk `c` by shrinking its dynamic arrays to the exact size so that
+we can query the last program counter by just getting the length of the code
+array for example.
+
+*Allocates using `context.allocator`.*
+ */
+chunk_fix :: proc(L: ^VM, c: ^Chunk, pc: int) {
+    slice_resize(L, &c.code,  pc)
+    slice_resize(L, &c.lines, pc)
+}
+
 /*
 Frees the chunk contents and the chunk pointer itself.
 
 *Deallocates using `context.allocator`.*
  */
 chunk_free :: proc(c: ^Chunk) {
-    delete(c.code)
     delete(c.constants)
+    delete(c.code)
     delete(c.lines)
     mem.free(c)
 }
@@ -64,14 +76,10 @@ Adds `i` to the end of the code array.
 - We are in a protected call, so failures to append code can be caught
 and handled.
  */
-chunk_push_code :: proc(L: ^VM, c: ^Chunk, i: Instruction, line: int) -> (pc: int) {
-    pc = len(c.code)
-    _, err1 := append(&c.code,  i)
-    _, err2 := append(&c.lines, line)
-    if err1 != nil || err2 != nil {
-        vm_error_memory(L)
-    }
-    return pc
+chunk_push_code :: proc(L: ^VM, c: ^Chunk, pc: int, i: Instruction, line: int) {
+    slice_insert(L, &c.code,  pc, i)
+    slice_insert(L, &c.lines, pc, line)
+    
 }
 
 /*
@@ -141,6 +149,8 @@ chunk_disassemble_at :: proc(c: ^Chunk, i: Instruction, pc: int, pad := 0) {
         index := get_bx(i)
         value := c.constants[index]
         value_print(value)
+    case .Get_Global: print_abx(i, "r%i := _G[k%i]", i.a, get_bx(i))
+    case .Set_Global: print_abx(i, "_G[k%i] := r%i", get_bx(i), i.a)
 
     // Unary
     case .Len..=.Unm: print_abc(i, "r%i := %sr%i", i.a, op_string(i.op), i.b)

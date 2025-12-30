@@ -28,6 +28,10 @@ Expr_Type :: enum u8 {
     // Expression is the index of a constant value as found in the current
     // chunk's constants array? See `Expr.index`.
     Constant,
+    
+    // Expression is the name of a global variable. The index of the interned
+    // string for the name can be found in `Expr.index`.
+    Global,
 
     // Expression is an instruction which needs its destination register
     // (always Register A) to be finalized? See `Expr.pc`.
@@ -50,6 +54,11 @@ expr_set_pc :: proc(e: ^Expr, pc: int) {
 
 expr_set_constant :: proc(e: ^Expr, index: u32) {
     e.type  = .Constant
+    e.index = index
+}
+
+expr_set_global :: proc(e: ^Expr, index: u32) {
+    e.type  = .Global
     e.index = index
 }
 

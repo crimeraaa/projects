@@ -7,6 +7,8 @@ Move,       //  A B     | R(A) := R(B)
 Load_Nil,   //  A B     | R(i) := nil for i in [A,B)
 Load_Bool,  //  A B     | R(A) := (Bool)R(B)
 Load_Const, //  A Bx    | R(A) := K[Bx]
+Get_Global, //  A Bx    | R(A) := _G[K[Bx]]
+Set_Global, //  A Bx    | _G[K[Bx]] := R(A)
 // Unary
 Len,        //  A B     | R(A) := #R(B)
 Not,        //  A B     | R(A) := not R(B)

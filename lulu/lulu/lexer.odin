@@ -386,7 +386,11 @@ lexer_scan_token :: proc(x: ^Lexer) -> Token {
     if is_alpha(r) {
         consume_proc(x, is_alphanumeric)
         token := make_token(x, Token_Type.Identifier)
-        token.type  = check_keyword(x, token.lexeme)
+        // Keywords were interned on startup, so we can already check.
+        // for their types.
+        s := ostring_new(x.L, token.lexeme)
+        token.data = s
+        token.type = .Identifier if s.kw_type == nil else s.kw_type
         return token
     } else if is_number(r) {
         return make_number_token(x, r)
@@ -423,70 +427,6 @@ consume_proc :: proc(x: ^Lexer, p: proc(rune) -> bool) {
     }
 }
 
-check_keyword :: proc(x: ^Lexer, s: string) -> (type: Token_Type) {
-    // Helper
-    check :: proc(s: string, type: Token_Type, offset: int) -> Token_Type {
-        kw := token_string(type)
-        return type if s[offset:] == kw[offset:] else .Identifier
-    }
-
-    if !(len("do") <= len(s) && len(s) <= len("function")) {
-        return .Identifier
-    }
-
-    // Guaranteed to be nonzero by this point.
-    switch s[0] {
-    case 'a': return check(s, .And, 1)
-    case 'b': return check(s, .Break, 1)
-    case 'd': return check(s, .Do, 1)
-    case 'e':
-        switch len(s) {
-        case len("end"):    return check(s, .End, 1)
-        case len("else"):   return check(s, .Else, 1)
-        case len("elseif"): return check(s, .Elseif, 1)
-        }
-    case 'f':
-        switch s[1] {
-        case 'a': return check(s, .False, 1)
-        case 'u': return check(s, .Function, 1)
-        }
-    case 'i':
-        switch s[1] {
-        case 'f': return .If
-        case 'n': return .In
-        }
-    case 'l': return check(s, .Local, 1)
-    case 'n':
-        // #"nil" == #"not"
-        if len(s) == len("nil") {
-            switch s[1] {
-            case 'i': return .Nil if s[2] == 'l' else .Identifier
-            case 'o': return .Not if s[2] == 't' else .Identifier
-            }
-        }
-    case 'o': return .Or if s[1] == 'r' else .Identifier
-    case 'r':
-        // #"return" == #"repeat"
-        if len(s) == len("return") && s[1] == 'e' {
-            switch s[2] {
-            case 'p': return check(s, .Repeat, 3)
-            case 't': return check(s, .Return, 3)
-            }
-        }
-    case 't':
-        // #"true" == #"then"
-        if len(s) == len("true") {
-            switch s[1] {
-            case 'h': return check(s, .Then, 2)
-            case 'r': return check(s, .True, 2)
-            }
-        }
-    case 'u': return check(s, .Until, 1)
-    case 'w': return check(s, .While, 1)
-    }
-    return .Identifier
-}
-
 make_number_token :: proc(x: ^Lexer, leader: rune) -> Token {
     if leader == '0' {
         base := 0
@@ -497,10 +437,11 @@ make_number_token :: proc(x: ^Lexer, leader: rune) -> Token {
         case 'x', 'X': base = 16
         case 'z', 'Z': base = 12
         }
-        advance_rune(x)
-
+        
         // Is definitely a prefixed integer?
         if base > 0 {
+            // Advance ONLY if we absolutely have a base prefix.
+            advance_rune(x)
             consume_proc(x, is_alphanumeric)
             token := make_token(x, Token_Type.Number)
             i, ok := strconv.parse_uint(token.lexeme[2:], base)

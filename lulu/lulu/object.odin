@@ -7,6 +7,7 @@ import "core:mem"
 Object :: struct #raw_union {
     using base: Object_Header,
     ostring:    Ostring,
+    table:      Table,
     chunk:      Chunk,
 }
 
@@ -73,6 +74,8 @@ where intrinsics.type_is_subtype_of(T, Object_Header) {
     list^  = cast(^Object)o
     when T == Ostring {
         o.type = Value_Type.String
+    } else when T == Table {
+        o.type = Value_Type.Table
     } else when T == Chunk {
         o.type = Value_Type.Chunk
     } else {
@@ -97,12 +100,9 @@ the garbage collector to handle the unlinking for us.
  */
 object_free :: proc(o: ^Object) {
     switch o.type {
-    case .String:
-        s    := &o.ostring
-        size := size_of(s^) + s.len + 1
-        mem.free_with_size(&o.ostring, size, context.allocator)
-    case .Chunk:
-        chunk_free(&o.chunk)
+    case .String:   ostring_free(&o.ostring)
+    case .Table:    table_free(&o.table)
+    case .Chunk:    chunk_free(&o.chunk)
     case .Nil, .Boolean, .Number:
         unreachable("Invalid object (Value_Type=%s)")
     }

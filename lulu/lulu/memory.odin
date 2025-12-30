@@ -1,7 +1,7 @@
 #+private package
 package lulu
 
-// import "core:math"
+import "core:math"
 
 /*
 Allocates a new slice of type `T` with `count` elements, zero-initialized.
@@ -36,7 +36,8 @@ slice_insert :: proc(L: ^VM, s: ^$S/[]$T, index: int, value: T) {
 }
 
 /*
-Grows or shrinks `s` to be `count` elements.
+Grows or shrinks `s` to be `count` elements, copying over the old elements
+that fit in the new slice.
 
 *Allocates using `context.allocator`*.
 

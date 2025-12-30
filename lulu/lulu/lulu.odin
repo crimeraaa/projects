@@ -6,24 +6,9 @@ import os "core:os/os2"
 
 main :: proc() {
     g := &Global_State{}
-    L := &VM{global=g}
-    // lulu/cpp/src/vm.cpp:lulu_open()
-    {
-        // Ensure that, when we start interning strings, we already have
-        // valid indexes.
-        intern_resize(L, &g.intern, 32)
-        o      := ostring_new(L, "out of memory")
-        o.mark += {.Fixed}
-
-        for kw_type in Token_Type.And..=Token_Type.While {
-            o       = ostring_new(L, token_string(kw_type))
-            o.mark += {.Fixed}
-        }
-    }
-    defer {
-        intern_destroy(L, &g.intern)
-        object_free_all(L, g.objects)
-    }
+    L := &VM{global_state=g}
+    vm_init(L)
+    defer vm_destroy(L)
 
     switch len(os.args) {
     case 1: run_repl(L)
@@ -75,7 +60,7 @@ run_input :: proc(L: ^VM, name, input: string) {
         chunk    := chunk_new(L, data.name)
         parser   := parser_make(L, data.builder, data.name, data.input)
         compiler := compiler_make(L, &parser, chunk)
-        parser_parse(&parser, &compiler)
+        parser_program(&parser, &compiler)
         vm_execute(L, chunk)
     }
 

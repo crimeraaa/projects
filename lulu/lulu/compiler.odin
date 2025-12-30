@@ -27,9 +27,12 @@ compiler_make :: proc(L: ^VM, parser: ^Parser, chunk: ^Chunk) -> Compiler {
 }
 
 compiler_end :: proc(c: ^Compiler, line: int) {
+    L     := c.L
+    chunk := c.chunk
     compiler_code_return(c, 1, line)
+    chunk_fix(L, chunk, c.pc)
     when ODIN_DEBUG {
-        chunk_disassemble(c.chunk)
+        chunk_disassemble(chunk)
     }
 }
 
@@ -49,13 +52,19 @@ compiler_add_constant :: proc(c: ^Compiler, v: Value) -> (index: u32) {
 
 /*
 Appends `i` to the current chunk's code array.
+
+**Returns**
+- pc: The index of the instruction we just emitted.
  */
 @(private="file")
 add_instruction :: proc(c: ^Compiler, i: Instruction, line: int) -> (pc: int) {
     L     := c.L
     chunk := c.chunk
+    // Save because the member will be updated.
+    pc    = c.pc
     c.pc += 1
-    return chunk_push_code(L, chunk, i, line)
+    chunk_push_code(L, chunk, pc, i, line)
+    return pc
 }
 
 compiler_code_abc :: proc(cl: ^Compiler, op: Opcode, a, b, c: u16, line: int) -> (pc: int) {
@@ -82,7 +91,8 @@ Reserves `count` registers.
 **Returns**
 - reg: The first free register before the push.
  */
-compiler_push_reg :: proc(c: ^Compiler, count: u16 = 1) -> (reg: u16) {
+@(private="file")
+push_reg :: proc(c: ^Compiler, count: u16 = 1) -> (reg: u16) {
     reg = c.free_reg
     c.free_reg += count
     if c.free_reg > A_MAX {
@@ -104,7 +114,8 @@ Pops the topmost register, ensuring that `reg` matches that register.
 - If we are popping registers out of order then we panic, because that is a
 compiler bug that needs to be addressed at the soonest.
  */
-compiler_pop_reg :: proc(c: ^Compiler, reg: u16) {
+@(private="file")
+pop_reg :: proc(c: ^Compiler, reg: u16) {
     // Ensure we pop registers in the correct order.
     prev := c.free_reg - 1
     if reg != prev {
@@ -177,10 +188,30 @@ care should be taken to ensure needlessly redundant work is avoided.
 - `lcode.c:luaK_exp2nextreg(FuncState *fs, expdesc *e)` in Lua 5.1.5.
  */
 compiler_push_expr_next :: proc(c: ^Compiler, e: ^Expr, line: int) -> (reg: u16) {
-    reg = compiler_push_reg(c)
+    compiler_get_expr_variables(c, e, line)
+    // If `e` is the current topmost register, reuse it.
+    compiler_pop_expr(c, e)
+
+    reg = push_reg(c)
     discharge_expr_to_reg(c, e, reg, line)
     return reg
 
+}
+
+/* 
+Emits the bytecode needed to retrieve variables represented by `e`.
+
+**Guarantees**
+- If `e` did indeed represent a variable of some kind, then it is transformed
+to type `.Pc_Pending_Register`.
+ */
+@(private="file")
+compiler_get_expr_variables :: proc(c: ^Compiler, e: ^Expr, line: int) {
+    #partial switch e.type {
+    case .Global:
+        pc := compiler_code_abx(c, .Get_Global, 0, e.index, line)
+        expr_set_pc(e, pc)
+    }
 }
 
 
@@ -263,7 +294,7 @@ compiler_push_expr_rk :: proc(c: ^Compiler, e: ^Expr, line: int) -> (rk: u16) {
     case .Constant: return check_rk(e.index) or_break
 
     // Nothing we can do.
-    case .Pc_Pending_Register:
+    case .Global, .Pc_Pending_Register:
         break
 
     // Already has a register, reuse it.
@@ -273,10 +304,9 @@ compiler_push_expr_rk :: proc(c: ^Compiler, e: ^Expr, line: int) -> (rk: u16) {
     return compiler_push_expr_any(c, e, line)
 }
 
-@(private="file")
-pop_expr :: proc(c: ^Compiler, e: ^Expr) {
+compiler_pop_expr :: proc(c: ^Compiler, e: ^Expr) {
     if e.type == .Register {
-        compiler_pop_reg(c, e.reg)
+        pop_reg(c, e.reg)
     }
 }
 
@@ -303,7 +333,7 @@ compiler_code_unary :: proc(c: ^Compiler, op: Opcode, e: ^Expr, line: int) {
 
     r0 := compiler_push_expr_any(c, e, line)
     pc := compiler_code_abc(c, op, 0, r0, 0, line)
-    pop_expr(c, e)
+    compiler_pop_expr(c, e)
     expr_set_pc(e, pc)
 }
 
@@ -322,11 +352,11 @@ compiler_code_arith :: proc(c: ^Compiler, op: Opcode, left, right: ^Expr, line: 
 
     // Deallocate temporary registers in the correct order.
     if r0 > r1 {
-        pop_expr(c, left)
-        pop_expr(c, right)
+        compiler_pop_expr(c, left)
+        compiler_pop_expr(c, right)
     } else {
-        pop_expr(c, right)
-        pop_expr(c, left)
+        compiler_pop_expr(c, right)
+        compiler_pop_expr(c, left)
     }
 
     // For high precedence recursive calls, remember that we are the

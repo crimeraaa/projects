@@ -10,10 +10,14 @@ import "core:strconv"
 
 VM :: struct {
     // Shared state across all VM instances.
-    global: ^Global_State,
+    global_state: ^Global_State,
+    
+    // Hash table of all defined global variables.
+    globals_table: ^Table,
 
     // Stack-allocated linked list of error handlers.
     handler: ^Error_Handler,
+
     frame: Frame,
     stack: [16]Value,
 }
@@ -65,7 +69,39 @@ Error :: enum u8 {
 }
 
 G :: proc(L: ^VM) -> ^Global_State {
-    return L.global
+    return L.global_state
+}
+
+vm_init :: proc(L: ^VM) -> (ok: bool) {
+    err := vm_run_protected(L, required_allocations)
+    return err == nil
+}
+
+@(private="file")
+required_allocations :: proc(L: ^VM, _: rawptr) {
+    g := G(L)
+    
+    // Ensure that the globals table is of some non-zero minimum size.
+    t := table_new(L, 32)
+    L.globals_table = t
+
+    // Ensure that, when we start interning strings, we already have
+    // valid indexes.
+    intern_resize(L, &g.intern, 32)
+    s := ostring_new(L, "out of memory")
+    s.mark += {.Fixed}
+    for kw_type in Token_Type.And..=Token_Type.While {
+        kw := token_string(kw_type)
+        s   = ostring_new(L, kw)
+        s.kw_type = kw_type
+        s.mark   += {.Fixed}
+    }
+}
+
+vm_destroy :: proc(L: ^VM) {
+    g := G(L)
+    intern_destroy(L, &g.intern)
+    object_free_all(L, g.objects)
 }
 
 /*
@@ -79,7 +115,7 @@ we are able to catch it safely.
 **Guarantees**
 - `p` is only ever called with the `ud` it was passed with.
  */
-vm_run_protected :: proc(L: ^VM, p: proc(^VM, rawptr), ud: rawptr) -> Error {
+vm_run_protected :: proc(L: ^VM, p: proc(^VM, rawptr), ud: rawptr = nil) -> Error {
     // Push new error handler.
     h: Error_Handler
     h.prev    = L.handler
@@ -112,6 +148,12 @@ vm_error_memory :: proc(L: ^VM) -> ! {
     vm_throw(L, .Memory)
 }
 
+/* 
+Throws a runtime error and reports an error message.
+
+**Assumptions**
+- `L.frame.saved_pc` was set beforehand so we know where to look.
+ */
 vm_error_runtime :: proc(L: ^VM, format := "", args: ..any) -> ! {
     frame := L.frame
     chunk := frame.chunk
@@ -200,6 +242,12 @@ protect :: proc(L: ^VM, pc: int) {
     L.frame.saved_pc = pc
 }
 
+/* 
+**Parameters**
+- a, b: Must be pointers so that we can check if they are inside the VM
+stack or not. This information is useful when reporting errors from local or
+global variables.
+ */
 @(private="file")
 arith_error :: proc(L: ^VM, a, b: ^Value) -> ! {
     what := value_type_name(b^ if value_is_number(a^) else a^)
@@ -211,15 +259,18 @@ vm_execute :: proc(L: ^VM, chunk: ^Chunk) {
     code   := raw_data(chunk.code)
     ip     := code
     frame  := &L.frame
+    
+    // Table of defined global variables.
+    globals := L.globals_table
 
     // Registers array.
-    r := frame.stack
+    registers := frame.stack
     
     // Constants array.
-    k := frame.constants
+    constants := frame.constants
 
     // Zero-initalize the stack frame.
-    for &v in r {
+    for &v in registers {
         v = value_make()
     }
 
@@ -228,20 +279,21 @@ vm_execute :: proc(L: ^VM, chunk: ^Chunk) {
         i  := ip[0]
         pc := intrinsics.ptr_sub(ip, code)
         when ODIN_DEBUG {
-            for v, reg in r {
+            for v, reg in registers {
                 fmt.printf("\tr%i := ", reg)
-                value_print(v, newline=true)
+                value_println(v)
             }
             chunk_disassemble_at(chunk, i, pc)
         }
 
         // ip++
         ip = &ip[1]
-        ra := &r[i.a]
+        ra := &registers[i.a]
         switch i.op {
         case .Move:
-            rb := r[i.b]
+            rb := registers[i.b]
             ra^ = rb
+
         case .Load_Nil:
             n   := cast(int)(i.b - i.a)
             dst := slice.from_ptr(ra, n)
@@ -255,12 +307,29 @@ vm_execute :: proc(L: ^VM, chunk: ^Chunk) {
 
         case .Load_Const:
             index := get_bx(i)
-            value := k[index]
+            value := constants[index]
             ra^ = value
+
+        case .Get_Global:
+            index := get_bx(i)
+            key   := constants[index]
+            value, exists := table_get(globals, key)
+            if !exists {
+                what := value_to_string(key)
+                protect(L, pc)
+                vm_error_runtime(L, "Attempt to read undefined global '%s'", what)
+            }
+            ra^ = value;
+
+        case .Set_Global:
+            index := get_bx(i)
+            key   := constants[index]
+            value := ra^
+            table_set(L, globals, key, value)
 
         // Unary
         case .Len:
-            rb := r[i.b]
+            rb := registers[i.b]
             if !value_is_string(rb) {
                 what := value_type_name(rb)
                 protect(L, pc)
@@ -270,12 +339,12 @@ vm_execute :: proc(L: ^VM, chunk: ^Chunk) {
             ra^ = value_make(cast(f64)n)
 
         case .Not:
-            rb    := r[i.b]
+            rb    := registers[i.b]
             not_b := value_is_falsy(rb)
             ra^    = value_make(not_b)
 
         case .Unm:
-            rb := &r[i.b]
+            rb := &registers[i.b]
             if !value_is_number(rb^) {
                 arith_error(L, rb, rb)
             }

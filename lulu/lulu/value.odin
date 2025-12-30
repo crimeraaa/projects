@@ -4,24 +4,26 @@ package lulu
 import "core:fmt"
 
 Value :: struct {
+    using data: Value_Data,
     type: Value_Type,
-    using data: struct #raw_union {
-        boolean:  bool,
-        number:   f64,
-        integer:  int,
-        object:  ^Object,
-        pointer:  rawptr,
-    },
 }
 
 Value_Type :: enum u8 {
     Nil, Boolean, Number,
 
     // Object Types (User-facing)
-    String,
+    String, Table,
 
     // Object Types (Internal-use)
     Chunk,
+}
+
+Value_Data :: struct #raw_union {
+    boolean:  bool,
+    number:   f64,
+    integer:  int,
+    object:  ^Object,
+    pointer:  rawptr,
 }
 
 @require_results
@@ -30,6 +32,7 @@ value_make :: proc {
     value_make_boolean,
     value_make_number,
     value_make_ostring,
+    value_make_table,
 }
 
 value_make_nil :: proc() -> Value {
@@ -48,6 +51,10 @@ value_make_ostring :: proc(s: ^Ostring) -> Value {
     return Value{type=.String, object=cast(^Object)s}
 }
 
+value_make_table :: proc(t: ^Table) -> Value {
+    return Value{type=.Table, object=cast(^Object)t}
+}
+
 value_type :: proc(v: Value) -> Value_Type {
     return v.type
 }
@@ -63,6 +70,7 @@ value_type_string :: proc(t: Value_Type) -> string {
     case .Boolean:  return "boolean"
     case .Number:   return "number"
     case .String:   return "string"
+    case .Table:    return "table"
     case .Chunk:
         break
     }
@@ -89,19 +97,34 @@ value_is_falsy :: proc(v: Value) -> bool {
     return value_is_nil(v) || (value_is_boolean(v) && !value_to_boolean(v))
 }
 
+@(private="file")
+__check_type :: proc(v: Value, t: Value_Type) {
+    assert(value_type(v) == t, "Expected '%s' but got '%s'",
+        value_type_string(t), value_type_name(v))
+}
+
 value_to_boolean :: proc(v: Value) -> bool {
-    assert(value_is_boolean(v), "Expected 'boolean' but got '%s'", value_type_name(v))
+    __check_type(v, .Boolean)
     return v.boolean
 }
 
 value_to_number :: proc(v: Value) -> f64 {
-    assert(value_is_number(v), "Expected 'boolean' but got '%s'", value_type_name(v))
+    __check_type(v, .Number)
     return v.number
 }
 
+value_to_object :: proc(v: Value) -> ^Object {
+    return v.object
+}
+
 value_to_ostring :: proc(v: Value) -> ^Ostring {
-    assert(value_is_string(v), "Expected 'string' but got '%s'", value_type_name(v))
+    __check_type(v, .String)
     return &v.object.ostring
+}
+
+value_to_table :: proc(v: Value) -> ^Table {
+    __check_type(v, .Table)
+    return &v.object.table
 }
 
 value_to_string :: proc(v: Value) -> string {
@@ -119,25 +142,31 @@ value_eq :: proc(a, b: Value) -> bool {
     case .Boolean:  return value_to_boolean(a) == value_to_boolean(b)
     case .Number:   return value_to_number(a)  == value_to_number(b)
     case .String:   return value_to_ostring(a) == value_to_ostring(b)
+    case .Table:    return value_to_table(a) == value_to_table(b)
     case .Chunk:
         break
     }
     unreachable("Invalid type: %v", a.type)
 }
 
-value_print :: proc(v: Value, newline := false) {
-    print  := fmt.println  if newline else fmt.print
-    printf := fmt.printfln if newline else fmt.printf
-
+value_print :: proc(v: Value) {
     switch v.type {
-    case .Nil:     print("nil")
-    case .Boolean: print(value_to_boolean(v))
-    case .Number:  printf("%.14g", value_to_number(v))
+    case .Nil:     fmt.print("nil")
+    case .Boolean: fmt.print(value_to_boolean(v))
+    case .Number:  fmt.printf("%.14g", value_to_number(v))
     case .String:
         s := value_to_string(v)
         q := '\'' if len(s) == 1 else '\"'
-        printf("%c%s%c", q, s, q)
+        fmt.printf("%c%s%c", q, s, q)
+    case .Table:
+        t := value_to_table(v)
+        fmt.printf("table: %p", t)
     case .Chunk:
         unreachable("Invalid type: %v", v.type)
     }
+}
+
+value_println :: proc(v: Value) {
+    value_print(v)
+    fmt.println()
 }
