@@ -31,30 +31,6 @@ Ostring :: struct {
 }
 
 /*
-Iterate a linked list of interned strings using a `for ... in` loop.
-
-**Parameters**
-- list: The address of some `^Ostring` which will be mutated to help keep
-loop state. Do not pass addresses of global state members directly, e.g.
-`&G(L).intern.table[i].ostring`. Rather, copy the state member's value to a
-stack local and pass the address of said local.
-
-**Returns**
-- node: The current node. May be `nil`.
-- ok: `true` if `node` is non-`nil`, indicating the loop can continue,
-else `false.`, indicating the loop should stop.
- */
-ostring_nodes :: proc(list: ^^Ostring) -> (node: ^Ostring, ok: bool) {
-    node = list^
-    ok   = node != nil
-    if ok {
-        // Prepare next iteration.
-        list^ = &node.next.ostring
-    }
-    return node, ok
-}
-
-/*
 Convert `s` to an Odin-readable `string`.
 
 **Parameters**
@@ -67,7 +43,7 @@ Convert `s` to an Odin-readable `string`.
 - If needed, `s` is also nul-terminated. The returned `string` can be safely
 converted to `cstring`.
  */
-ostring_to_string :: proc(s: ^Ostring) -> string #no_bounds_check {
+ostring_to_string :: #force_inline proc(s: ^Ostring) -> string #no_bounds_check {
     assert(s.data[s.len] == 0)
     return string(s.data[:s.len])
 }
@@ -75,7 +51,7 @@ ostring_to_string :: proc(s: ^Ostring) -> string #no_bounds_check {
 /*
 Hashes `data` using the 32-bit FNV-1A hash algorithm.
  */
-hash_bytes :: proc(data: []byte) -> u32 {
+hash_bytes :: #force_inline proc(data: []byte) -> u32 {
     FNV1A_OFFSET :: 0x811c_9dc5
     FNV1A_PRIME  :: 0x0100_0193
 
@@ -85,6 +61,10 @@ hash_bytes :: proc(data: []byte) -> u32 {
         hash *= FNV1A_PRIME
     }
     return hash
+}
+
+mod_pow2 :: #force_inline proc(a, n: uint) -> uint {
+    return a & (n - 1)
 }
 
 /*
@@ -105,10 +85,10 @@ ostring_new :: proc(L: ^VM, text: string) -> ^Ostring {
     table_cap := len(table)
     assert(table_cap >= 2)
 
-    hash   := hash_bytes(transmute([]byte)text)
-    index  := hash_index(hash, table_cap)
-    list   := &table[index].ostring
-    for s in ostring_nodes(&list) {
+    hash  := hash_bytes(transmute([]byte)text)
+    index := mod_pow2(cast(uint)hash, cast(uint)table_cap)
+    for node := table[index]; node != nil; node = node.next {
+        s := &node.ostring
         if hash == s.hash && text == ostring_to_string(s) {
             return s
         }
@@ -127,7 +107,7 @@ ostring_new :: proc(L: ^VM, text: string) -> ^Ostring {
     // rather than occupied array slots. Even so we probably want to rehash
     // anyway to reduce clustering.
     if intern.count + 1 > table_cap {
-        intern_resize(L, intern, table_cap << 1)
+        intern_resize(L, intern, table_cap * 2)
     }
     intern.count += 1
     return s
@@ -145,24 +125,6 @@ strings, we allocated everything in one go and can thus free it in the same way.
 ostring_free :: proc(s: ^Ostring) {
     size := size_of(s^) + s.len + 1
     mem.free_with_size(s, size, context.allocator)
-}
-
-/*
-Given a string's hash value, return the primary index into the intern table.
-
-**Parameters**
-- hash: The value returned from `hash_string()`.
-- table_cap: The slice length of the intern table. Must be a power of 2.
-
-**Assumptions**
-- `table_cap` is a power of 2. This is necessary to optimize modulo into
-a bitwise AND.
- */
-@(private="file")
-hash_index :: proc(hash: u32, table_cap: int) -> uint {
-    a := cast(uint)hash
-    n := cast(uint)table_cap
-    return a & (n - 1)
 }
 
 /*
@@ -187,7 +149,7 @@ intern_resize :: proc(L: ^VM, intern: ^Intern, new_cap: int) {
         // Rehash all children for this list.
         for this_node != nil {
             ostring := &this_node.ostring
-            index   := hash_index(ostring.hash, new_cap)
+            index   := mod_pow2(cast(uint)ostring.hash, cast(uint)new_cap)
 
             // Save because it's about to be replaced.
             next_node := ostring.next

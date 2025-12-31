@@ -11,13 +11,14 @@ import "core:unicode/utf8"
 Token :: struct {
     type:   Token_Type,
     lexeme: string,
-    data:   Token_Data,
+    using data: Token_Data,
     line:   int,
 }
 
 @(private="package")
-Token_Data :: union {
-    f64, ^Ostring,
+Token_Data :: struct #raw_union {
+    number: f64,
+    ostring: ^Ostring,
 }
 
 @(private="package")
@@ -170,7 +171,7 @@ Reports a formatted error message and throws a syntax error to the parent VM.
 error :: proc(x: ^Lexer, format: string, args: ..any) -> ! {
     fmt.eprintf("%s:%i(%i): ", x.name, x.line, x.cursor, flush=false)
     fmt.eprintfln(format, ..args)
-    vm_error_syntax(x.L)
+    vm_throw(x.L, .Syntax)
 }
 
 peek_rune :: proc(x: ^Lexer) -> (r: rune) {
@@ -389,8 +390,8 @@ lexer_scan_token :: proc(x: ^Lexer) -> Token {
         // Keywords were interned on startup, so we can already check.
         // for their types.
         s := ostring_new(x.L, token.lexeme)
-        token.data = s
-        token.type = .Identifier if s.kw_type == nil else s.kw_type
+        token.ostring = s
+        token.type    = .Identifier if s.kw_type == nil else s.kw_type
         return token
     } else if is_number(r) {
         return make_number_token(x, r)
@@ -453,7 +454,7 @@ make_number_token :: proc(x: ^Lexer, leader: rune) -> Token {
             if cast(uint)f != i {
                 error(x, "Invalid f64 integer '%s'", token.lexeme)
             }
-            token.data = f
+            token.number = f
             return token
         }
     }
@@ -481,7 +482,7 @@ make_number_token :: proc(x: ^Lexer, leader: rune) -> Token {
     if !ok {
         error(x, "Malformed number '%s'", token.lexeme)
     }
-    token.data = n
+    token.number = n
     return token
 }
 
@@ -596,7 +597,7 @@ make_string_token :: proc(x: ^Lexer, q: rune) -> Token {
 
     token := make_token(x, Token_Type.String)
     // Skip single quotes in the string.
-    token.lexeme = token.lexeme[1:len(token.lexeme) - 1]
-    token.data   = ostring_new(L, strings.to_string(b^))
+    token.lexeme  = token.lexeme[1:len(token.lexeme) - 1]
+    token.ostring = ostring_new(L, strings.to_string(b^))
     return token
 }

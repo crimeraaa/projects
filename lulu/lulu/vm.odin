@@ -4,7 +4,6 @@ package lulu
 import "base:intrinsics"
 import "core:fmt"
 import "core:c/libc"
-import "core:math"
 import "core:slice"
 import "core:strconv"
 
@@ -51,7 +50,7 @@ Error_Handler :: struct {
     prev:  ^Error_Handler,
 }
 
-Error :: enum u8 {
+Error :: enum {
     // No error occured.
     Ok,
 
@@ -140,28 +139,8 @@ vm_throw :: proc(L: ^VM, code: Error) -> ! {
     libc.longjmp(&h.buffer, 1)
 }
 
-vm_error_syntax :: proc(L: ^VM) -> ! {
-    vm_throw(L, .Syntax)
-}
-
 vm_error_memory :: proc(L: ^VM) -> ! {
     vm_throw(L, .Memory)
-}
-
-/* 
-Throws a runtime error and reports an error message.
-
-**Assumptions**
-- `L.frame.saved_pc` was set beforehand so we know where to look.
- */
-vm_error_runtime :: proc(L: ^VM, format := "", args: ..any) -> ! {
-    frame := L.frame
-    chunk := frame.chunk
-    file  := chunk.name
-    line  := chunk.lines[frame.saved_pc]
-    fmt.eprintf("%s:%i: ", file, line)
-    fmt.eprintfln(format, ..args)
-    vm_throw(L, .Runtime)
 }
 
 @(private="file")
@@ -212,14 +191,6 @@ vm_to_number :: proc(v: Value) -> (n: f64, ok: bool) {
     return strconv.parse_f64(s)
 }
 
-fneg :: proc "contextless" (a: f64)    -> f64 {return -a}
-fadd :: proc "contextless" (a, b: f64) -> f64 {return a + b}
-fsub :: proc "contextless" (a, b: f64) -> f64 {return a - b}
-fmul :: proc "contextless" (a, b: f64) -> f64 {return a * b}
-fdiv :: proc "contextless" (a, b: f64) -> f64 {return a / b}
-fmod :: proc "contextless" (a, b: f64) -> f64 {return a - math.floor(a / b) * b}
-fpow :: math.pow_f64
-
 @(private="file")
 arith :: #force_inline proc(L: ^VM,
     pc: int,
@@ -234,24 +205,12 @@ arith :: #force_inline proc(L: ^VM,
         return
     }
     protect(L, pc)
-    arith_error(L, rkb, rkc)
+    debug_arith_error(L, rkb, rkc)
 }
 
 @(private="file")
 protect :: proc(L: ^VM, pc: int) {
     L.frame.saved_pc = pc
-}
-
-/* 
-**Parameters**
-- a, b: Must be pointers so that we can check if they are inside the VM
-stack or not. This information is useful when reporting errors from local or
-global variables.
- */
-@(private="file")
-arith_error :: proc(L: ^VM, a, b: ^Value) -> ! {
-    what := value_type_name(b^ if value_is_number(a^) else a^)
-    vm_error_runtime(L, "Attempt to perform arithmetic on a %s value", what)
 }
 
 vm_execute :: proc(L: ^VM, chunk: ^Chunk) {
@@ -279,9 +238,15 @@ vm_execute :: proc(L: ^VM, chunk: ^Chunk) {
         i  := ip[0]
         pc := intrinsics.ptr_sub(ip, code)
         when ODIN_DEBUG {
-            for v, reg in registers {
+            for value, reg in registers {
                 fmt.printf("\tr%i := ", reg)
-                value_println(v)
+                value_print(value)
+                name, ok := find_local_by_pc(chunk, reg, pc)
+                if ok {
+                    fmt.printfln("; local %s", name)
+                } else {
+                    fmt.println()
+                }
             }
             chunk_disassemble_at(chunk, i, pc)
         }
@@ -313,29 +278,28 @@ vm_execute :: proc(L: ^VM, chunk: ^Chunk) {
         case .Get_Global:
             index := get_bx(i)
             key   := constants[index]
-            value, exists := table_get(globals, key)
-            if !exists {
+            value, ok := table_get(globals, key)
+            if !ok {
                 what := value_to_string(key)
                 protect(L, pc)
-                vm_error_runtime(L, "Attempt to read undefined global '%s'", what)
+                debug_runtime_error(L, "Attempt to read undefined global '%s'", what)
             }
             ra^ = value;
 
         case .Set_Global:
             index := get_bx(i)
             key   := constants[index]
-            value := ra^
-            table_set(L, globals, key, value)
+            table_set(L, globals, key)^ = ra^
 
         // Unary
         case .Len:
-            rb := registers[i.b]
-            if !value_is_string(rb) {
-                what := value_type_name(rb)
+            rb := &registers[i.b]
+            if !value_is_string(rb^) {
+                what := value_type_name(rb^)
                 protect(L, pc)
-                vm_error_runtime(L, "Attempt to get length of a %s value", what)
+                debug_type_error(L, "get length of", rb)
             }
-            n := value_to_ostring(rb).len
+            n := value_to_ostring(rb^).len
             ra^ = value_make(cast(f64)n)
 
         case .Not:
@@ -346,19 +310,20 @@ vm_execute :: proc(L: ^VM, chunk: ^Chunk) {
         case .Unm:
             rb := &registers[i.b]
             if !value_is_number(rb^) {
-                arith_error(L, rb, rb)
+                protect(L, pc)
+                debug_arith_error(L, rb, rb)
             }
             n := value_to_number(rb^)
-            n = fneg(n)
+            n = number_unm(n)
             ra^ = value_make(n)
 
         // Arithmetic
-        case .Add: arith(L, pc, ra, fadd, get_rkb_rkc(i, frame))
-        case .Sub: arith(L, pc, ra, fsub, get_rkb_rkc(i, frame))
-        case .Mul: arith(L, pc, ra, fmul, get_rkb_rkc(i, frame))
-        case .Div: arith(L, pc, ra, fdiv, get_rkb_rkc(i, frame))
-        case .Mod: arith(L, pc, ra, fmod, get_rkb_rkc(i, frame))
-        case .Pow: arith(L, pc, ra, fpow, get_rkb_rkc(i, frame))
+        case .Add: arith(L, pc, ra, number_add, get_rkb_rkc(i, frame))
+        case .Sub: arith(L, pc, ra, number_sub, get_rkb_rkc(i, frame))
+        case .Mul: arith(L, pc, ra, number_mul, get_rkb_rkc(i, frame))
+        case .Div: arith(L, pc, ra, number_div, get_rkb_rkc(i, frame))
+        case .Mod: arith(L, pc, ra, number_mod, get_rkb_rkc(i, frame))
+        case .Pow: arith(L, pc, ra, number_pow, get_rkb_rkc(i, frame))
 
         // Comparison
         case .Eq:
@@ -370,8 +335,9 @@ vm_execute :: proc(L: ^VM, chunk: ^Chunk) {
 
         // Control flow
         case .Return:
-            n := cast(int)(i.b - i.a)
+            n   := cast(int)i.b
             dst := slice.from_ptr(ra, n)
+            fmt.printf("%q returned: ", ostring_to_string(chunk.name))
             for v, i in dst {
                 if i > 0 {
                     fmt.print(", ")

@@ -2,6 +2,7 @@
 package lulu
 
 import "core:fmt"
+import "core:math"
 
 Value :: struct {
     using data: Value_Data,
@@ -26,6 +27,15 @@ Value_Data :: struct #raw_union {
     pointer:  rawptr,
 }
 
+number_unm :: proc "contextless" (a: f64)    -> f64 {return -a}
+number_add :: proc "contextless" (a, b: f64) -> f64 {return a + b}
+number_sub :: proc "contextless" (a, b: f64) -> f64 {return a - b}
+number_mul :: proc "contextless" (a, b: f64) -> f64 {return a * b}
+number_div :: proc "contextless" (a, b: f64) -> f64 {return a / b}
+number_mod :: proc "contextless" (a, b: f64) -> f64 {return a - math.floor(a / b) * b}
+number_pow :: math.pow_f64
+
+
 @require_results
 value_make :: proc {
     value_make_nil,
@@ -35,31 +45,31 @@ value_make :: proc {
     value_make_table,
 }
 
-value_make_nil :: proc() -> Value {
+value_make_nil :: #force_inline proc "contextless" () -> Value {
     return Value{type=.Nil}
 }
 
-value_make_boolean :: proc(b: bool) -> Value {
+value_make_boolean :: #force_inline proc "contextless" (b: bool) -> Value {
     return Value{type=.Boolean, boolean=b}
 }
 
-value_make_number :: proc(n: f64) -> Value {
+value_make_number :: #force_inline proc "contextless" (n: f64) -> Value {
     return Value{type=.Number, number=n}
 }
 
-value_make_ostring :: proc(s: ^Ostring) -> Value {
+value_make_ostring :: #force_inline proc "contextless" (s: ^Ostring) -> Value {
     return Value{type=.String, object=cast(^Object)s}
 }
 
-value_make_table :: proc(t: ^Table) -> Value {
+value_make_table :: #force_inline proc "contextless" (t: ^Table) -> Value {
     return Value{type=.Table, object=cast(^Object)t}
 }
 
-value_type :: proc(v: Value) -> Value_Type {
-    return v.type
+value_make_chunk :: #force_inline proc "contextless" (c: ^Chunk) -> Value {
+    return Value{type=.Chunk, object=cast(^Object)c}
 }
 
-value_type_name :: proc(v: Value) -> string {
+value_type_name :: #force_inline proc(v: Value) -> string {
     t := value_type(v)
     return value_type_string(t)
 }
@@ -77,62 +87,71 @@ value_type_string :: proc(t: Value_Type) -> string {
     unreachable("Invalid type: %v", t)
 }
 
-value_is_nil :: proc(v: Value) -> bool {
+value_is_nil :: #force_inline proc(v: Value) -> bool {
     return value_type(v) == .Nil
 }
 
-value_is_boolean :: proc(v: Value) -> bool {
+value_is_boolean :: #force_inline proc(v: Value) -> bool {
     return value_type(v) == .Boolean
 }
 
-value_is_number :: proc(v: Value) -> bool {
+value_is_number :: #force_inline proc(v: Value) -> bool {
     return value_type(v) == .Number
 }
 
-value_is_string :: proc(v: Value) -> bool {
+value_is_string :: #force_inline proc(v: Value) -> bool {
     return value_type(v) == .String
 }
 
-value_is_falsy :: proc(v: Value) -> bool {
+value_is_falsy :: #force_inline proc(v: Value) -> bool {
     return value_is_nil(v) || (value_is_boolean(v) && !value_to_boolean(v))
 }
 
+// === VALUE DATA PAYLOADS ================================================= {{{
+
+value_type :: #force_inline proc "contextless" (v: Value) -> Value_Type {
+    return v.type
+}
+
 @(private="file")
-__check_type :: proc(v: Value, t: Value_Type) {
+__check_type :: #force_inline proc(v: Value, t: Value_Type) {
     assert(value_type(v) == t, "Expected '%s' but got '%s'",
         value_type_string(t), value_type_name(v))
 }
 
-value_to_boolean :: proc(v: Value) -> bool {
+value_to_boolean :: #force_inline proc(v: Value) -> bool {
     __check_type(v, .Boolean)
     return v.boolean
 }
 
-value_to_number :: proc(v: Value) -> f64 {
+value_to_number :: #force_inline proc(v: Value) -> f64 {
     __check_type(v, .Number)
     return v.number
 }
 
-value_to_object :: proc(v: Value) -> ^Object {
+value_to_object :: #force_inline proc(v: Value) -> ^Object {
     return v.object
 }
 
-value_to_ostring :: proc(v: Value) -> ^Ostring {
+// === }}} =====================================================================
+
+
+value_to_ostring :: #force_inline proc(v: Value) -> ^Ostring {
     __check_type(v, .String)
-    return &v.object.ostring
+    return &value_to_object(v).ostring
 }
 
-value_to_table :: proc(v: Value) -> ^Table {
+value_to_table :: #force_inline proc(v: Value) -> ^Table {
     __check_type(v, .Table)
-    return &v.object.table
+    return &value_to_object(v).table
 }
 
-value_to_string :: proc(v: Value) -> string {
+value_to_string :: #force_inline proc(v: Value) -> string {
     s := value_to_ostring(v)
     return ostring_to_string(s)
 }
 
-value_eq :: proc(a, b: Value) -> bool {
+value_eq :: #force_inline proc(a, b: Value) -> bool {
     if a.type != b.type {
         return false
     }
@@ -166,7 +185,15 @@ value_print :: proc(v: Value) {
     }
 }
 
-value_println :: proc(v: Value) {
-    value_print(v)
-    fmt.println()
+value_write_string :: proc(v: Value, buf: []byte) -> string {
+    switch v.type {
+    case .Nil:     return "nil"
+    case .Boolean: return "true" if value_to_boolean(v) else "false"
+    case .Number:  return fmt.bprintf(buf[:], "%.14g", value_to_number(v))
+    case .String:  return value_to_string(v)
+    case .Table:   return fmt.bprintf(buf[:], "%s: %p", value_type_name(v), value_to_object(v))
+    case .Chunk:
+        break
+    }
+    unreachable("Invalid value to write: %v", v.type)
 }

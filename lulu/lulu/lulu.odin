@@ -3,8 +3,40 @@ package lulu
 import "core:fmt"
 import "core:strings"
 import os "core:os/os2"
+import "core:mem"
+
+_ :: mem
 
 main :: proc() {
+    when ODIN_DEBUG {
+        ta: mem.Tracking_Allocator
+        mem.tracking_allocator_init(&ta, context.allocator) 
+        context.allocator = mem.tracking_allocator(&ta)
+        defer {
+            if len(ta.bad_free_array) > 0 {
+                fmt.eprintln("bad frees:")
+                for info, i in ta.bad_free_array {
+                    ptr  := info.memory
+                    file := info.location.file_path
+                    line := info.location.line
+                    func := info.location.procedure
+                    fmt.eprintfln("[%i] %p @ %s:%i (in '%s')", i, info, file, line, func)
+                }
+            }
+            
+            if len(ta.allocation_map) > 0 {
+                fmt.eprintln("memory leaks: ")
+                for ptr, info in ta.allocation_map {
+                    file := info.location.file_path
+                    line := info.location.line
+                    func := info.location.procedure
+                    fmt.eprintfln("%p @ %s:%i (in '%s')", ptr, file, line, func)
+                }
+            }
+            mem.tracking_allocator_destroy(&ta)
+        }
+    }
+
     g := &Global_State{}
     L := &VM{global_state=g}
     vm_init(L)
@@ -57,10 +89,10 @@ run_input :: proc(L: ^VM, name, input: string) {
 
     parse :: proc(L: ^VM, ud: rawptr) {
         data     := (cast(^Data)ud)^
-        chunk    := chunk_new(L, data.name)
+        chunk    := chunk_new(L, ostring_new(L, data.name))
         parser   := parser_make(L, data.builder, data.name, data.input)
         compiler := compiler_make(L, &parser, chunk)
-        parser_program(&parser, &compiler)
+        program(&parser, &compiler)
         vm_execute(L, chunk)
     }
 

@@ -9,8 +9,8 @@ def ensure_pointer(v: gdb.Value):
 class Ostring_Printer:
     """
     ```
-    struct Ostring {
-        lulu::[object.odin]::Object_Header _;
+    struct lulu::[ostring.odin]::Ostring {
+        lulu::[object.odin]::Object_Header base;
         int  len;
         u32  hash;
         byte data[0];
@@ -41,7 +41,7 @@ class Object_Printer:
         v = self.__value
         if not v:
             return "(null)"
-        t = str(v["_"]["type"])
+        t = str(v["base"]["type"])
         if t == "string":
             return v["ostring"].address
 
@@ -56,7 +56,7 @@ def object_get_data(node: gdb.Value):
         return None
 
     # Don't call the type() method; may crash
-    t = str(node["_"]["type"]).lower()
+    t = str(node["base"]["type"]).lower()
     if t == "string":
         return node["ostring"].address
     else:
@@ -72,7 +72,7 @@ def object_get_data(node: gdb.Value):
 def object_get_type_name(node: gdb.Value):
     if not node:
         return "None"
-    t = str(node["_"]["type"])
+    t = str(node["base"]["type"])
     return t.lower()
 
 
@@ -124,11 +124,10 @@ class Value_Printer:
     struct lulu::[value.odin]::Value {
         lulu::[value.odin]::Value_Type type;
         union {
-            bool    boolean;
-            f64     number;
-            i64     integer;
-            Object *object;
-            void   *pointer;
+            bool boolean;
+            f64 number;
+            lulu::[object.odin]::Object *object;
+            void *pointer;
         } data;
     };
     ```

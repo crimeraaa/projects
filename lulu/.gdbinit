@@ -32,10 +32,9 @@ end
 # set breakpoint pending off
 
 file ./bin/lulu
-break lulu::main
-break lulu::run_input
 # break lulu::[compiler.odin]::compiler_compile
-break lulu::[parser.odin]::parser_parse
+break lulu::[parser.odin]::program
+break lulu::[parser.odin]::advance_token
 
 layout src
 

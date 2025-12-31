@@ -13,26 +13,14 @@ TOKEN_TYPE_STRINGS = _token_strings.value() # type: ignore
 ```c
 ```
 """
-mode = {
-    Token_Type["Identifier"].enumval:  "v2",
-    Token_Type["String"].enumval: "v2",
-    Token_Type["Number"].enumval: "v1",
+TOKEN_MODE = {
+    Token_Type["Identifier"].enumval:   "ostring",
+    Token_Type["String"].enumval:       "ostring",
+    Token_Type["Number"].enumval:       "number",
 }
 
 class TokenPrinter:
-    """In Odin:
-    ```
-    Token :: struct {
-        type:   Token_Type,
-        lexeme: string,
-        data:   Token_Data,
-        line:   int,
-    }
-    Token_Type :: enum u8 { ... }
-    Token_Data :: union { f64, ^Ostring }
-    ```
-
-    In C/C++:
+    """
     ```
     struct lulu::[lexer.odin]::Token {
         enum lulu::[lexer.odin]::Token_Type type;
@@ -43,9 +31,8 @@ class TokenPrinter:
     
     enum lulu::[lexer.odin]::Token_Type : u8 { ... };
     union lulu::[lexer.odin]::Token_Data {
-        u64 tag;
-        f64 v1;
-        struct lulu::[ostring.odin]::Ostring *v2;
+        f64 number;
+        struct lulu::[ostring.odin]::Ostring *ostring;
     };
     ```
     """
@@ -55,8 +42,8 @@ class TokenPrinter:
     def __init__(self, token: gdb.Value):
         self.__type = token["type"]
         i = int(self.__type)
-        if i in mode:
-            self.__data = token["data"][mode[i]]
+        if i in TOKEN_MODE:
+            self.__data = token["data"][TOKEN_MODE[i]]
         else:
             self.__data = str(TOKEN_TYPE_STRINGS[i])
 

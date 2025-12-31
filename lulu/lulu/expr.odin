@@ -4,24 +4,25 @@ package lulu
 Expr :: struct {
     type: Expr_Type,
     using data: struct #raw_union {
-        // Number literal. Useful for constant folding.
-        number: f64,
-
         // Index of instruction in the current chunk's code array.
         pc: int,
+        
+        // Register number.
+        reg: u16,
 
         // Index of the value in the current chunk's constants array.
         // Must fit in SIZE_Bx bits.
         index: u32,
 
-        // Register number.
-        reg: u16,
+        // Number literal. Useful for constant folding.
+        number: f64,
 
+        // Boolean literal.
         boolean: bool,
     }
 }
 
-Expr_Type :: enum u8 {
+Expr_Type :: enum {
     // Value literals.
     Nil, Boolean, Number,
 
@@ -32,6 +33,10 @@ Expr_Type :: enum u8 {
     // Expression is the name of a global variable. The index of the interned
     // string for the name can be found in `Expr.index`.
     Global,
+    
+    // Expression is the name of a local variable. The register of the local
+    // can be found in `Expr.reg`.
+    Local,
 
     // Expression is an instruction which needs its destination register
     // (always Register A) to be finalized? See `Expr.pc`.
@@ -42,39 +47,41 @@ Expr_Type :: enum u8 {
     Register,
 }
 
-expr_set_reg :: proc(e: ^Expr, reg: u16) {
-    e.type = .Register
+expr_make_reg :: #force_inline proc(t: Expr_Type, reg: u16) -> (e: Expr) {
+    e.type = t
     e.reg  = reg
+    return e
 }
 
-expr_set_pc :: proc(e: ^Expr, pc: int) {
-    e.type = .Pc_Pending_Register
+expr_make_pc :: #force_inline proc(t: Expr_Type, pc: int) -> (e: Expr) {
+    e.type = t
     e.pc   = pc
+    return e
 }
 
-expr_set_constant :: proc(e: ^Expr, index: u32) {
-    e.type  = .Constant
+expr_make_index :: #force_inline proc(t: Expr_Type, index: u32) -> (e: Expr) {
+    e.type  = t
     e.index = index
+    return e
 }
 
-expr_set_global :: proc(e: ^Expr, index: u32) {
-    e.type  = .Global
-    e.index = index
-}
-
-expr_make_nil :: proc() -> (e: Expr) {
+expr_make_nil :: #force_inline proc() -> (e: Expr) {
     e.type = .Nil
     return e
 }
 
-expr_make_boolean :: proc(boolean: bool) -> (e: Expr) {
+expr_make_boolean :: #force_inline proc(b: bool) -> (e: Expr) {
     e.type    = .Boolean
-    e.boolean = boolean
+    e.boolean = b
     return e
 }
 
-expr_make_number :: proc(number: f64) -> (e: Expr) {
+expr_make_number :: #force_inline proc(n: f64) -> (e: Expr) {
     e.type   = .Number
-    e.number = number
+    e.number = n
     return e
+}
+
+expr_is_number :: #force_inline proc(e: ^Expr) -> bool {
+    return e.type == .Number
 }

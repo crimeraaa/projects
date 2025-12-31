@@ -1,8 +1,6 @@
 #+private file
 package lulu
 
-import "core:slice"
-
 @(private="package")
 Table :: struct {
     using base: Object_Header,
@@ -26,18 +24,18 @@ Key :: struct #raw_union {
         data: Value_Data,
         type: Value_Type,
         
-        // Saving the result of `hash_value` is useful because it helps us
+        // Saving the result of `hash_value()` is useful because it helps us
         // do quick comparisons for early-outs.
         hash: u32,
     }
 }
 
 @(private="package")
-table_new :: proc(L: ^VM, n: int) -> (t: ^Table) {
+table_new :: proc(L: ^VM, cap: int) -> (t: ^Table) {
     g := G(L)
     t = object_new(Table, L, &g.objects)
-    if n > 0 {
-        resize_and_rehash(L, t, min(n, 8))
+    if cap > 0 {
+        table_resize(L, t, min(cap, 8))
     }
     return t
 }
@@ -61,46 +59,59 @@ returned.
 
 **Returns**
 - v: The value mapped to `k`. It can be `nil`.
-- exists: `true` if the key `k` for the corresponding entry was occupied
+- ok: `true` if the key `k` for the corresponding entry was occupied
 beforehand (i.e. it was non-nil) else `false`.
  */
 @(private="package")
-table_get :: proc(t: ^Table, k: Value) -> (v: Value, exists: bool) #optional_ok {
+table_get :: proc(t: ^Table, k: Value) -> (v: Value, ok: bool) #optional_ok {
     if len(t.entries) == 0 {
         return value_make(), false
     }
     
     hash := hash_value(k)
-
     entry: ^Entry
-    entry, exists = find_entry(t.entries, k, hash)
-    return entry.value, exists
+    entry, ok = find_entry(t.entries, k, hash)
+    return entry.value, ok
 }
 
+/* 
+Queries the table `t` for key `k`. May resize the table.
+
+**Returns**
+- v: A mutable pointer to `t[k]`. It may exist in the table beforehand or
+be just inserted.
+
+**Assumptions**
+- We do not directly set `v` to allow the caller to handle that. This is so
+that , in case they want to handle things like metamethods, they can check if
+`v == nil` to determine when to trigger the `__newindex` metamethod.
+ */
 @(private="package")
-table_set :: proc(L: ^VM, t: ^Table, k, v: Value) {
-    if n := len(t.entries); t.count + 1 > n * 3 / 2 {
-        n = min(n * 2, 8)
-        resize_and_rehash(L, t, n)
+table_set :: proc(L: ^VM, t: ^Table, k: Value) -> (v: ^Value) {
+    // 75% load factor.
+    if cap := len(t.entries); t.count + 1 > cap * 3 / 2 {
+        cap = min(cap * 2, 8)
+        table_resize(L, t, cap)
     }
 
     hash := hash_value(k)
-    entry, exists := find_entry(t.entries, k, hash)
-    if !exists {
+    entry, ok := find_entry(t.entries, k, hash)
+    if !ok {
         t.count += 1
     }
 
     entry.key.v      = k
     entry.key.h.hash = hash
-    entry.value      = v
+    return &entry.value
 }
 
-resize_and_rehash :: proc(L: ^VM, t: ^Table, n: int) {
+@(private="package")
+table_resize :: proc(L: ^VM, t: ^Table, cap: int) {
     old_entries := t.entries
-    new_entries := slice_make(Entry, L, n)
+    new_entries := slice_make(Entry, L, cap)
 
     // We may have nil keys in the old table so we need to ignore them.
-    count := 0
+    new_count := 0
     for old_entry in old_entries {
         k := old_entry.key
         if value_is_nil(k) {
@@ -109,29 +120,37 @@ resize_and_rehash :: proc(L: ^VM, t: ^Table, n: int) {
         // Non-nil keys must be rehashed in the new table.
         new_entry := find_entry(new_entries, k, hash_key(k))
         new_entry^ = old_entry
-        count += 1
+        new_count += 1
     }
 
     delete(old_entries)
-    t.count   = count
+    t.count   = new_count
     t.entries = new_entries
 }
 
 /* 
 **Assumptions**
 - There is at least 1 completely `nil` entry in `entries`.
+
+**Returns**
+- entry: Pointer to `entries[k]` or else the first free entry.
+- ok: `true` if `entry` was occupied beforehand (i.e. it had a non-nil key)
+else `false`.
  */
-find_entry :: proc(entries: []Entry, k: Value, hash: u32) -> (entry: ^Entry, exists: bool) #optional_ok {
-    wrap := cast(uint)(len(entries) - 1)
+find_entry :: proc(entries: []Entry, k: Value, hash: u32) -> (entry: ^Entry, ok: bool) #optional_ok {
     tomb: ^Entry
-    for i := cast(uint)hash & wrap; /* empty */; i = (i + 1) & wrap {
+    cap := cast(uint)len(entries)
+    for i := mod_pow2(cast(uint)hash, cap); /* empty */; i = mod_pow2(i + 1, cap) {
         entry = &entries[i]
         
         // Entry is either partially or completely empty?
         if value_is_nil(entry.key) {
             // Entry is completely empty, so it was never occupied?
             if value_is_nil(entry.value) {
-                return tomb if tomb != nil else entry, false
+                if tomb != nil {
+                    entry = tomb
+                }
+                return entry, false
             }
 
             // Otherwise, this entry is partially empty (i.e. it has a nil key
@@ -152,15 +171,14 @@ hash_key :: proc(k: Key) -> u32 {
 }
 
 hash_value :: proc(v: Value) -> u32 {
-    hash_any :: proc(v: $T) -> u32 {
-        v    := v
-        data := slice.bytes_from_ptr(&v, size_of(v))
-        return hash_bytes(data)
+    hash_any :: #force_inline proc(v: $T) -> u32 {
+        v := v
+        return hash_bytes((transmute([^]byte)&v)[:size_of(T)])
     }
 
     t := value_type(v)
     switch t {
-    case .Nil:      return 0
+    case .Nil:      return hash_any([0]byte{})
     case .Boolean:  return hash_any(value_to_boolean(v))
     case .Number:   return hash_any(value_to_number(v))
     case .String:   return value_to_ostring(v).hash

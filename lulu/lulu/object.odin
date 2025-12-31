@@ -40,7 +40,7 @@ Object_Mark :: enum u8 {
 /*
 Create a new object of type `T`, appending it to `list`.
 
-*Allocates using `context.allocator`.
+*Allocates using `context.allocator`.*
 
 **Parameters**
 - T: The desired type of the resulting object, which must 'inherit' from
@@ -67,23 +67,19 @@ where intrinsics.type_is_subtype_of(T, Object_Header) {
     if ptr == nil || err != nil {
         vm_error_memory(L)
     }
-    o := cast(^T)ptr
+    derived := cast(^T)ptr
 
     // Chain the new object.
-    o.next = list^
-    list^  = cast(^Object)o
-    when T == Ostring {
-        o.type = Value_Type.String
-    } else when T == Table {
-        o.type = Value_Type.Table
-    } else when T == Chunk {
-        o.type = Value_Type.Chunk
-    } else {
-        #panic("Invalid T")
-    }
+    derived.next = list^
+    when      T == Ostring do derived.type = Value_Type.String \
+    else when T == Table   do derived.type = Value_Type.Table \
+    else when T == Chunk   do derived.type = Value_Type.Chunk \
+    else do #panic("Invalid T")
+
     // This object is freshly allocated so it has never been traversed.
-    o.mark = {.White}
-    return o
+    derived.mark = {.White}
+    list^ = cast(^Object)derived
+    return derived
 }
 
 /*
@@ -104,7 +100,7 @@ object_free :: proc(o: ^Object) {
     case .Table:    table_free(&o.table)
     case .Chunk:    chunk_free(&o.chunk)
     case .Nil, .Boolean, .Number:
-        unreachable("Invalid object (Value_Type=%s)")
+        unreachable("Invalid object to free: %v", o.type)
     }
 }
 
