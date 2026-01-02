@@ -3,6 +3,7 @@ package lulu
 
 import "core:fmt"
 import "core:math"
+import "core:strconv"
 
 Value :: struct {
     using data: Value_Data,
@@ -22,18 +23,13 @@ Value_Type :: enum u8 {
 Value_Data :: struct #raw_union {
     boolean:  bool,
     number:   f64,
-    integer:  int,
-    object:  ^Object,
     pointer:  rawptr,
+    object:  ^Object,
 }
 
-number_unm :: proc "contextless" (a: f64)    -> f64 {return -a}
-number_add :: proc "contextless" (a, b: f64) -> f64 {return a + b}
-number_sub :: proc "contextless" (a, b: f64) -> f64 {return a - b}
-number_mul :: proc "contextless" (a, b: f64) -> f64 {return a * b}
-number_div :: proc "contextless" (a, b: f64) -> f64 {return a / b}
-number_mod :: proc "contextless" (a, b: f64) -> f64 {return a - math.floor(a / b) * b}
-number_pow :: math.pow_f64
+// === VALUE DATA PAYLOADS ================================================= {{{
+// The following can be changed if, for example, you opt to use NaN tagging
+// and/or fat pointers instead.
 
 
 @require_results
@@ -46,27 +42,96 @@ value_make :: proc {
 }
 
 value_make_nil :: #force_inline proc "contextless" () -> Value {
-    return Value{type=.Nil}
+    v: Value
+    v.pointer = nil
+    v.type    = .Nil
+    return v
 }
 
 value_make_boolean :: #force_inline proc "contextless" (b: bool) -> Value {
-    return Value{type=.Boolean, boolean=b}
+    v: Value
+    v.boolean = b
+    v.type    = .Boolean
+    return v
 }
 
 value_make_number :: #force_inline proc "contextless" (n: f64) -> Value {
-    return Value{type=.Number, number=n}
+    v: Value
+    v.number = n
+    v.type   = .Number
+    return v
 }
 
-value_make_ostring :: #force_inline proc "contextless" (s: ^Ostring) -> Value {
-    return Value{type=.String, object=cast(^Object)s}
+value_make_object :: proc(o: ^Object, t: Value_Type) -> Value {
+    v: Value
+    // Check for consistency.
+    assert(o.type == t, "Expected '%s' but got '%s'", value_type_string(t), value_type_string(o.type))
+    v.object = o
+    v.type   = t
+    return v
 }
 
-value_make_table :: #force_inline proc "contextless" (t: ^Table) -> Value {
-    return Value{type=.Table, object=cast(^Object)t}
+value_type :: #force_inline proc "contextless" (v: Value) -> Value_Type {
+    return v.type
 }
 
-value_make_chunk :: #force_inline proc "contextless" (c: ^Chunk) -> Value {
-    return Value{type=.Chunk, object=cast(^Object)c}
+@(private="file")
+check_type :: #force_inline proc(v: Value, t: Value_Type) {
+    assert(value_type(v) == t, "Expected '%s' but got '%s'",
+        value_type_string(t), value_type_name(v))
+}
+
+value_get_bool :: #force_inline proc(v: Value) -> (b: bool) {
+    check_type(v, .Boolean)
+    return v.boolean
+}
+
+value_get_number :: #force_inline proc(v: Value) -> (f: f64) {
+    check_type(v, .Number)
+    return v.number
+}
+
+value_get_pointer :: #force_inline proc(v: Value) -> (p: rawptr) {
+    return v.pointer
+}
+
+value_get_object :: #force_inline proc(v: Value) -> (o: ^Object) {
+    o = v.object
+    // Ensure consistency.
+    check_type(v, o.type)
+    return o
+}
+
+// === }}} =====================================================================
+// Everything below is implemented in terms of the data payload functions.
+
+
+number_unm :: proc "contextless" (a: f64)    -> f64 {return -a}
+number_add :: proc "contextless" (a, b: f64) -> f64 {return a + b}
+number_sub :: proc "contextless" (a, b: f64) -> f64 {return a - b}
+number_mul :: proc "contextless" (a, b: f64) -> f64 {return a * b}
+number_div :: proc "contextless" (a, b: f64) -> f64 {return a / b}
+number_mod :: proc "contextless" (a, b: f64) -> f64 {q := a / b; return a - math.floor(q) * b}
+number_pow :: math.pow_f64
+
+
+/* 
+Write the number `n` into the caller-supplied byte buffer `buf`.
+ */
+number_to_string :: proc(n: f64, buf: []byte) -> string {
+    return fmt.bprintf(buf, "%.14g", n)
+}
+
+value_make_ostring :: proc(s: ^Ostring) -> Value {
+    return value_make_object(cast(^Object)s, .String)
+}
+
+value_make_table :: proc(t: ^Table) -> Value {
+    return value_make_object(cast(^Object)t, .Table)
+}
+
+value_make_chunk :: proc(c: ^Chunk) -> Value {
+    return value_make_object(cast(^Object)c, .Chunk)
 }
 
 value_type_name :: #force_inline proc(v: Value) -> string {
@@ -104,96 +169,103 @@ value_is_string :: #force_inline proc(v: Value) -> bool {
 }
 
 value_is_falsy :: #force_inline proc(v: Value) -> bool {
-    return value_is_nil(v) || (value_is_boolean(v) && !value_to_boolean(v))
+    return value_is_nil(v) || (value_is_boolean(v) && !value_get_bool(v))
 }
 
-// === VALUE DATA PAYLOADS ================================================= {{{
-
-value_type :: #force_inline proc "contextless" (v: Value) -> Value_Type {
-    return v.type
+value_get_ostring :: #force_inline proc(v: Value) -> ^Ostring {
+    check_type(v, .String)
+    return &value_get_object(v).string
 }
 
-@(private="file")
-__check_type :: #force_inline proc(v: Value, t: Value_Type) {
-    assert(value_type(v) == t, "Expected '%s' but got '%s'",
-        value_type_string(t), value_type_name(v))
+value_get_table :: #force_inline proc(v: Value) -> ^Table {
+    check_type(v, .Table)
+    return &value_get_object(v).table
 }
 
-value_to_boolean :: #force_inline proc(v: Value) -> bool {
-    __check_type(v, .Boolean)
-    return v.boolean
-}
-
-value_to_number :: #force_inline proc(v: Value) -> f64 {
-    __check_type(v, .Number)
-    return v.number
-}
-
-value_to_object :: #force_inline proc(v: Value) -> ^Object {
-    return v.object
-}
-
-// === }}} =====================================================================
-
-
-value_to_ostring :: #force_inline proc(v: Value) -> ^Ostring {
-    __check_type(v, .String)
-    return &value_to_object(v).ostring
-}
-
-value_to_table :: #force_inline proc(v: Value) -> ^Table {
-    __check_type(v, .Table)
-    return &value_to_object(v).table
-}
-
-value_to_string :: #force_inline proc(v: Value) -> string {
-    s := value_to_ostring(v)
+value_get_string :: #force_inline proc(v: Value) -> string {
+    s := value_get_ostring(v)
     return ostring_to_string(s)
 }
 
-value_eq :: #force_inline proc(a, b: Value) -> bool {
-    if a.type != b.type {
+value_eq :: proc(a, b: Value) -> bool {
+    t := value_type(a)
+    if t != value_type(b) {
         return false
     }
 
-    switch a.type {
+    switch t {
     case .Nil:      return true
-    case .Boolean:  return value_to_boolean(a) == value_to_boolean(b)
-    case .Number:   return value_to_number(a)  == value_to_number(b)
-    case .String:   return value_to_ostring(a) == value_to_ostring(b)
-    case .Table:    return value_to_table(a) == value_to_table(b)
+    case .Boolean:  return value_get_bool(a)    == value_get_bool(b)
+    case .Number:   return value_get_number(a)  == value_get_number(b)
+    case .String:   return value_get_ostring(a) == value_get_ostring(b)
+    case .Table:    return value_get_table(a)   == value_get_table(b)
     case .Chunk:
         break
     }
-    unreachable("Invalid type: %v", a.type)
+    unreachable("Invalid value to compare: %v", t)
 }
 
-value_print :: proc(v: Value) {
-    switch v.type {
-    case .Nil:     fmt.print("nil")
-    case .Boolean: fmt.print(value_to_boolean(v))
-    case .Number:  fmt.printf("%.14g", value_to_number(v))
-    case .String:
-        s := value_to_string(v)
-        q := '\'' if len(s) == 1 else '\"'
-        fmt.printf("%c%s%c", q, s, q)
-    case .Table:
-        t := value_to_table(v)
-        fmt.printf("table: %p", t)
-    case .Chunk:
-        unreachable("Invalid type: %v", v.type)
-    }
-}
+// We assume this is large enough to hold all representations of non-string
+// values.
+VALUE_TO_STRING_BUFFER_SIZE :: 64
 
-value_write_string :: proc(v: Value, buf: []byte) -> string {
-    switch v.type {
+/* 
+Gets the string representation of `v`, writing it into `buf` only if needed.
+
+**Parameters**
+- buf: Used only when string representation is not immediately available
+(e.g. `nil` and `boolean` can map to string literals, `string` already has its
+data). `number` and non-string object types (e.g. `table`) must be written out
+explicitly. We assume that `VALUE_TO_STRING_BUFFER_SIZE` is sufficient.
+ */
+value_to_string :: proc(v: Value, buf: []byte) -> string {
+    t := value_type(v)
+    switch t {
     case .Nil:     return "nil"
-    case .Boolean: return "true" if value_to_boolean(v) else "false"
-    case .Number:  return fmt.bprintf(buf[:], "%.14g", value_to_number(v))
-    case .String:  return value_to_string(v)
-    case .Table:   return fmt.bprintf(buf[:], "%s: %p", value_type_name(v), value_to_object(v))
+    case .Boolean: return "true" if value_get_bool(v) else "false"
+    case .Number:  return number_to_string(value_get_number(v), buf)
+    case .String:  return value_get_string(v)
+    case .Table:
+        s := value_type_string(t)
+        p := cast(u64)cast(uintptr)value_get_pointer(v)
+        return fmt.bprintf(buf, "%s: %p", s, p)
     case .Chunk:
         break
     }
-    unreachable("Invalid value to write: %v", v.type)
+    unreachable("Invalid value to write: %v", t)
+}
+
+/* 
+Get the number representation of `v`. Numbers are returned as-is and strings
+are parsed. No other types can have a number representation.
+ */
+value_to_number :: proc(v: Value) -> (n: f64, ok: bool) {
+    if value_is_number(v) {
+        return value_get_number(v), true
+    } else if !value_is_string(v) {
+        return 0, false
+    }
+
+    s := value_get_string(v)
+    // Maybe an integer?
+    try: if len(s) > 2 && s[0] == '0' {
+        base := 0
+        switch s[1] {
+        case 'b', 'B': base = 2
+        case 'd', 'D': base = 10
+        case 'o', 'O': base = 8
+        case 'x', 'X': base = 16
+        case 'z', 'Z': base = 12
+        case:
+            break try
+        }
+
+        i: uint
+        i, ok = strconv.parse_uint(s[2:], base)
+        if ok {
+            n = cast(f64)i
+        }
+        return n, ok
+    }
+    return strconv.parse_f64(s)
 }

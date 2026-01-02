@@ -2,6 +2,7 @@
 package lulu
 
 import "core:mem"
+import "core:strings"
 
 Intern :: struct {
     // Each entry in the string table is actually a linked list.
@@ -88,7 +89,7 @@ ostring_new :: proc(L: ^VM, text: string) -> ^Ostring {
     hash  := hash_bytes(transmute([]byte)text)
     index := mod_pow2(cast(uint)hash, cast(uint)table_cap)
     for node := table[index]; node != nil; node = node.next {
-        s := &node.ostring
+        s := &node.string
         if hash == s.hash && text == ostring_to_string(s) {
             return s
         }
@@ -111,6 +112,48 @@ ostring_new :: proc(L: ^VM, text: string) -> ^Ostring {
     }
     intern.count += 1
     return s
+}
+
+ostringf_new :: proc(L: ^VM, fmt: string, args: ..any) -> ^Ostring {
+    fmt := fmt
+    b   := &L.builder
+    strings.builder_reset(b)
+    arg_i := 0
+    for {
+        fmt_i := strings.index_byte(fmt, '%')
+        if fmt_i == -1 {
+            strings.write_string(b, fmt)
+            break
+        }
+
+        // Write any bits of the string before the format specifier.
+        strings.write_string(b, fmt[:fmt_i])
+        
+        arg   := args[arg_i]
+        arg_i += 1
+        spec_i := fmt
+        switch spec := fmt[fmt_i + 1]; spec {
+        case 'c':
+            strings.write_rune(b, arg.(rune))
+        case 'd', 'i':
+            strings.write_int(b, arg.(int))
+        case 'f':
+            bit_size := size_of(f64) * 8
+            strings.write_float(b, arg.(f64), fmt='g', prec=14, bit_size=bit_size)
+        case 's':
+            strings.write_string(b, arg.(string))
+        case 'p':
+            addr := cast(uintptr)arg.(rawptr)
+            strings.write_string(b, "0x")
+            strings.write_u64(b, cast(u64)addr, base=16)
+        case:
+            unreachable("Unsupported format specifier '%c'", spec)
+        }
+        
+        // Move over the format specifier.
+        fmt = fmt[fmt_i + 1:]
+    }
+    return ostring_new(L, strings.to_string(b^))
 }
 
 /* 
@@ -148,7 +191,7 @@ intern_resize :: proc(L: ^VM, intern: ^Intern, new_cap: int) {
         this_node := list
         // Rehash all children for this list.
         for this_node != nil {
-            ostring := &this_node.ostring
+            ostring := &this_node.string
             index   := mod_pow2(cast(uint)ostring.hash, cast(uint)new_cap)
 
             // Save because it's about to be replaced.

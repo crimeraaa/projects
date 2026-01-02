@@ -85,3 +85,8 @@ expr_make_number :: #force_inline proc(n: f64) -> (e: Expr) {
 expr_is_number :: #force_inline proc(e: ^Expr) -> bool {
     return e.type == .Number
 }
+
+expr_is_literal :: #force_inline proc(e: ^Expr) -> bool {
+    LITERAL_TYPES :: bit_set[Expr_Type]{.Nil, .Boolean, .Number, .Constant}
+    return e.type in LITERAL_TYPES
+}

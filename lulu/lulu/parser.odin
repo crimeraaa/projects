@@ -153,8 +153,18 @@ statement :: proc(p: ^Parser, c: ^Compiler)  {
         }
     case .Return:
         advance_token(p)
-        reg, count := expression_list(p, c)
-        compiler_code_return(c, reg, count, p.consumed.line)
+        last, count := argument_list(p, c)
+        line        := p.consumed.line
+        if count == 1 {
+            last_reg := compiler_push_expr_any(c, &last, line)
+            compiler_code_return(c, last_reg, count, line)
+            compiler_pop_expr(c, &last)
+        } else {
+            last_reg  := compiler_push_expr_next(c, &last, line)
+            first_reg := last_reg - count + 1
+            compiler_code_return(c, first_reg, count, line)
+            compiler_pop_reg(c, first_reg, count)
+        }
     }
     match_token(p, .Semicolon)
 }
@@ -237,7 +247,7 @@ assignment :: proc(p: ^Parser, c: ^Compiler, tail: ^Assign_List, lhs_count: u16)
     }
     expect_token(p, .Assign)
     
-    base_reg, rhs_count := expression_list(p, c)
+    first_reg, rhs_count := expression_list(p, c)
     line := p.consumed.line
     adjust_assign(c, lhs_count, rhs_count, line) 
     src_reg  := c.free_reg - 1
@@ -251,8 +261,8 @@ assignment :: proc(p: ^Parser, c: ^Compiler, tail: ^Assign_List, lhs_count: u16)
         }
         src_reg -= 1
     }
-    // assert(base_reg == top_reg, "base=%i, top=%i", base_reg, top_reg)
-    c.free_reg = base_reg
+    // assert(first_reg == top_reg, "base=%i, top=%i", first_reg, top_reg)
+    c.free_reg = first_reg
 }
 
 /* 
@@ -260,11 +270,11 @@ Parse a comma-separated list of expressions. All expressions are pushed to the
 next free register.
 
 **Returns**
-- reg: The register of the first expression.
+- first_reg: The register of the first expression.
 - count: How many expressions were parsed in total.
  */
-expression_list :: proc(p: ^Parser, c: ^Compiler) -> (reg, count: u16) {
-    reg = c.free_reg
+expression_list :: proc(p: ^Parser, c: ^Compiler) -> (first_reg, count: u16) {
+    first_reg = c.free_reg
     for {
         expr  := expression(p, c)
         count += 1
@@ -273,7 +283,26 @@ expression_list :: proc(p: ^Parser, c: ^Compiler) -> (reg, count: u16) {
             break
         }
     }
-    return reg, count
+    return first_reg, count
+}
+
+/* 
+Parse a comma-separated list of expressions. All expressions *except* for the
+last one are pushed to the next free register. The last (and potentially only)
+expression is not pushed in case it can be optimized away e.g.
+`local x = 1; return x`.
+ */
+argument_list :: proc(p: ^Parser, c: ^Compiler) -> (last: Expr, count: u16) {
+    for {
+        expr  := expression(p, c)
+        count += 1
+        if !match_token(p, .Comma) {
+            last = expr
+            break
+        }
+        compiler_push_expr_next(c, &expr, p.consumed.line)
+    }
+    return last, count
 }
 
 /*
@@ -379,7 +408,7 @@ arith :: proc(p: ^Parser, c: ^Compiler, op: Opcode, left: ^Expr, prec: Precedenc
     // correct operations. We cannot assume that `a op b` is equal to `b op a`
     // for all operations.
     if !expr_is_number(left) {
-        compiler_push_expr_rk(c, left, p.consumed.line)
+        compiler_push_expr_any(c, left, p.consumed.line)
     }
     right := expression(p, c, prec)
     compiler_code_arith(c, op, left, &right, p.consumed.line)

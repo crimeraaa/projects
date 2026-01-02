@@ -179,10 +179,10 @@ hash_value :: proc(v: Value) -> u32 {
     t := value_type(v)
     switch t {
     case .Nil:      return hash_any([0]byte{})
-    case .Boolean:  return hash_any(value_to_boolean(v))
-    case .Number:   return hash_any(value_to_number(v))
-    case .String:   return value_to_ostring(v).hash
-    case .Table:    return hash_any(value_to_object(v))
+    case .Boolean:  return hash_any(value_get_bool(v))
+    case .Number:   return hash_any(value_get_number(v))
+    case .String:   return value_get_ostring(v).hash
+    case .Table:    return hash_any(value_get_object(v))
     case .Chunk:
         break
     }

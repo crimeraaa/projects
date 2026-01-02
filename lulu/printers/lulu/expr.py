@@ -3,7 +3,7 @@ from typing import Final, Literal
 
 NO_JUMP: Final = -1
 
-__INFO: Final[dict[str, str]] = {
+_EXPR_PAYLOADS: Final[dict[str, str]] = {
     "Boolean":      "boolean",
     "Number":       "number",
     "Constant":     "index",
@@ -26,7 +26,7 @@ class ExprPrinter:
 
     def to_string(self) -> str:
         s    = self.__type
-        memb = __INFO[s] if s in __INFO else None
+        memb = _EXPR_PAYLOADS[s] if s in _EXPR_PAYLOADS else None
         if memb:
             s = f"{self.__type}: "
             # if memb == "indexed":

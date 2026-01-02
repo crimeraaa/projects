@@ -2,6 +2,7 @@
 package lulu
 
 import "core:fmt"
+import "core:math"
 
 Compiler :: struct {
     // Parent state.
@@ -23,8 +24,13 @@ Compiler :: struct {
     // How many array slots are actively occupied in `active_locals`.
     active_count: u16,
 
-    // Indexes are assigned registers. Values are indexes into `chunk.locals`.
-    active_locals: [A_MAX]u16,
+    // Indexes are assigned registers. Since they are registers, they must
+    // fit in `MAX_REG`.
+    //
+    // Values are indexes into `chunk.locals`. This is because we can have
+    // more than `MAX_REG` overall local variable information (e.g. many
+    // short-lived locals).
+    active_locals: [MAX_REG]u16,
 }
 
 compiler_make :: proc(L: ^VM, parser: ^Parser, chunk: ^Chunk) -> Compiler {
@@ -37,9 +43,7 @@ compiler_end :: proc(c: ^Compiler, line: int) {
     chunk := c.chunk
     compiler_code_return(c, 0, 0, line)
     chunk_fix(L, chunk, c.pc)
-    when ODIN_DEBUG {
-        chunk_disassemble(chunk)
-    }
+    disassemble(chunk)
 }
 
 /*
@@ -141,11 +145,17 @@ add_instruction :: proc(c: ^Compiler, i: Instruction, line: int) -> (pc: int) {
 }
 
 compiler_code_abc :: proc(cl: ^Compiler, op: Opcode, a, b, c: u16, line: int) -> (pc: int) {
+    assert(OP_INFO[op].mode == .ABC)
+
     i := instruction_make_abc(op, a, b, c)
     return add_instruction(cl, i, line)
 }
 
 compiler_code_abx :: proc(c: ^Compiler, op: Opcode, a: u16, bx: u32, line: int) -> (pc: int) {
+    assert(OP_INFO[op].mode == .ABx)
+    assert(OP_INFO[op].b != nil)
+    assert(OP_INFO[op].c == nil)
+
     i := instruction_make_abx(op, a, bx)
     return add_instruction(c, i, line)
 }
@@ -167,9 +177,9 @@ Reserves `count` registers.
 compiler_push_reg :: proc(c: ^Compiler, count: u16 = 1) -> (reg: u16) {
     reg = c.free_reg
     c.free_reg += count
-    if c.free_reg > A_MAX {
+    if c.free_reg > MAX_REG {
         buf: [256]byte
-        msg := fmt.bprintf(buf[:], "%i registers exceeded", A_MAX)
+        msg := fmt.bprintf(buf[:], "%i registers exceeded", MAX_REG)
         parser_error(c.parser, msg)
     }
 
@@ -243,6 +253,8 @@ This is the 2nd simplest register allocation strategy.
 - `lcode.c:luaK_exp2anyreg(FuncState *fs, expdesc *e)` in Lua 5.1.5.
  */
 compiler_push_expr_any :: proc(c: ^Compiler, e: ^Expr, line: int) -> (reg: u16) {
+    // Convert `.Local` to `.Register`
+    discharge_expr_variables(c, e, line)
     if e.type == .Register {
         return e.reg
     }
@@ -316,25 +328,29 @@ discharge_expr_to_reg :: proc(c: ^Compiler, e: ^Expr, reg: u16, line: int) {
         compiler_load_nil(c, reg, 1, line)
 
     case .Boolean:
-        b := cast(u16)e.boolean
-        compiler_code_abc(c, .Load_Bool, reg, b, 0, line)
+        compiler_code_abc(c, .Load_Bool, reg, cast(u16)e.boolean, 0, line)
 
     case .Number:
-        value := value_make(e.number)
-        index := add_constant(c, value)
-        compiler_code_abx(c, .Load_Const, reg, index, line)
+        n := e.number
+        // Can encode the positive integer directly?
+        if 0.0 <= n && n <= MAX_IMM_Bx && n == math.floor(n) {
+            imm := cast(u32)n
+            compiler_code_abx(c, .Load_Imm, reg, imm, line) 
+        } // Otherwise, we need to explicitly load this number. 
+        else {
+            i := add_constant(c, value_make(n))
+            compiler_code_abx(c, .Load_Const, reg, i, line)
+        }
 
     case .Constant:
-        index := e.index
-        compiler_code_abx(c, .Load_Const, reg, index, line)
+        compiler_code_abx(c, .Load_Const, reg, e.index, line)
     
+    // We assume `discharge_expr_variables()` was called beforehand
     case .Global, .Local:
         unreachable("Invalid expr to discharge: %v", e.type)
 
     case .Pc_Pending_Register:
-        pc := e.pc
-        ip := &c.chunk.code[pc]
-        ip.a = reg
+        c.chunk.code[e.pc].a = reg
 
     case .Register:
         dst := reg
@@ -350,33 +366,39 @@ discharge_expr_to_reg :: proc(c: ^Compiler, e: ^Expr, reg: u16, line: int) {
 }
 
 /*
-Pushes `e` to an RK register if possible. That is, if it is a constant value
-then we try to directly encode the load of said constant. Otherwise, we must
-explicitly load the value to a register beforehand.
+Pushes `e` to K register if possible. That is, if it is a constant value
+then we try to directly encode the load of said constant into the opcode
+arguments.
+
+**Guarantees**
+- If `e` represents a literal value then it is transformed to `.Constant`
+no matter what.
+
+**Returns**
+- k: The index of the constant in the current chunk's constants array.
+- ok: `true` if `e` could be transformed to or already was `.Constant` and
+the index of the constant fits in a K register.
  */
-compiler_push_expr_rk :: proc(c: ^Compiler, e: ^Expr, line: int) -> (rk: u16) {
-    // Helper to transform constants into RK.
-    push_rk :: proc(c: ^Compiler, e: ^Expr, v: Value) -> (rk: u16, ok: bool) {
+@(private="file")
+push_expr_k :: proc(c: ^Compiler, e: ^Expr, line: int) -> (index: u16, ok: bool) {
+    // Helper to transform constants into K.
+    push_k :: proc(c: ^Compiler, e: ^Expr, v: Value) -> (k: u16, ok: bool) {
         index := add_constant(c, v)
         e^     = expr_make_index(.Constant, index)
-        return check_rk(index)
+        return check_k(index)
     }
 
-    // Constant index fits in the lower 8 bits of the RK register?
-    // i.e. when it is masked, we do not lose any of the original bits.
-    check_rk :: proc(index: u32) -> (rk: u16, ok: bool) {
-        ok = index <= RK_MASK
-        if ok {
-            rk = reg_to_rk(cast(u16)index)
-        }
-        return rk, ok
+    // Constant index fits in a K register?
+    // i.e. when it is masked t fit, we do not lose any of the original bits.
+    check_k :: proc(index: u32) -> (k: u16, ok: bool) {
+        return cast(u16)index, index <= MAX_K_C
     }
 
     switch e.type {
-    case .Nil:      return push_rk(c, e, value_make())          or_break
-    case .Boolean:  return push_rk(c, e, value_make(e.boolean)) or_break
-    case .Number:   return push_rk(c, e, value_make(e.number))  or_break
-    case .Constant: return check_rk(e.index) or_break
+    case .Nil:      return push_k(c, e, value_make())
+    case .Boolean:  return push_k(c, e, value_make(e.boolean))
+    case .Number:   return push_k(c, e, value_make(e.number))
+    case .Constant: return check_k(e.index)
 
     // Nothing we can do.
     case .Global, .Pc_Pending_Register:
@@ -384,9 +406,9 @@ compiler_push_expr_rk :: proc(c: ^Compiler, e: ^Expr, line: int) -> (rk: u16) {
 
     // Already has a register, reuse it.
     case .Local, .Register:
-        return e.reg
+        return e.reg, true
     }
-    return compiler_push_expr_any(c, e, line)
+    return 0, false
 }
 
 compiler_pop_expr :: proc(c: ^Compiler, e: ^Expr) {
@@ -434,9 +456,17 @@ compiler_code_unary :: proc(c: ^Compiler, op: Opcode, e: ^Expr, line: int) {
 - `left` is transformed to `.Pc_Pending_Register` and is waiting on register
 allocation for its result by the caller.
  */
-compiler_code_arith :: proc(c: ^Compiler, op: Opcode, left, right: ^Expr, line: int) {
+compiler_code_arith :: proc(cl: ^Compiler, op: Opcode, left, right: ^Expr, line: int) {
+    // Helper to avoid division or modulo by zero.
+    check_nonzero :: #force_inline proc(a: f64) -> (val: f64, ok: bool) {
+        if ok = a == 0; ok {
+            val = a
+        }
+        return val, ok
+    }
+
     // Can constant fold?
-    if expr_is_number(left) && expr_is_number(right) {
+    fold: if expr_is_number(left) && expr_is_number(right) {
         a := left.number
         b := right.number
         c: f64
@@ -444,31 +474,117 @@ compiler_code_arith :: proc(c: ^Compiler, op: Opcode, left, right: ^Expr, line: 
         case .Add: c = number_add(a, b)
         case .Sub: c = number_sub(a, b)
         case .Mul: c = number_mul(a, b)
-        case .Div: c = number_div(a, b) // WARNING: may divide by zero!
-        case .Mod: c = number_mod(a, b) // WARNING: may modulo by zero!
+        case .Div: c = number_div(a, check_nonzero(b) or_break fold)
+        case .Mod: c = number_mod(a, check_nonzero(b) or_break fold)
         case .Pow: c = number_pow(a, b)
         case:
-            unreachable()
+            unreachable("Invalid arithmetic opcode %v", op)
         }
         left.number = c
         return
     }
-
-    r1 := compiler_push_expr_rk(c, right, line)
-    r0 := compiler_push_expr_rk(c, left,  line)
+    
+    // Try register-immediate
+    if arith_imm(cl, op, left, right, line) {
+        return
+    }
+    
+    // Not register-immediate, try register-constant
+    if arith_k(cl, op, left, right, line) {
+        return
+    }
+    
+    // Neither register-immediate nor register-constant, do register-register
+    rc := compiler_push_expr_any(cl, right, line)
+    rb := compiler_push_expr_any(cl, left,  line)
 
     // Deallocate temporary registers in the correct order.
-    if r0 > r1 {
-        compiler_pop_expr(c, left)
-        compiler_pop_expr(c, right)
+    // Don't pop the registers directly, because `rb` and/or `rc` may
+    // not be poppable!
+    if rb > rc {
+        compiler_pop_expr(cl, left)
+        compiler_pop_expr(cl, right)
     } else {
-        compiler_pop_expr(c, right)
-        compiler_pop_expr(c, left)
+        compiler_pop_expr(cl, right)
+        compiler_pop_expr(cl, left)
     }
+
 
     // For high precedence recursive calls, remember that we are the
     // right-hand-side of our parent expression. So in those cases, when we're
     // done, the parent's `right` is already of type `.Pc_Needs_Register`.
-    pc := compiler_code_abc(c, op, 0, r0, r1, line)
+    pc := compiler_code_abc(cl, op, 0, rb, rc, line)
     left^ = expr_make_pc(.Pc_Pending_Register, pc)
+}
+
+/* 
+**Returns**
+- ok: `true` if an `.*_Imm` instruction was successfuly emitted else `false.`
+ */
+arith_imm :: proc(cl: ^Compiler, op: Opcode, left, right: ^Expr, line: int) -> (ok: bool) {
+    op := op
+    #partial switch op {
+    case .Add:        op = .Add_Imm
+    case .Sub:        op = .Sub_Imm
+    case .Mul..=.Pow: return false
+    case:
+        unreachable("Invalid opcode %v", op)
+    }
+
+    imm, neg := check_imm(right) or_return
+    if neg {
+        op = .Sub_Imm if op == .Add_Imm else .Add_Imm
+    }
+    
+    rb := compiler_push_expr_any(cl, left, line)
+    compiler_pop_expr(cl, left)
+
+    pc := compiler_code_abc(cl, op, 0, rb, imm, line)
+    left^ = expr_make_pc(.Pc_Pending_Register, pc)
+    return true
+}
+
+@(private="file")
+check_imm :: #force_inline proc(e: ^Expr) -> (imm: u16, neg, ok: bool) {
+    if expr_is_number(e) {
+        n  := e.number 
+        neg = n < 0.0
+        n   = abs(n)
+        // Is an integer in range of the immediate operand?
+        ok  = n <= MAX_IMM_C && n == math.trunc(n)
+        return cast(u16)n if ok else 0, neg, ok
+    }
+    return 0, false, false
+}
+
+
+/* 
+**Returns**
+- ok: `true` if a `.*_Const` instruction was successfully emittted else `false`.
+ */
+@(private="file")
+arith_k :: proc(cl: ^Compiler, op: Opcode, left, right: ^Expr, line: int) -> (ok: bool) {
+    if !expr_is_literal(right) {
+        return false
+    }
+    
+    op := op
+    #partial switch op {
+    case .Add: op = .Add_Const
+    case .Sub: op = .Sub_Const
+    case .Mul: op = .Mul_Const
+    case .Div: op = .Div_Const
+    case .Mod: op = .Mod_Const
+    case .Pow: op = .Pow_Const
+    case:
+        unreachable()
+    }
+
+    kc := push_expr_k(cl, right, line) or_return
+    rb := compiler_push_expr_any(cl, left, line)
+    compiler_pop_expr(cl, left)
+
+    pc := compiler_code_abc(cl, op, 0, rb, kc, line)
+    left^ = expr_make_pc(.Pc_Pending_Register, pc)
+    return true
 }

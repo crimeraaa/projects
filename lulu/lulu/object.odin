@@ -6,7 +6,7 @@ import "core:mem"
 
 Object :: struct #raw_union {
     using base: Object_Header,
-    ostring:    Ostring,
+    string:     Ostring,
     table:      Table,
     chunk:      Chunk,
 }
@@ -96,7 +96,7 @@ the garbage collector to handle the unlinking for us.
  */
 object_free :: proc(o: ^Object) {
     switch o.type {
-    case .String:   ostring_free(&o.ostring)
+    case .String:   ostring_free(&o.string)
     case .Table:    table_free(&o.table)
     case .Chunk:    chunk_free(&o.chunk)
     case .Nil, .Boolean, .Number:
