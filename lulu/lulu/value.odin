@@ -115,7 +115,7 @@ number_mod :: proc "contextless" (a, b: f64) -> f64 {q := a / b; return a - math
 number_pow :: math.pow_f64
 
 
-/* 
+/*
 Write the number `n` into the caller-supplied byte buffer `buf`.
  */
 number_to_string :: proc(n: f64, buf: []byte) -> string {
@@ -209,7 +209,7 @@ value_eq :: proc(a, b: Value) -> bool {
 // values.
 VALUE_TO_STRING_BUFFER_SIZE :: 64
 
-/* 
+/*
 Gets the string representation of `v`, writing it into `buf` only if needed.
 
 **Parameters**
@@ -235,7 +235,7 @@ value_to_string :: proc(v: Value, buf: []byte) -> string {
     unreachable("Invalid value to write: %v", t)
 }
 
-/* 
+/*
 Get the number representation of `v`. Numbers are returned as-is and strings
 are parsed. No other types can have a number representation.
  */

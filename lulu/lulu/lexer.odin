@@ -12,7 +12,7 @@ Token :: struct {
     type:   Token_Type,
     lexeme: string,
     using data: Token_Data,
-    line:   int,
+    line, col: i32,
 }
 
 @(private="package")
@@ -31,7 +31,7 @@ Lexer :: struct {
     builder: ^strings.Builder,
 
     // File name. Mainly used for error reporting.
-    name: string,
+    name: ^Ostring,
 
     // Input data which we are lexing.
     input: string,
@@ -42,8 +42,8 @@ Lexer :: struct {
     // Current 1-past-end index of lexeme in `input`.
     cursor: int,
 
-    // Current line number.
-    line: int,
+    // Current line and column number.
+    line, col: i32,
 
     // Size of rune read in during `read_rune()`.
     curr_size: int,
@@ -138,7 +138,7 @@ to construct string literals with escape sequences.
 - input: The actual text data to be lexed.
  */
 @(private="package")
-lexer_make :: proc(L: ^VM, builder: ^strings.Builder, name, input: string) -> Lexer {
+lexer_make :: proc(L: ^VM, builder: ^strings.Builder, name: ^Ostring, input: string) -> Lexer {
     x := Lexer{L=L, builder=builder, name=name, input=input, line=1}
     // Read first char so first `lexer_scan_token()` call is valid.
     read_rune(&x)
@@ -162,6 +162,9 @@ read_rune :: proc(x: ^Lexer) -> (r: rune) {
     // Update nonlocal state.
     x.curr_rune = r
     x.curr_size = n
+
+    // TODO(2026-01-04): Should we assume each character maps to 1 column?
+    x.col += 1
     return r
 }
 
@@ -169,9 +172,10 @@ read_rune :: proc(x: ^Lexer) -> (r: rune) {
 Reports a formatted error message and throws a syntax error to the parent VM.
  */
 error :: proc(x: ^Lexer, format: string, args: ..any) -> ! {
-    fmt.eprintf("%s:%i(%i): ", x.name, x.line, x.cursor, flush=false)
-    fmt.eprintfln(format, ..args)
-    vm_throw(x.L, .Syntax)
+    file := x.name
+    line := x.line
+    col  := cast(i32)x.cursor
+    vm_syntax_error(x.L, file, line, col, format, ..args)
 }
 
 peek_rune :: proc(x: ^Lexer) -> (r: rune) {
@@ -287,11 +291,16 @@ skip_comment_multi :: proc(x: ^Lexer, nest_open: int) {
                 return
             }
         case '\n':
-            x.line += 1
+            next_line(x)
         }
         advance_rune(x)
     }
     error(x, "Unterminated multiline comment")
+}
+
+next_line :: proc(x: ^Lexer) {
+    x.line += 1
+    x.col = 0
 }
 
 skip_comment :: proc(x: ^Lexer) {
@@ -309,7 +318,7 @@ skip_comment :: proc(x: ^Lexer) {
         r := peek_rune(x)
         advance_rune(x)
         if r == '\n' {
-            x.line += 1
+            next_line(x)
             break
         }
     }
@@ -327,7 +336,7 @@ skip_whitespace :: proc(x: ^Lexer) -> (r: rune) {
         r = peek_rune(x)
         switch r {
         case '\n':
-            x.line += 1;
+            next_line(x);
             fallthrough
         case ' ', '\t', '\r':
             break
@@ -370,7 +379,12 @@ make_token_type :: proc(x: ^Lexer, type: Token_Type) -> Token {
 }
 
 make_token_type_string :: proc(x: ^Lexer, type: Token_Type, s: string) -> Token {
-    return Token{type=type, lexeme=s, line=x.line}
+    t: Token
+    t.type = type
+    t.lexeme = s
+    t.line   = x.line
+    t.col    = x.col - cast(i32)len(s)
+    return t
 }
 
 @(private="package")
@@ -438,7 +452,7 @@ make_number_token :: proc(x: ^Lexer, leader: rune) -> Token {
         case 'x', 'X': base = 16
         case 'z', 'Z': base = 12
         }
-        
+
         // Is definitely a prefixed integer?
         if base > 0 {
             // Advance ONLY if we absolutely have a base prefix.

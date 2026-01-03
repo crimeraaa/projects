@@ -14,7 +14,7 @@ Intern :: struct {
 
 Ostring :: struct {
     using base: Object_Header,
-    
+
     // Keyword type, used to help speed up string comparisons in the lexer.
     // 0 (`nil`) indicates it is not a keyword, otherwise it should be in
     // the range `.And..=.While`.
@@ -128,7 +128,7 @@ ostringf_new :: proc(L: ^VM, fmt: string, args: ..any) -> ^Ostring {
 
         // Write any bits of the string before the format specifier.
         strings.write_string(b, fmt[:fmt_i])
-        
+
         arg   := args[arg_i]
         arg_i += 1
         spec_i := fmt
@@ -149,14 +149,14 @@ ostringf_new :: proc(L: ^VM, fmt: string, args: ..any) -> ^Ostring {
         case:
             unreachable("Unsupported format specifier '%c'", spec)
         }
-        
+
         // Move over the format specifier.
         fmt = fmt[fmt_i + 1:]
     }
     return ostring_new(L, strings.to_string(b^))
 }
 
-/* 
+/*
 Frees the contents of `s`. Since we are a flexible-array similar to Pascal
 strings, we allocated everything in one go and can thus free it in the same way.
 
@@ -200,7 +200,9 @@ intern_resize :: proc(L: ^VM, intern: ^Intern, new_cap: int) {
             // Chain this node in the NEW table, using the NEW main index.
             ostring.next     = new_table[index]
             new_table[index] = this_node
-            this_node        = next_node
+
+            // Next iteration.
+            this_node = next_node
         }
     }
 }

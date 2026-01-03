@@ -4,7 +4,7 @@ package lulu
 import "core:fmt"
 import "core:math"
 
-/* 
+/*
 **Parameters**
 - a, b: Must be pointers so that we can check if they are inside the VM
 stack or not. This information is useful when reporting errors from local or
@@ -15,31 +15,31 @@ debug_arith_error :: proc(L: ^VM, a, b: ^Value) -> ! {
     debug_type_error(L, "perform arithmetic on", culprit)
 }
 
-debug_type_error :: proc(L: ^VM, action: string, culprit: ^Value) -> ! {
-    frame := &L.frame    
-    chunk := frame.chunk
+/*
+Report a runtime error due to attempting `action` on `culprit`.
 
-    // Check if `culprit` is in the stack
-    reg := -1
-    for &v, i in frame.stack {
-        if &v == culprit {
-            reg = i
-            break
-        }
-    }
-    
+**Parameters**
+- action: `string` representing what operation was supposed to take place.
+- culprit: Pointer to register or constant. Pointing to a register is useful
+because it allows us to determine the variable type and name, if any.
+ */
+debug_type_error :: proc(L: ^VM, action: string, culprit: ^Value) -> ! {
+    frame := &L.frame
+    chunk := frame.chunk
     type_name := value_type_name(culprit^)
-    if reg != -1 {
-        local_name, ok := find_local_at(chunk, reg, frame.saved_pc)
-        if ok {
-            debug_runtime_error(L, "Attempt to %s local '%s' (a %s value)",
-                action, local_name, type_name)
+
+    // If `culprit` came from the stack, it may come from a variable of some
+    // kind. Try to find the variable name if at all possible.
+    if reg, ok := find_ptr_index(frame.stack, culprit); ok {
+        if scope, name, ok := find_variable(chunk, reg, frame.saved_pc); ok {
+            debug_runtime_error(L, "Attempt to %s %s '%s' (a %s value)",
+                action, scope, name, type_name)
         }
     }
     debug_runtime_error(L, "Attempt to %s a %s value", action, type_name)
 }
 
-/* 
+/*
 Throws a runtime error and reports an error message.
 
 **Assumptions**
@@ -48,7 +48,7 @@ Throws a runtime error and reports an error message.
 debug_runtime_error :: proc(L: ^VM, format := "", args: ..any) -> ! {
     frame := L.frame
     chunk := frame.chunk
-    file  := ostring_to_string(chunk.name)
+    file  := chunk_name(chunk)
     line  := chunk.lines[frame.saved_pc]
     fmt.eprintf("%s:%i: ", file, line)
     fmt.eprintfln(format, ..args)
@@ -57,15 +57,15 @@ debug_runtime_error :: proc(L: ^VM, format := "", args: ..any) -> ! {
 
 @(disabled=!ODIN_DEBUG)
 disassemble :: proc(chunk: ^Chunk) {
-    fmt.printfln("[DIASSEMBLY]\n.name: %q", ostring_to_string(chunk.name))
+    fmt.printfln("[DIASSEMBLY]\n.name: %q", chunk_name(chunk))
     fmt.printfln(".stack_used: %i\n", chunk.stack_used)
 
     fmt.println(".locals:")
     if len(chunk.locals) > 0 {
-        for v, i in chunk.locals {
-            name := ostring_to_string(v.name)
-            born := v.birth_pc
-            died := v.death_pc
+        for local, i in chunk.locals {
+            name := local_name(local)
+            born := local.birth_pc
+            died := local.death_pc
             fmt.printfln("[%i] .local '%s' ; .code[%i:%i]", i, name, born, died)
         }
         fmt.println()
@@ -92,21 +92,21 @@ disassemble :: proc(chunk: ^Chunk) {
 @(disabled=!ODIN_DEBUG)
 disassemble_at :: proc(chunk: ^Chunk, i: Instruction, pc: int, pad := 0) {
     get_reg :: proc(chunk: ^Chunk, reg: u16, pc: int, buf: []byte) -> string {
-        if name, ok := find_local_at(chunk, cast(int)reg, pc); ok {
+        if name, ok := find_local(chunk, cast(int)reg, pc); ok {
             return name
         } else {
             return fmt.bprintf(buf, "$r%i", reg)
         }
     }
-    
+
     get_const :: proc(chunk: ^Chunk, arg: Arg, buf: []byte) -> (repr: string) {
         return value_to_string(chunk.constants[arg.(Bx)], buf)
     }
-    
+
     get_global :: proc(chunk: ^Chunk, arg: Arg) -> string {
         return value_get_string(chunk.constants[arg.(Bx)])
     }
-    
+
     line := chunk.lines[pc]
     if pc > 0 && chunk.lines[pc - 1] == line {
         fmt.printf("[%0*i] |--- ", pad, pc)
@@ -118,7 +118,7 @@ disassemble_at :: proc(chunk: ^Chunk, i: Instruction, pc: int, pad := 0) {
     op := i.op
     // Register A is always used for something
     fmt.printf("%-12s % -4i ", op, i.a)
-    
+
     Arg :: union {
         BC, Bx, sBx
     }
@@ -126,7 +126,7 @@ disassemble_at :: proc(chunk: ^Chunk, i: Instruction, pc: int, pad := 0) {
     BC  :: struct {b, c: u16}
     Bx  :: u32
     sBx :: i32
-    
+
     arg: Arg
     info := OP_INFO[op]
     switch info.mode {
@@ -154,32 +154,24 @@ disassemble_at :: proc(chunk: ^Chunk, i: Instruction, pc: int, pad := 0) {
     }
 
     switch op {
-    case .Move:
-        rb := get_reg(chunk, arg.(BC).b, pc, b_buf[:])
-        fmt.print(rb)
-
-    case .Load_Nil:
-        for reg in i.a..<arg.(BC).b {
-            // First iteration vs. subsequent iterations.
-            form := "%s" if reg == i.a else ", %s"
-            fmt.printf(form, get_reg(chunk, reg, pc, a_buf[:]))
-        }
-        fmt.print(" := nil")
-
+    case .Move:       fmt.print(get_reg(chunk, arg.(BC).b, pc, b_buf[:]))
+    case .Load_Nil:   fmt.printf("$r[%i:%i] := nil", i.a, arg.(BC).b)
     case .Load_Bool:  fmt.print(cast(bool)arg.(BC).b)
     case .Load_Imm:   fmt.print(arg.(Bx))
-    case .Load_Const: fmt.print(get_const(chunk, arg, b_buf[:]))
+    case .Load_Const:
+        v := chunk.constants[arg.(Bx)]
+        s := value_to_string(v, b_buf[:])
+        fmt.printf("%q" if value_is_string(v) else "%s", s)
     case .Get_Global: fmt.printf("_G.%s", get_global(chunk, arg))
     case .Set_Global: fmt.printf("_G.%s := %s", get_global(chunk, arg), ra)
-
     case .Len..=.Unm:
         rb := get_reg(chunk, arg.(BC).b, pc, b_buf[:])
         fmt.printf("%s%s", op_string(op), rb)
-        
+
     case .Add_Imm..=.Sub_Imm:
         rb := get_reg(chunk, arg.(BC).b, pc, b_buf[:])
         fmt.printf("%s %s %i", rb, op_string(op), arg.(BC).c)
-    
+
     case .Add_Const..=.Pow_Const:
         rb := get_reg(chunk, arg.(BC).b, pc, b_buf[:])
         kc := value_to_string(chunk.constants[arg.(BC).c], c_buf[:])
@@ -190,48 +182,17 @@ disassemble_at :: proc(chunk: ^Chunk, i: Instruction, pc: int, pad := 0) {
         rc := get_reg(chunk, arg.(BC).c, pc, c_buf[:])
         fmt.printf("%s %s %s", rb, op_string(op), rc)
 
+    case .Concat: fmt.printf("concat $r[%i:%i]", i.b, i.c)
     case .Return:
-        fmt.print("return")
         start := i.a
         stop  := start + arg.(BC).b
-        for reg in start..<stop {
-            form := " %s" if reg == start else ", %s"
-            fmt.printf(form, get_reg(chunk, reg, pc, a_buf[:]))
+        if start == stop - 1 {
+            fmt.printf("return %s", get_reg(chunk, start, pc, b_buf[:]))
+        } else {
+            fmt.printf("return $r[%i:%i]", start, stop)
         }
     }
     fmt.println()
-}
-
-/* 
-Finds the name of the local which occupies `reg` during its lifetime
-somewhere along `pc`.
-
-**Parameters**
-- reg: 0-based index. E.g. the first local should have register 0.
-- pc: The instruction index to check against.
- */
-find_local_at :: proc(c: ^Chunk, reg, pc: int) -> (name: string, ok: bool) {
-    // Convert to 1-based index for quick comparison to zero.
-    counter := reg + 1
-    for local in c.locals {
-        // This local, and all locals succeeding it, are all beyond the lifetime
-        // of `pc`?
-        if local.birth_pc > pc {
-            break
-        }
-
-        // Local is alive at some point in `pc`?
-        if pc < local.death_pc {
-            // Correct scope, keep going
-            counter -= 1
-            
-            // Found the exact local, in scope, we are looking for?
-            if counter == 0 {
-                return ostring_to_string(local.name), true
-            }
-        }
-    }
-    return {}, false
 }
 
 @(private="file")
@@ -259,5 +220,73 @@ op_string :: proc(op: Opcode) -> string {
     // case .Geq:  return ">="
     }
     unreachable("Invalid opcode: %v", op)
+}
+
+/*
+Finds the name of the variable which occupies `reg` during its lifetime
+somewhere during `pc`.
+
+**Parameters**
+- reg: 0-based index of the register where the desired variable was in.
+E.g. the first local variable should always be in register 0.
+- pc: The instruction index to check against.
+
+**Analogous to**
+- `ldebug.c:getobjname(lua_State *L, CallInfo *ci, int stackpos, const char **name)`
+in Lua 5.1.5.
+ */
+find_variable :: proc(chunk: ^Chunk, reg, pc: int) -> (scope, name: string, ok: bool) {
+    name, ok = find_local(chunk, reg, pc)
+    // Found a local?
+    if ok {
+        scope = "local"
+    } // Probably global, table field or upvalue?
+    else {
+        // Find the instruction which last mutated `reg`.
+        i := symbolic_execute(chunk, reg, pc)
+        #partial switch i.op {
+        case .Move:
+            // R[A] wasn't the culprit, so maybe R[B] was?
+            if i.a > i.b {
+                return find_variable(chunk, cast(int)i.b, pc)
+            }
+
+        case .Get_Global:
+            scope = "global"
+            name  = value_get_string(chunk.constants[getarg_bx(i)])
+            ok    = true
+        }
+    }
+    return scope, name, ok
+}
+
+/*
+'Symbolic execution' allows us to find the last time `reg` was modified before
+the error at `pc` was thrown. This, in turn, allows us to determine if the
+error occured on a global variable, table field, upvalue, or not a variable.
+ */
+@(private="file")
+symbolic_execute :: proc(chunk: ^Chunk, reg, last_pc: int) -> (i: Instruction) {
+    // Stores index of the last instruction that changed `reg`, initially
+    // pointing to the final, neutral return.
+    prev_pc := len(chunk.code) - 1
+
+    NEUTRAL_RETURN := Instruction{op=.Return, a=0, b=0, c=0}
+    assert(chunk.code[prev_pc] == NEUTRAL_RETURN, "Expected %v but got %v",
+        NEUTRAL_RETURN, chunk.code[prev_pc])
+
+    // TODO(2026-01-03): Verify bytecode correctness? Execute jumps?
+    for pc in 0..<last_pc {
+        i = chunk.code[pc]
+        op := i.op
+
+        // This instruction mutates R[A] and `reg` is the destination?
+        if OP_INFO[op].a {
+            if cast(int)i.a == reg {
+                prev_pc = pc
+            }
+        }
+    }
+    return chunk.code[prev_pc]
 }
 

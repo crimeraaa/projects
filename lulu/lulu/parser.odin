@@ -24,6 +24,7 @@ Precedence :: enum u8 {
     None,
     Equality,   // == ~=
     Comparison, // < <= > >=
+    Concat,     // ..
     Terminal,   // + -
     Factor,     // * / %
     Exponent,   // ^
@@ -45,7 +46,7 @@ Rule :: struct {
 }
 
 @(private="package")
-parser_make :: proc(L: ^VM, builder: ^strings.Builder, name, input: string) -> Parser {
+parser_make :: proc(L: ^VM, builder: ^strings.Builder, name: ^Ostring, input: string) -> Parser {
     p := Parser{L=L, lexer=lexer_make(L, builder, name, input)}
     advance_token(&p)
     return p
@@ -55,6 +56,8 @@ parser_make :: proc(L: ^VM, builder: ^strings.Builder, name, input: string) -> P
 program :: proc(p: ^Parser, c: ^Compiler) {
     for !check_token(p, .EOF) {
         statement(p, c)
+        // Ensure all temporary registers were popped.
+        assert(c.free_reg == c.active_count)
     }
     expect_token(p, .EOF)
     compiler_pop_locals(c, c.active_count)
@@ -130,9 +133,9 @@ error_lookahead :: proc(p: ^Parser, msg: string) -> ! {
 error_at :: proc(p: ^Parser, t: Token, msg: string) -> ! {
     file := p.lexer.name
     line := t.line
-    loc  := t.lexeme if len(t.lexeme) > 0 else token_string(t.type)
-    fmt.eprintfln("%s:%i: %s near '%s'", file, line, msg, loc)
-    vm_throw(p.L, .Syntax)
+    col  := t.col
+    here := t.lexeme if len(t.lexeme) > 0 else token_string(t.type)
+    vm_syntax_error(p.L, file, line, col, "%s near '%s'", msg, here)
 }
 
 statement :: proc(p: ^Parser, c: ^Compiler)  {
@@ -140,7 +143,7 @@ statement :: proc(p: ^Parser, c: ^Compiler)  {
     case .Local:
         advance_token(p)
         local_statement(p, c)
-        
+
     case .Identifier:
         advance_token(p)
         var := resolve_variable(p, c)
@@ -153,24 +156,13 @@ statement :: proc(p: ^Parser, c: ^Compiler)  {
         }
     case .Return:
         advance_token(p)
-        last, count := argument_list(p, c)
-        line        := p.consumed.line
-        if count == 1 {
-            last_reg := compiler_push_expr_any(c, &last, line)
-            compiler_code_return(c, last_reg, count, line)
-            compiler_pop_expr(c, &last)
-        } else {
-            last_reg  := compiler_push_expr_next(c, &last, line)
-            first_reg := last_reg - count + 1
-            compiler_code_return(c, first_reg, count, line)
-            compiler_pop_reg(c, first_reg, count)
-        }
+        return_statement(p, c)
     }
     match_token(p, .Semicolon)
 }
 
 
-/* 
+/*
 **Assumptions**
 - The currently consumed token is an identifier, which is potentially the
 start of an index expression.
@@ -198,17 +190,17 @@ local_statement :: proc(p: ^Parser, c: ^Compiler) {
             break
         }
     }
-    
+
     rhs_count := u16(0)
     if match_token(p, .Assign) {
         _, rhs_count = expression_list(p, c)
     }
-    
+
     adjust_assign(c, lhs_count, rhs_count, p.consumed.line)
     compiler_define_locals(c, lhs_count)
 }
 
-adjust_assign :: proc(c: ^Compiler, lhs_count, rhs_count: u16, line: int) {
+adjust_assign :: proc(c: ^Compiler, lhs_count, rhs_count: u16, line: i32) {
     // Nothing to do?
     if lhs_count == rhs_count {
         return
@@ -246,10 +238,10 @@ assignment :: proc(p: ^Parser, c: ^Compiler, tail: ^Assign_List, lhs_count: u16)
         return
     }
     expect_token(p, .Assign)
-    
+
     first_reg, rhs_count := expression_list(p, c)
     line := p.consumed.line
-    adjust_assign(c, lhs_count, rhs_count, line) 
+    adjust_assign(c, lhs_count, rhs_count, line)
     src_reg  := c.free_reg - 1
     for node := tail; node != nil; node = node.prev {
         var := node.var
@@ -265,7 +257,22 @@ assignment :: proc(p: ^Parser, c: ^Compiler, tail: ^Assign_List, lhs_count: u16)
     c.free_reg = first_reg
 }
 
-/* 
+return_statement :: proc(p: ^Parser, c: ^Compiler) {
+    last, count := argument_list(p, c)
+    line        := p.consumed.line
+    if count == 1 {
+        last_reg := compiler_push_expr_any(c, &last, line)
+        compiler_code_return(c, last_reg, count, line)
+        compiler_pop_expr(c, &last)
+    } else {
+        last_reg  := compiler_push_expr_next(c, &last, line)
+        first_reg := last_reg - count + 1
+        compiler_code_return(c, first_reg, count, line)
+        compiler_pop_reg(c, first_reg, count)
+    }
+}
+
+/*
 Parse a comma-separated list of expressions. All expressions are pushed to the
 next free register.
 
@@ -286,7 +293,7 @@ expression_list :: proc(p: ^Parser, c: ^Compiler) -> (first_reg, count: u16) {
     return first_reg, count
 }
 
-/* 
+/*
 Parse a comma-separated list of expressions. All expressions *except* for the
 last one are pushed to the next free register. The last (and potentially only)
 expression is not pushed in case it can be optimized away e.g.
@@ -378,6 +385,8 @@ infix :: proc(p: ^Parser, c: ^Compiler, left: ^Expr, prec: Precedence = nil) {
         #partial switch rule.op {
         case .Add..=.Pow:
             arith(p, c, rule.op, left, rule.right)
+        case .Concat:
+            concat(p, c, left, rule.right)
         case:
             unreachable()
         }
@@ -388,12 +397,13 @@ get_rule  :: proc(type: Token_Type) -> Rule {
     #partial switch type {
     // right = left + 0: Enforce right-associativity for exponentiation.
     // right = left + 1: Enforce left-associativity for all other operators.
-    case .Plus:     return Rule{.Add, .Terminal, .Factor}
-    case .Minus:    return Rule{.Sub, .Terminal, .Factor}
-    case .Asterisk: return Rule{.Mul, .Factor,   .Exponent}
-    case .Slash:    return Rule{.Div, .Factor,   .Exponent}
-    case .Percent:  return Rule{.Mod, .Factor,   .Exponent}
-    case .Caret:    return Rule{.Pow, .Exponent, .Exponent}
+    case .Plus:         return Rule{.Add,    .Terminal, .Factor}
+    case .Minus:        return Rule{.Sub,    .Terminal, .Factor}
+    case .Asterisk:     return Rule{.Mul,    .Factor,   .Exponent}
+    case .Slash:        return Rule{.Div,    .Factor,   .Exponent}
+    case .Percent:      return Rule{.Mod,    .Factor,   .Exponent}
+    case .Caret:        return Rule{.Pow,    .Exponent, .Exponent}
+    case .Ellipsis2:    return Rule{.Concat, .Concat,   .Concat}
     }
     return Rule{}
 }
@@ -412,4 +422,10 @@ arith :: proc(p: ^Parser, c: ^Compiler, op: Opcode, left: ^Expr, prec: Precedenc
     }
     right := expression(p, c, prec)
     compiler_code_arith(c, op, left, &right, p.consumed.line)
+}
+
+concat :: proc(p: ^Parser, c: ^Compiler, left: ^Expr, prec: Precedence) {
+    compiler_push_expr_next(c, left, p.consumed.line)
+    right := expression(p, c, prec)
+    compiler_code_concat(c, left, &right, p.consumed.line)
 }

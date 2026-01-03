@@ -22,25 +22,33 @@ Chunk :: struct {
     code: []Instruction,
 
     // Maps each index in `code` to its corresponding line.
-    lines: []int,
+    lines: []i32,
 }
 
-/* 
+/*
 Local variables have predetermined lifetimes. That is, they go into scope
 and go out of scope at known points in the program. The lifetime is given
 by the half-open range (in terms of program counter indexes)
 `[birth_pc, death_pc)`.
  */
 Local :: struct {
-    name: ^Ostring, 
-    
+    name: ^Ostring,
+
     // Inclusive start index of the instruction in the parent chunk where this
     // local is first valid (i.e. it first comes into scope).
     birth_pc: int,
-    
+
     // Exclusive stop index of the instruction in the parent chunk where this
     // local is last valid (i.e. it finally goes out of scope).
     death_pc: int,
+}
+
+local_name :: proc(var: Local) -> string {
+    return ostring_to_string(var.name)
+}
+
+chunk_name :: proc(c: ^Chunk) -> string {
+    return ostring_to_string(c.name)
 }
 
 /*
@@ -62,7 +70,7 @@ chunk_new :: proc(L: ^VM, name: ^Ostring) -> ^Chunk {
     return c
 }
 
-/* 
+/*
 'Fixes' the chunk `c` by shrinking its dynamic arrays to the exact size so that
 we can query the last program counter by just getting the length of the code
 array for example.
@@ -96,10 +104,10 @@ Adds `i` to the end of the code array.
 - We are in a protected call, so failures to append code can be caught
 and handled.
  */
-chunk_push_code :: proc(L: ^VM, c: ^Chunk, pc: int, i: Instruction, line: int) {
+chunk_push_code :: proc(L: ^VM, c: ^Chunk, pc: int, i: Instruction, line: i32) {
     slice_insert(L, &c.code,  pc, i)
     slice_insert(L, &c.lines, pc, line)
-    
+
 }
 
 /*
@@ -115,7 +123,54 @@ chunk_push_constant :: proc(L: ^VM, c: ^Chunk, v: Value) -> (index: u32) {
     index   = cast(u32)len(c.constants)
     _, err := append(&c.constants, v)
     if err != nil {
-        vm_error_memory(L)
+        vm_error_memory(L, "Failed to append constant value")
     }
     return index
+}
+
+/*
+Appends the local variable information `local` to the chunk's locals array.
+ */
+chunk_push_local :: proc(L: ^VM, c: ^Chunk, local: Local) -> (index: u16) {
+    index = cast(u16)len(c.locals)
+    _, err := append(&c.locals, local)
+    if err != nil {
+        vm_error_memory(L, "Failed to append local '%s'", local_name(local))
+    }
+    return index
+}
+
+/*
+Finds the name of the local which occupies `reg` during its lifetime
+somewhere along `pc`.
+
+**Parameters**
+- reg: 0-based index. E.g. the first local should have register 0.
+- pc: The instruction index to check against.
+
+**Analogous to**
+- `luaF_getlocalname(const Proto *f, int local_number, int pc)` in Lua 5.1.5.
+ */
+find_local :: proc(chunk: ^Chunk, reg, pc: int) -> (name: string, ok: bool) {
+    // Convert to 1-based index for quick comparison to zero.
+    counter := reg + 1
+    for local in chunk.locals {
+        // This local, and all locals succeeding it, are all beyond the lifetime
+        // of `pc`?
+        if local.birth_pc > pc {
+            break
+        }
+
+        // Local is alive at some point in `pc`?
+        if pc < local.death_pc {
+            // Correct scope, keep going
+            counter -= 1
+
+            // Found the exact local, in scope, we are looking for?
+            if counter == 0 {
+                return local_name(local), true
+            }
+        }
+    }
+    return {}, false
 }

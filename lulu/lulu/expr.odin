@@ -6,7 +6,7 @@ Expr :: struct {
     using data: struct #raw_union {
         // Index of instruction in the current chunk's code array.
         pc: int,
-        
+
         // Register number.
         reg: u16,
 
@@ -29,11 +29,11 @@ Expr_Type :: enum {
     // Expression is the index of a constant value as found in the current
     // chunk's constants array? See `Expr.index`.
     Constant,
-    
+
     // Expression is the name of a global variable. The index of the interned
     // string for the name can be found in `Expr.index`.
     Global,
-    
+
     // Expression is the name of a local variable. The register of the local
     // can be found in `Expr.reg`.
     Local,

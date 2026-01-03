@@ -4,7 +4,10 @@ package lulu
 @(private="package")
 Table :: struct {
     using base: Object_Header,
+
+    // List of all key-value pairs ('entries').
     entries: []Entry,
+
     // Number of active entries in `entries`.
     count: int,
 }
@@ -23,9 +26,10 @@ Key :: struct #raw_union {
     h: struct {
         data: Value_Data,
         type: Value_Type,
-        
+
         // Saving the result of `hash_value()` is useful because it helps us
-        // do quick comparisons for early-outs.
+        // do quick comparisons for early-outs. It also allows to avoid
+        // redundant work in `table_resize()`.
         hash: u32,
     }
 }
@@ -40,7 +44,7 @@ table_new :: proc(L: ^VM, cap: int) -> (t: ^Table) {
     return t
 }
 
-/* 
+/*
 Frees the memory allocated for the table struct itself and its entries array.
 Each occupied entry, however, is not deallocated because they may be
 referenced in other parts of the program.
@@ -53,7 +57,7 @@ table_free :: proc(t: ^Table) {
     free(t)
 }
 
-/* 
+/*
 Queries the table `t` for key `k`. The value at the corresponding key is
 returned.
 
@@ -67,14 +71,14 @@ table_get :: proc(t: ^Table, k: Value) -> (v: Value, ok: bool) #optional_ok {
     if len(t.entries) == 0 {
         return value_make(), false
     }
-    
+
     hash := hash_value(k)
     entry: ^Entry
     entry, ok = find_entry(t.entries, k, hash)
     return entry.value, ok
 }
 
-/* 
+/*
 Queries the table `t` for key `k`. May resize the table.
 
 **Returns**
@@ -118,7 +122,7 @@ table_resize :: proc(L: ^VM, t: ^Table, cap: int) {
             continue
         }
         // Non-nil keys must be rehashed in the new table.
-        new_entry := find_entry(new_entries, k, hash_key(k))
+        new_entry := find_entry(new_entries, k, k.h.hash)
         new_entry^ = old_entry
         new_count += 1
     }
@@ -128,7 +132,7 @@ table_resize :: proc(L: ^VM, t: ^Table, cap: int) {
     t.entries = new_entries
 }
 
-/* 
+/*
 **Assumptions**
 - There is at least 1 completely `nil` entry in `entries`.
 
@@ -142,7 +146,7 @@ find_entry :: proc(entries: []Entry, k: Value, hash: u32) -> (entry: ^Entry, ok:
     cap := cast(uint)len(entries)
     for i := mod_pow2(cast(uint)hash, cap); /* empty */; i = mod_pow2(i + 1, cap) {
         entry = &entries[i]
-        
+
         // Entry is either partially or completely empty?
         if value_is_nil(entry.key) {
             // Entry is completely empty, so it was never occupied?
@@ -159,15 +163,11 @@ find_entry :: proc(entries: []Entry, k: Value, hash: u32) -> (entry: ^Entry, ok:
             if tomb == nil {
                 tomb = entry
             }
-        } else if hash == hash_key(entry.key) && value_eq(k, entry.key) {
+        } else if hash == entry.key.h.hash && value_eq(k, entry.key) {
             return entry, true
         }
     }
     unreachable("How did you even get here?")
-}
-
-hash_key :: proc(k: Key) -> u32 {
-    return k.h.hash
 }
 
 hash_value :: proc(v: Value) -> u32 {

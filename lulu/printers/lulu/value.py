@@ -43,7 +43,7 @@ class Object_Printer:
             return "(null)"
         t = str(v["base"]["type"])
         if t == "string":
-            return v["ostring"].address
+            return v["string"].address
 
         p = v.cast(base.VOID_POINTER)
         return f"{t.lower()}: {p}"
@@ -57,24 +57,12 @@ def object_get_data(node: gdb.Value):
 
     # Don't call the type() method; may crash
     t = str(node["base"]["type"]).lower()
-    if t == "string":
-        return node["ostring"].address
-    else:
-        s = object_get_type_name(node)
-        # p.type, if p is a pointer, returns None, annoyingly enough
-        p = node[s].address
-        if t == "function":
-            kind = 'c' if p["c"]["is_c"] else "lua"
-            p = p[kind].address
-        return p
-
-
-def object_get_type_name(node: gdb.Value):
-    if not node:
-        return "None"
-    t = str(node["base"]["type"])
-    return t.lower()
-
+    # p.type, if p is a pointer, returns None, annoyingly enough
+    p = node[t].address
+    if t == "function":
+        kind = 'c' if p["c"]["is_c"] else "lua"
+        p = p[kind].address
+    return p
 
 def object_iterator(node: gdb.Value, field = "next"):
     i = 0
@@ -140,7 +128,7 @@ class Value_Printer:
         "nil":      lambda _: "nil",
         "boolean":  lambda v: str(bool(v["boolean"])),
         "number":   lambda v: str(float(v["number"])),
-        "string":   lambda v: str(v["object"]["ostring"].address),
+        "string":   lambda v: str(v["object"]["string"].address),
         "integer":  lambda v: str(int(v["integer"])),
     }
 

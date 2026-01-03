@@ -67,3 +67,17 @@ Frees the memory used by the slice `s`.
 slice_delete :: proc(s: $S/[]$T) {
     delete(s, context.allocator)
 }
+
+/*
+Find the index of `ptr` in the slice `s`, if it's even in the array to begin
+with.
+ */
+find_ptr_index :: proc(s: $S/[]$T, ptr: ^T) -> (index: int, ok: bool) {
+    addr  := cast(uintptr)ptr
+    begin := cast(uintptr)raw_data(s)
+    end   := begin + cast(uintptr)(len(s) * size_of(T))
+    if begin <= addr && addr < end {
+        return cast(int)(addr - begin) / size_of(T), true
+    }
+    return 0, false
+}

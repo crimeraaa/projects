@@ -10,7 +10,7 @@ _ :: mem
 main :: proc() {
     when ODIN_DEBUG {
         ta: mem.Tracking_Allocator
-        mem.tracking_allocator_init(&ta, context.allocator) 
+        mem.tracking_allocator_init(&ta, context.allocator)
         context.allocator = mem.tracking_allocator(&ta)
         defer {
             if len(ta.bad_free_array) > 0 {
@@ -23,7 +23,7 @@ main :: proc() {
                     fmt.eprintfln("[%i] %p @ %s:%i (in '%s')", i, info, file, line, func)
                 }
             }
-            
+
             if len(ta.allocation_map) > 0 {
                 fmt.eprintln("memory leaks: ")
                 for ptr, info in ta.allocation_map {
@@ -88,14 +88,13 @@ run_input :: proc(L: ^VM, name, input: string) {
     }
 
     parse :: proc(L: ^VM, ud: rawptr) {
-        data     := (cast(^Data)ud)^
-        chunk    := chunk_new(L, ostring_new(L, data.name))
-        parser   := parser_make(L, data.builder, data.name, data.input)
-        compiler := compiler_make(L, &parser, chunk)
-        program(&parser, &compiler)
+        data  := (cast(^Data)ud)^
+        name  := ostring_new(L, data.name)
+        chunk := chunk_new(L, name)
+        p := parser_make(L, data.builder, name, data.input)
+        c := compiler_make(L, &p, chunk)
+        program(&p, &c)
         vm_execute(L, chunk)
     }
-
-    data := Data{&b, name, input}
-    vm_run_protected(L, parse, &data)
+    vm_run_protected(L, parse, &Data{&b, name, input})
 }

@@ -28,7 +28,7 @@ class TokenPrinter:
         union lulu::[lexer.odin]::Token_Data data;
         int line;
     };
-    
+
     enum lulu::[lexer.odin]::Token_Type : u8 { ... };
     union lulu::[lexer.odin]::Token_Data {
         f64 number;

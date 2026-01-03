@@ -44,6 +44,8 @@ Pow,        //  A B C   | R[A] := R[B] ^ R[C]
 // Leq,        //  A B C
 // Geq,        //  A B C
 
+Concat,     //  A B C   | R[A] := concat R[i] for B <= i < C
+
 // Control Flow
 Return,     //  A B     | return R[A:A+B]
 }
@@ -119,10 +121,10 @@ OP_INFO := [Opcode]Op_Info{
     .Load_Const = {mode=.ABx, a=true,  b=.Const},
     .Get_Global = {mode=.ABx, a=true,  b=.Const},
     .Set_Global = {mode=.ABx, a=false, b=.Const},
-    
+
     // Unary
     .Len..=.Unm = {mode=.ABC, a=true, b=.Reg},
-    
+
     // Arithmetic (register-immediate)
     .Add_Imm..=.Sub_Imm = {mode=.ABC, a=true, b=.Reg, c=.Imm},
 
@@ -131,7 +133,8 @@ OP_INFO := [Opcode]Op_Info{
 
     // Arithmetic (register-register)
     .Add..=.Pow = {mode=.ABC, a=true, b=.Reg, c=.Reg},
-    
+    .Concat     = {mode=.ABC, a=true, b=.Reg, c=.Reg},
+
     // Control flow
     .Return     = {mode=.ABC, a=false, b=.Imm},
 }

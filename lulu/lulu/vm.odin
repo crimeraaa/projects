@@ -4,16 +4,15 @@ package lulu
 import "base:intrinsics"
 import "core:fmt"
 import "core:c/libc"
-import "core:slice"
 import "core:strings"
 
 VM :: struct {
     // Shared state across all VM instances.
     global_state: ^Global_State,
-    
+
     // Hash table of all defined global variables.
     globals_table: ^Table,
-    
+
     // Used for string concatenation and internal string formatting.
     builder: strings.Builder,
 
@@ -90,14 +89,14 @@ vm_init :: proc(L: ^VM) -> (ok: bool) {
             s.kw_type = kw_type
             s.mark   += {.Fixed}
         }
-        
+
         // Ensure that the globals table is of some non-zero minimum size.
         t := table_new(L, 32)
         L.globals_table = t
         L.builder       = strings.builder_make(32, context.allocator)
     }
 
-    err := vm_run_protected(L, init)
+    err := vm_run_protected(L, init, nil)
     return err == nil
 }
 
@@ -119,7 +118,7 @@ we are able to catch it safely.
 **Guarantees**
 - `p` is only ever called with the `ud` it was passed with.
  */
-vm_run_protected :: proc(L: ^VM, p: proc(^VM, rawptr), ud: rawptr = nil) -> Error {
+vm_run_protected :: proc(L: ^VM, p: proc(^VM, rawptr), ud: rawptr) -> Error {
     // Push new error handler.
     h: Error_Handler
     h.prev    = L.handler
@@ -138,13 +137,35 @@ vm_throw :: proc(L: ^VM, code: Error) -> ! {
     h := L.handler
     // Unprotected call?
     if h == nil {
-        panic("lulu panic: unprotected call")
+        panic("[PANIC] lulu panic: unprotected call")
     }
     intrinsics.volatile_store(&h.code, code)
     libc.longjmp(&h.buf, 1)
 }
 
-vm_error_memory :: proc(L: ^VM) -> ! {
+/*
+Throws a runtime error and reports a message in the form `file:line:col: message`.
+
+**Links**
+- https://www.gnu.org/prep/standards/standards.html#Errors
+ */
+vm_syntax_error :: proc(L: ^VM, file: ^Ostring, line, col: i32, format: string, args: ..any) -> ! {
+    file := ostring_to_string(file)
+    fmt.eprintf("[ERROR] %s:%i:%i: ", file, line, col, flush=false)
+    fmt.eprintfln(format, ..args)
+    vm_throw(L, .Syntax)
+}
+
+vm_error_memory :: proc(L: ^VM, format := "", args: ..any, loc := #caller_location) -> ! {
+    file := loc.file_path
+    line := loc.line
+    col  := loc.column
+    fmt.eprintf("[FATAL] %s:%i:%i ", file, line, col, flush=false)
+    if format != "" {
+        fmt.eprintfln(format, ..args)
+    } else {
+        fmt.eprintln("Out of memry.")
+    }
     vm_throw(L, .Memory)
 }
 
@@ -167,8 +188,8 @@ vm_error_memory :: proc(L: ^VM) -> ! {
 
 vm_execute :: proc(L: ^VM, chunk: ^Chunk) {
     Op :: #type proc "contextless" (a, b: f64) -> f64
-    
-    /* 
+
+    /*
     Works only for register-immediate encodings.
      */
     arith_imm :: proc(L: ^VM, pc: int, ra: ^Value, op: Op, rb: ^Value, imm: u16) {
@@ -204,9 +225,10 @@ vm_execute :: proc(L: ^VM, chunk: ^Chunk) {
         buf: [VALUE_TO_STRING_BUFFER_SIZE]byte
         for value, reg in R {
             repr := value_to_string(value, buf[:])
-            fmt.printf("\tr%i := %s", reg, repr)
-            if name, ok := find_local_at(chunk, reg, pc); ok {
-                fmt.printfln("; local %s", name)
+            fmt.printf("\tr%i := ", reg)
+            fmt.printf("%q" if value_is_string(value) else "%s", repr)
+            if name, ok := find_local(chunk, reg, pc); ok {
+                fmt.printfln(" ; local %s", name)
             } else {
                 fmt.println()
             }
@@ -218,13 +240,13 @@ vm_execute :: proc(L: ^VM, chunk: ^Chunk) {
     code   := raw_data(chunk.code)
     ip     := code
     frame  := &L.frame
-    
+
     // Table of defined global variables.
     _G := L.globals_table
 
     // Registers array.
     R := frame.stack
-    
+
     // Constants array.
     K := frame.constants
 
@@ -239,21 +261,23 @@ vm_execute :: proc(L: ^VM, chunk: ^Chunk) {
         pc := intrinsics.ptr_sub(ip, code)
         ip = &ip[1] // ip++
         print_stack(chunk, i, pc, R)
-        
-        ra := &R[i.a]
-        switch i.op {
+
+        a  := i.a
+        ra := &R[a]
+        op := i.op
+        switch op {
         case .Move:
             ra^ = R[i.b]
 
         case .Load_Nil:
-            for &v in slice.from_ptr(ra, cast(int)(i.b - i.a)) {
+            for &v in R[a:i.b] {
                 v = value_make()
             }
 
         case .Load_Bool:
             b  := cast(bool)i.b
             ra^ = value_make(b)
-            
+
         case .Load_Imm:
             imm := cast(f64)getarg_bx(i)
             ra^  = value_make(imm)
@@ -298,11 +322,11 @@ vm_execute :: proc(L: ^VM, chunk: ^Chunk) {
                 n  := number_unm(value_get_number(rb^))
                 ra^ = value_make(n)
             }
-            
+
         // Arithmetic (register-immediate)
         case .Add_Imm: arith_imm(L, pc, ra, number_add, &R[i.b], i.c)
         case .Sub_Imm: arith_imm(L, pc, ra, number_sub, &R[i.b], i.c)
-            
+
         // Arithmetic (register-constant)
         case .Add_Const: arith(L, pc, ra, number_add, &R[i.b], &K[i.c])
         case .Sub_Const: arith(L, pc, ra, number_sub, &R[i.b], &K[i.c])
@@ -323,11 +347,15 @@ vm_execute :: proc(L: ^VM, chunk: ^Chunk) {
         // case .Eq..=.Geq:
         //     unreachable("Unimplemented: %v", i.op)
 
+        case .Concat: vm_concat(L, ra, R[i.b:i.c])
+
         // Control flow
         case .Return:
-            fmt.printf("%q returned: ", ostring_to_string(chunk.name))
+            fmt.printf("%q returned: ", chunk_name(chunk))
             buf: [VALUE_TO_STRING_BUFFER_SIZE]byte
-            for v, i in slice.from_ptr(ra, cast(int)i.b) {
+
+            count := i.b
+            for v, i in R[a:a + count] { // slice.from_ptr(ra, cast(int)i.b) {
                 if i > 0 {
                     fmt.print(", ")
                 }
@@ -336,6 +364,23 @@ vm_execute :: proc(L: ^VM, chunk: ^Chunk) {
             }
             fmt.println()
             return
+        case:
+            unreachable("Invalid opcode %v", op)
         }
     }
+}
+
+vm_concat :: proc(L: ^VM, ra: ^Value, args: []Value) {
+    b := &L.builder
+    strings.builder_reset(b)
+    for v in args {
+        s := value_get_string(v)
+        n := strings.write_string(b, s)
+        if n != len(s) {
+            vm_error_memory(L)
+        }
+    }
+    text := strings.to_string(b^)
+    s    := ostring_new(L, text)
+    ra^   = value_make(s)
 }
