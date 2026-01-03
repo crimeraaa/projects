@@ -171,7 +171,7 @@ vm_execute :: proc(L: ^VM, chunk: ^Chunk) {
     /* 
     Works only for register-immediate encodings.
      */
-    arith_imm :: #force_inline proc(L: ^VM, pc: int, ra: ^Value, op: Op, rb: ^Value, imm: u16) {
+    arith_imm :: proc(L: ^VM, pc: int, ra: ^Value, op: Op, rb: ^Value, imm: u16) {
         if left, ok := value_to_number(rb^); ok {
             right := cast(f64)imm
             ra^    = value_make(op(left, right))
@@ -184,7 +184,7 @@ vm_execute :: proc(L: ^VM, chunk: ^Chunk) {
     /*
     Works for both register-register and register-constant encodings.
     */
-    arith :: #force_inline proc(L: ^VM, pc: int, ra: ^Value, op: Op, rb, rc: ^Value) {
+    arith :: proc(L: ^VM, pc: int, ra: ^Value, op: Op, rb, rc: ^Value) {
         try: {
             left   := value_to_number(rb^) or_break try
             right  := value_to_number(rc^) or_break try

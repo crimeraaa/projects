@@ -49,16 +49,23 @@ Return,     //  A B     | return R[A:A+B]
 }
 
 /*
-Format:
+Instruction format inspired by Lua 5.4 and 5.5:
 ```
 tens    | 3 3 2 2 2 2 2 2 2 2 2 2 1 1 1 1 1 1 1 1 1 1 0 0 0 0 0 0 0 0 0 0 |
 ones    | 1 0 9 8 7 6 5 4 3 2 1 0 9 8 7 6 5 4 3 2 1 0 9 8 7 6 5 4 3 2 1 0 |
-A B C   |        B(9)      |       C(9)      |      A(8)     |    Op(6)   |
+A B C   |       B(8)     |        C(10)      |      A(8)     |    Op(6)   |
 A Bx    |                Bx(18)              |      A(8)     |    Op(6)   |
 A sBx   |               sBx(18)              |      A(8)     |    Op(6)   |
 ```
 
 's' stands for "signed", 'x' stands for "extended".
+
+Unlike Lua 5.1, we do not, for the most part, make use of RK registers in
+order to simplify instruction decoding. So we follow Lua 5.4 and 5.5 in
+having dedicated instructions for woking with various operand combinations.
+
+Operand B will never function as an RK.
+Operand C will only function as RK in table manipulation instructions.
  */
 Instruction :: bit_field u32 {
     op: Opcode | SIZE_OP,
@@ -66,6 +73,24 @@ Instruction :: bit_field u32 {
     c:  u16    | SIZE_C,
     b:  u16    | SIZE_B,
 }
+
+SIZE_OP  :: 6
+SIZE_A   :: 8
+SIZE_C   :: 10
+SIZE_B   :: 8
+SIZE_Bx  :: SIZE_B + SIZE_C
+
+MAX_A   :: (1 << SIZE_A)  - 1
+MAX_B   :: (1 << SIZE_B)  - 1
+MAX_C   :: (1 << SIZE_C)  - 1
+MAX_Bx  :: (1 << SIZE_Bx) - 1
+MAX_sBx :: MAX_Bx >> 1
+MIN_sBx :: 0 - MAX_Bx
+
+MAX_REG     :: MAX_A
+MAX_K_C     :: MAX_C
+MAX_IMM_C   :: MAX_C
+MAX_IMM_Bx  :: MAX_Bx
 
 Op_Info :: bit_field u8 {
     mode: Op_Format | 2, // What operands are we using?
@@ -85,24 +110,6 @@ Op_Mode :: enum {
     Imm,    // (I): Operand is an immediate positive integer value?
 }
 
-SIZE_OP  :: 6
-SIZE_A   :: 8
-SIZE_B   :: 9
-SIZE_C   :: 9
-SIZE_Bx  :: SIZE_B + SIZE_C
-
-MAX_A   :: (1 << SIZE_A)  - 1
-MAX_B   :: (1 << SIZE_B)  - 1
-MAX_C   :: (1 << SIZE_C)  - 1
-MAX_Bx  :: (1 << SIZE_Bx) - 1
-MAX_sBx :: MAX_Bx >> 1
-MIN_sBx :: 0 - MAX_Bx
-
-#assert(MAX_B == MAX_C)
-MAX_REG     :: MAX_A
-MAX_K_C     :: MAX_C
-MAX_IMM_C   :: MAX_C
-MAX_IMM_Bx  :: MAX_Bx
 
 OP_INFO := [Opcode]Op_Info{
     .Move       = {mode=.ABC, a=true,  b=.Reg},
