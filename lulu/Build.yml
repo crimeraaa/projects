@@ -4,7 +4,11 @@ version: '3'
 
 vars:
   OUT: ./bin/lulu
-  FLAGS: -debug -sanitize=address -out:"{{.OUT}}"
+  VET_FLAGS: -vet -vet-packages:lulu -vet-unused-procedures -vet-using-param
+  FLAGS: >-
+    -debug
+    -sanitize=address
+    -out:"{{.OUT}}"
 
 tasks:
   run:
@@ -19,6 +23,7 @@ tasks:
     desc: Build the `lulu` executable unconditionally.
     cmds:
       - mkdir -p bin
-      - odin build {{.TASKFILE_DIR}}/lulu/ {{.FLAGS}}
+      - odin build {{.TASKFILE_DIR}}/ {{.FLAGS}}
     sources:
+      - '{{.TASKFILE_DIR}}/*.odin'
       - '{{.TASKFILE_DIR}}/lulu/*.odin'

@@ -2,6 +2,11 @@
 
 version: '3'
 
+set: [pipefail]
+
+# Required for double star globs to actually work.
+shopt: [globstar]
+
 vars:
   CC: clang
   CC_FLAGS: >-
@@ -58,7 +63,7 @@ tasks:
     desc: Replace a pattern in all project files. Uses Vim syntax.
     vars:
       VIM: vim
-      VIM_GLOB: ./**/*.*
+      VIM_GLOB: '{{.ROOT_DIR}}/**/*.{c,h,cpp,hpp,lua,py,odin,yml}'
 
       # Dissection:
       #   -e
@@ -80,7 +85,7 @@ tasks:
         -c ':xa'
     prompt: This command will potentially modify all project files. Continue?
     cmds:
-      - '{{.VIM}} {{.VIM_FLAGS}} {{.VIM_GLOB}}'
+      - cmd: '{{.VIM}} {{.VIM_FLAGS}} {{.VIM_GLOB}}'
     requires:
       vars: [VIM_PATTERN, VIM_REPLACE]
     preconditions:

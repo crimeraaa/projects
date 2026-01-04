@@ -1,9 +1,10 @@
-package lulu
+package lulu_repl
 
 import "core:fmt"
-import "core:strings"
 import os "core:os/os2"
 import "core:mem"
+
+import "lulu"
 
 _ :: mem
 
@@ -20,7 +21,7 @@ main :: proc() {
                     file := info.location.file_path
                     line := info.location.line
                     func := info.location.procedure
-                    fmt.eprintfln("[%i] %p @ %s:%i (in '%s')", i, info, file, line, func)
+                    fmt.eprintfln("%s:%i: %p in %q", file, line, ptr, func)
                 }
             }
 
@@ -30,17 +31,15 @@ main :: proc() {
                     file := info.location.file_path
                     line := info.location.line
                     func := info.location.procedure
-                    fmt.eprintfln("%p @ %s:%i (in '%s')", ptr, file, line, func)
+                    fmt.eprintfln("%s:%i: %p in %q", file, line, ptr, func)
                 }
             }
             mem.tracking_allocator_destroy(&ta)
         }
     }
 
-    g := &Global_State{}
-    L := &VM{global_state=g}
-    vm_init(L)
-    defer vm_destroy(L)
+    L, ok := lulu.new_state()
+    defer lulu.close(L)
 
     switch len(os.args) {
     case 1: run_repl(L)
@@ -50,9 +49,10 @@ main :: proc() {
             fmt.eprintln("[ERROR]:", os.error_string(err))
         }
     }
+    fmt.println(L.global_state.bytes_allocated, "bytes remaining")
 }
 
-run_repl :: proc(L: ^VM) {
+run_repl :: proc(L: ^lulu.State) {
     for {
         fmt.print(">>> ")
         line_buf: [512]byte
@@ -70,31 +70,21 @@ run_repl :: proc(L: ^VM) {
     }
 }
 
-run_file :: proc(L: ^VM, name: string) -> (err: os.Error) {
+run_file :: proc(L: ^lulu.State, name: string) -> (err: os.Error) {
     buf := os.read_entire_file(name, context.allocator) or_return
     defer delete(buf)
     run_input(L, name, string(buf))
     return nil
 }
 
-run_input :: proc(L: ^VM, name, input: string) {
-    // Must be outside protected call to ensure that we can defer destroy.
-    b, _ := strings.builder_make(allocator=context.allocator)
-    defer strings.builder_destroy(&b)
-
-    Data :: struct {
-        builder:    ^strings.Builder,
-        name, input: string,
+run_input :: proc(L: ^lulu.State, name, input: string) {
+    err := lulu.load(L, name, input)
+    if err == nil {
+        err = lulu.pcall(L, arg_count=0, ret_count=0)
     }
 
-    parse :: proc(L: ^VM, ud: rawptr) {
-        data  := (cast(^Data)ud)^
-        name  := ostring_new(L, data.name)
-        chunk := chunk_new(L, name)
-        p := parser_make(L, data.builder, name, data.input)
-        c := compiler_make(L, &p, chunk)
-        program(&p, &c)
-        vm_execute(L, chunk)
+    if err != nil {
+        fmt.println(lulu.to_string(L, -1))
+        lulu.pop(L, 1)
     }
-    vm_run_protected(L, parse, &Data{&b, name, input})
 }

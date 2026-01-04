@@ -6,9 +6,6 @@ import "core:fmt"
 
 @(private="package")
 Parser :: struct {
-    // Parent state used to catch errors.
-    L: ^VM,
-
     // Lexical state to help manage token stream.
     lexer: Lexer,
 
@@ -46,22 +43,28 @@ Rule :: struct {
 }
 
 @(private="package")
-parser_make :: proc(L: ^VM, builder: ^strings.Builder, name: ^Ostring, input: string) -> Parser {
-    p := Parser{L=L, lexer=lexer_make(L, builder, name, input)}
+parser_make :: proc(L: ^State, builder: ^strings.Builder, name: ^Ostring, input: string) -> Parser {
+    p := Parser{lexer=lexer_make(L, builder, name, input)}
     advance_token(&p)
     return p
 }
 
 @(private="package")
-program :: proc(p: ^Parser, c: ^Compiler) {
-    for !check_token(p, .EOF) {
-        statement(p, c)
+program :: proc(L: ^State, b: ^strings.Builder, name: ^Ostring, input: string) {
+    chunk := chunk_new(L, name)
+    vm_push_value(L, value_make(chunk))
+
+    p := parser_make(L, b, name, input)
+    c := compiler_make(L, &p, chunk)
+
+    for !check_token(&p, .EOF) {
+        statement(&p, &c)
         // Ensure all temporary registers were popped.
         assert(c.free_reg == c.active_count)
     }
-    expect_token(p, .EOF)
-    compiler_pop_locals(c, c.active_count)
-    compiler_end(c, p.consumed.line)
+    expect_token(&p, .EOF)
+    compiler_pop_locals(&c, c.active_count)
+    compiler_end(&c)
 }
 
 /*
@@ -131,11 +134,11 @@ error_lookahead :: proc(p: ^Parser, msg: string) -> ! {
 }
 
 error_at :: proc(p: ^Parser, t: Token, msg: string) -> ! {
-    file := p.lexer.name
-    line := t.line
-    col  := t.col
-    here := t.lexeme if len(t.lexeme) > 0 else token_string(t.type)
-    vm_syntax_error(p.L, file, line, col, "%s near '%s'", msg, here)
+    here := t
+    if len(here.lexeme) == 0 {
+        here.lexeme = token_string(t.type)
+    }
+    debug_syntax_error(&p.lexer, here, msg)
 }
 
 statement :: proc(p: ^Parser, c: ^Compiler)  {
@@ -170,11 +173,11 @@ start of an index expression.
 resolve_variable :: proc(p: ^Parser, c: ^Compiler) -> (var: Expr) {
     assert(p.consumed.type == .Identifier)
 
-    name := p.consumed.ostring
+    name := p.consumed.string
     if reg, ok := compiler_resolve_local(c, name); ok {
         return expr_make_reg(.Local, reg)
     } else {
-        index := compiler_add_string(c, p.consumed.ostring)
+        index := compiler_add_string(c, name)
         return expr_make_index(.Global, index)
     }
 }
@@ -183,7 +186,7 @@ local_statement :: proc(p: ^Parser, c: ^Compiler) {
     lhs_count := u16(0)
     for {
         expect_token(p, .Identifier)
-        compiler_declare_local(c, p.consumed.ostring, lhs_count)
+        compiler_declare_local(c, p.consumed.string, lhs_count)
         lhs_count += 1
 
         if !match_token(p, .Comma) {
@@ -196,11 +199,11 @@ local_statement :: proc(p: ^Parser, c: ^Compiler) {
         _, rhs_count = expression_list(p, c)
     }
 
-    adjust_assign(c, lhs_count, rhs_count, p.consumed.line)
+    adjust_assign(c, lhs_count, rhs_count)
     compiler_define_locals(c, lhs_count)
 }
 
-adjust_assign :: proc(c: ^Compiler, lhs_count, rhs_count: u16, line: i32) {
+adjust_assign :: proc(c: ^Compiler, lhs_count, rhs_count: u16) {
     // Nothing to do?
     if lhs_count == rhs_count {
         return
@@ -208,13 +211,13 @@ adjust_assign :: proc(c: ^Compiler, lhs_count, rhs_count: u16, line: i32) {
 
     // local x, y = 1, 2, 3
     if lhs_count < rhs_count {
-        extra := cast(u16)(rhs_count - lhs_count)
+        extra := rhs_count - lhs_count
         compiler_pop_reg(c, c.free_reg - 1, extra)
     } // local x, y, z = 1, 2
     else {
-        extra := cast(u16)(lhs_count - rhs_count)
+        extra := lhs_count - rhs_count
         reg   := compiler_push_reg(c, extra)
-        compiler_load_nil(c, reg, extra, line)
+        compiler_load_nil(c, reg, extra)
     }
 }
 
@@ -240,14 +243,13 @@ assignment :: proc(p: ^Parser, c: ^Compiler, tail: ^Assign_List, lhs_count: u16)
     expect_token(p, .Assign)
 
     first_reg, rhs_count := expression_list(p, c)
-    line := p.consumed.line
-    adjust_assign(c, lhs_count, rhs_count, line)
+    adjust_assign(c, lhs_count, rhs_count)
     src_reg  := c.free_reg - 1
     for node := tail; node != nil; node = node.prev {
         var := node.var
         #partial switch var.type {
-        case .Global: compiler_code_abx(c, .Set_Global, src_reg, var.index, line)
-        case .Local:  compiler_code_abc(c, .Move, var.reg, src_reg, 0, line)
+        case .Global: compiler_code_abx(c, .Set_Global, src_reg, var.index)
+        case .Local:  compiler_code_abc(c, .Move, var.reg, src_reg, 0)
         case:
             unreachable("Invalid expr to assign: %v", var.type)
         }
@@ -259,15 +261,14 @@ assignment :: proc(p: ^Parser, c: ^Compiler, tail: ^Assign_List, lhs_count: u16)
 
 return_statement :: proc(p: ^Parser, c: ^Compiler) {
     last, count := argument_list(p, c)
-    line        := p.consumed.line
     if count == 1 {
-        last_reg := compiler_push_expr_any(c, &last, line)
-        compiler_code_return(c, last_reg, count, line)
+        last_reg := compiler_push_expr_any(c, &last)
+        compiler_code_return(c, last_reg, count)
         compiler_pop_expr(c, &last)
     } else {
-        last_reg  := compiler_push_expr_next(c, &last, line)
+        last_reg  := compiler_push_expr_next(c, &last)
         first_reg := last_reg - count + 1
-        compiler_code_return(c, first_reg, count, line)
+        compiler_code_return(c, first_reg, count)
         compiler_pop_reg(c, first_reg, count)
     }
 }
@@ -285,7 +286,7 @@ expression_list :: proc(p: ^Parser, c: ^Compiler) -> (first_reg, count: u16) {
     for {
         expr  := expression(p, c)
         count += 1
-        compiler_push_expr_next(c, &expr, p.consumed.line)
+        compiler_push_expr_next(c, &expr)
         if !match_token(p, .Comma) {
             break
         }
@@ -307,7 +308,7 @@ argument_list :: proc(p: ^Parser, c: ^Compiler) -> (last: Expr, count: u16) {
             last = expr
             break
         }
-        compiler_push_expr_next(c, &expr, p.consumed.line)
+        compiler_push_expr_next(c, &expr)
     }
     return last, count
 }
@@ -339,7 +340,7 @@ prefix :: proc(p: ^Parser, c: ^Compiler) -> (e: Expr) {
     // The 3 unary expressions are parsed in the exact same ways.
     unary :: proc(p: ^Parser, c: ^Compiler, op: Opcode) -> (e: Expr) {
         e = expression(p, c, .Unary)
-        compiler_code_unary(c, op, &e, p.consumed.line)
+        compiler_code_unary(c, op, &e)
         return e
     }
 
@@ -361,7 +362,7 @@ prefix :: proc(p: ^Parser, c: ^Compiler) -> (e: Expr) {
     case .True:     return expr_make_boolean(true)
     case .Number:   return expr_make_number(p.consumed.number)
     case .String:
-        index := compiler_add_string(c, p.consumed.ostring)
+        index := compiler_add_string(c, p.consumed.string)
         return expr_make_index(.Constant, index)
 
     case .Identifier: return resolve_variable(p, c)
@@ -381,7 +382,7 @@ infix :: proc(p: ^Parser, c: ^Compiler, left: ^Expr, prec: Precedence = nil) {
             break
         }
 
-        advance_token(p)
+        // Don't advance here, we need the correct line/col info for `left`.
         #partial switch rule.op {
         case .Add..=.Pow:
             arith(p, c, rule.op, left, rule.right)
@@ -418,14 +419,20 @@ arith :: proc(p: ^Parser, c: ^Compiler, op: Opcode, left: ^Expr, prec: Precedenc
     // correct operations. We cannot assume that `a op b` is equal to `b op a`
     // for all operations.
     if !expr_is_number(left) {
-        compiler_push_expr_any(c, left, p.consumed.line)
+        compiler_push_expr_any(c, left)
     }
+
+    // Advance only now so that the above push has the correct line/col info.
+    advance_token(p)
     right := expression(p, c, prec)
-    compiler_code_arith(c, op, left, &right, p.consumed.line)
+    compiler_code_arith(c, op, left, &right)
 }
 
 concat :: proc(p: ^Parser, c: ^Compiler, left: ^Expr, prec: Precedence) {
-    compiler_push_expr_next(c, left, p.consumed.line)
+    compiler_push_expr_next(c, left)
+
+    // Advance only now so that the above push has the correct line/col info.
+    advance_token(p)
     right := expression(p, c, prec)
-    compiler_code_concat(c, left, &right, p.consumed.line)
+    compiler_code_concat(c, left, &right)
 }

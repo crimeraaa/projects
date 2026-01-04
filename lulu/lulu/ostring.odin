@@ -1,12 +1,10 @@
 #+private package
 package lulu
 
-import "core:mem"
-import "core:strings"
-
 Intern :: struct {
     // Each entry in the string table is actually a linked list.
-    table: []^Object_List,
+    // `len(table)` is the capacity, not the number of active elements.
+    table: []^Object,
 
     // Number of non-nil pointers (including list chains) in `table`.
     count: int,
@@ -80,8 +78,8 @@ Reuse an existing interned copy of `text`, or creates a new one.
 **Returns**
 - A pointer to the interned string.
  */
-ostring_new :: proc(L: ^VM, text: string) -> ^Ostring {
-    intern    := &G(L).intern
+ostring_new :: proc(L: ^State, text: string) -> ^Ostring {
+    intern    := &L.global_state.intern
     table     := intern.table
     table_cap := len(table)
     assert(table_cap >= 2)
@@ -114,48 +112,6 @@ ostring_new :: proc(L: ^VM, text: string) -> ^Ostring {
     return s
 }
 
-ostringf_new :: proc(L: ^VM, fmt: string, args: ..any) -> ^Ostring {
-    fmt := fmt
-    b   := &L.builder
-    strings.builder_reset(b)
-    arg_i := 0
-    for {
-        fmt_i := strings.index_byte(fmt, '%')
-        if fmt_i == -1 {
-            strings.write_string(b, fmt)
-            break
-        }
-
-        // Write any bits of the string before the format specifier.
-        strings.write_string(b, fmt[:fmt_i])
-
-        arg   := args[arg_i]
-        arg_i += 1
-        spec_i := fmt
-        switch spec := fmt[fmt_i + 1]; spec {
-        case 'c':
-            strings.write_rune(b, arg.(rune))
-        case 'd', 'i':
-            strings.write_int(b, arg.(int))
-        case 'f':
-            bit_size := size_of(f64) * 8
-            strings.write_float(b, arg.(f64), fmt='g', prec=14, bit_size=bit_size)
-        case 's':
-            strings.write_string(b, arg.(string))
-        case 'p':
-            addr := cast(uintptr)arg.(rawptr)
-            strings.write_string(b, "0x")
-            strings.write_u64(b, cast(u64)addr, base=16)
-        case:
-            unreachable("Unsupported format specifier '%c'", spec)
-        }
-
-        // Move over the format specifier.
-        fmt = fmt[fmt_i + 1:]
-    }
-    return ostring_new(L, strings.to_string(b^))
-}
-
 /*
 Frees the contents of `s`. Since we are a flexible-array similar to Pascal
 strings, we allocated everything in one go and can thus free it in the same way.
@@ -165,9 +121,8 @@ strings, we allocated everything in one go and can thus free it in the same way.
 **Assumptions**
 - Freeing memory never fails.
  */
-ostring_free :: proc(s: ^Ostring) {
-    size := size_of(s^) + s.len + 1
-    mem.free_with_size(s, size, context.allocator)
+ostring_free :: proc(L: ^State, s: ^Ostring) {
+    free(L, s, s.len + 1)
 }
 
 /*
@@ -180,11 +135,11 @@ Resize the intern table to fit more strings.
 - This is first called upon VM startup to ensure that subsequent calls to
 `ostring_new` never see a zero-length table.
  */
-intern_resize :: proc(L: ^VM, intern: ^Intern, new_cap: int) {
+intern_resize :: proc(L: ^State, intern: ^Intern, new_cap: int) {
     old_table   := intern.table
-    new_table   := slice_make(^Object_List, L, new_cap)
+    new_table   := make_slice(^Object, L, new_cap)
     intern.table = new_table
-    defer slice_delete(old_table)
+    defer delete_slice(L, old_table)
 
     // Rehash all strings from the old table into the new table.
     for list in old_table {
@@ -212,9 +167,9 @@ Free all the memory used by the interned strings table and the strings themselve
 
 *Deallocates using `context.allocator`.*
  */
-intern_destroy :: proc(L: ^VM, intern: ^Intern) {
+intern_destroy :: proc(L: ^State, intern: ^Intern) {
     for list in intern.table {
         object_free_all(L, list)
     }
-    slice_delete(intern.table)
+    delete_slice(L, intern.table)
 }

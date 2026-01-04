@@ -1,12 +1,18 @@
-#+private package
 package lulu
 
 import "base:intrinsics"
+import "base:runtime"
 import "core:fmt"
-import "core:c/libc"
 import "core:strings"
+import "core:strconv"
+import "core:unicode/utf8"
 
-VM :: struct {
+// **Note(2025-01-05)**
+//
+// Although the fields are public, please refrain from accessing and modifying
+// them.
+//
+State :: struct {
     // Shared state across all VM instances.
     global_state: ^Global_State,
 
@@ -19,69 +25,48 @@ VM :: struct {
     // Stack-allocated linked list of error handlers.
     handler: ^Error_Handler,
 
-    frame: Frame,
-    stack: [16]Value,
+    // Stack window of current function, a 'window' into `stack`.
+    registers: []Value,
+
+    // Current frame informationo.
+    frame: ^Frame,
+    frame_index: int,
+    frames: [16]Frame,
+    stack: [64]Value,
 }
 
+@(private="package")
 Global_State :: struct {
     // Hash table of all interned strings.
     intern: Intern,
 
     // Singly linked list of all possibly-collectable objects across all
     // VM states.
-    objects: ^Object_List,
+    objects: ^Object,
+
+    bytes_allocated: int,
 }
 
+@(private="package")
 Frame :: struct {
-    chunk:  ^Chunk,
+    chunk: ^Chunk,
 
     // Index of instruction where we left off (e.g. if we dispatch a Lua
     // function call).
     saved_pc: int,
 
     // Window into VM's primary stack.
-    stack: []Value,
-
-    // Chunk's constants array, inlined to reduce pointer dereferences.
-    constants: []Value,
+    registers: []Value,
 }
 
-@(private="file")
-Error_Handler :: struct {
-    buf:    libc.jmp_buf,
-    code:   Error,
-    prev:  ^Error_Handler,
-}
-
-Error :: enum {
-    // No error occured.
-    Ok,
-
-    // Invalid token or semantically invalid sequence of tokens, was received.
-    // This error is often easy to recover from.
-    Syntax,
-
-    // Some operation or a function call failed.
-    // This error is slightly difficult to recover from, but manageable.
-    Runtime,
-
-    // Failed to allocate or reallocate some memory.
-    // This error is often fatal. It is extremely difficult to recover from.
-    Memory,
-}
-
-G :: proc(L: ^VM) -> ^Global_State {
-    return L.global_state
-}
-
-vm_init :: proc(L: ^VM) -> (ok: bool) {
-    init :: proc(L: ^VM, _: rawptr) {
-        g := G(L)
+@(private="package")
+vm_init :: proc(L: ^State, g: ^Global_State) -> (ok: bool) {
+    init :: proc(L: ^State, _: rawptr) {
 
         // Ensure that, when we start interning strings, we already have
         // valid indexes.
-        intern_resize(L, &g.intern, 32)
-        s := ostring_new(L, "out of memory")
+        intern_resize(L, &L.global_state.intern, 32)
+        s := ostring_new(L, MEMORY_ERROR_MESSAGE)
         s.mark += {.Fixed}
         for kw_type in Token_Type.And..=Token_Type.While {
             kw := token_string(kw_type)
@@ -91,82 +76,147 @@ vm_init :: proc(L: ^VM) -> (ok: bool) {
         }
 
         // Ensure that the globals table is of some non-zero minimum size.
-        t := table_new(L, 32)
+        t := table_new(L, 17)
         L.globals_table = t
-        L.builder       = strings.builder_make(32, context.allocator)
+
+        // Initialize concat string builder with some reasonable default size.
+        L.builder = strings.builder_make(32, context.allocator)
+
+        // Ensure the pointed-to data is non-nil.
+        L.registers = L.stack[:0]
     }
 
-    err := vm_run_protected(L, init, nil)
+    L.global_state = g
+
+    // Don't use `vm_raw_pcall()`, because we won't be able to push an error
+    // object in case of memory errors.
+    err := vm_raw_run_protected(L, init, nil)
     return err == nil
 }
 
-vm_destroy :: proc(L: ^VM) {
-    g := G(L)
+@(private="package")
+vm_destroy :: proc(L: ^State) {
+    g := L.global_state
     strings.builder_destroy(&L.builder)
     intern_destroy(L, &g.intern)
     object_free_all(L, g.objects)
 }
 
-/*
-Run the procedure `p` in "protected mode", i.e. when an error is thrown
-we are able to catch it safely.
+@(private="package")
+vm_push_fstring :: proc(L: ^State, fmt: string, args: ..any) -> string {
+    fmt     := fmt
+    pushed  := 0
+    arg_i   := 0
 
-**Parameters**
-- p: The procedure to be run.
-- ud: Arbitrary user-defined data for `p`.
+    for {
+        fmt_i := strings.index_byte(fmt, '%')
+        if fmt_i == -1 {
+            // Write whatever remains unformatted as-is.
+            if len(fmt) > 0 {
+                vm_push_string(L, fmt)
+                pushed += 1
+            }
+            break
+        }
 
-**Guarantees**
-- `p` is only ever called with the `ud` it was passed with.
- */
-vm_run_protected :: proc(L: ^VM, p: proc(^VM, rawptr), ud: rawptr) -> Error {
-    // Push new error handler.
-    h: Error_Handler
-    h.prev    = L.handler
-    L.handler = &h
+        // Write any bits of the string before the format specifier.
+        if len(fmt[:fmt_i]) > 0 {
+            vm_push_string(L, fmt[:fmt_i])
+            pushed += 1
+        }
 
-    if libc.setjmp(&L.handler.buf) == 0 {
-        p(L, ud)
+        arg    := args[arg_i]
+        arg_i  += 1
+        spec_i := fmt_i + 1
+
+        buf: [VALUE_TO_STRING_BUFFER_SIZE]byte
+        b := strings.builder_from_bytes(buf[:])
+        switch spec := fmt[spec_i]; spec {
+        case 'c':
+            r_buf, size := utf8.encode_rune(arg.(rune))
+            copy(buf[:size], r_buf[:size])
+            vm_push_string(L, string(buf[:size]))
+
+        case 'd', 'i':
+            i := cast(i64)arg.(int)
+            vm_push_string(L, strconv.write_int(buf[:], i, base=10))
+
+        case 'f':
+            repr := number_to_string(arg.(f64), buf[:])
+            vm_push_string(L, repr)
+
+        case 's':
+            vm_push_string(L, arg.(string))
+
+        case:
+            unreachable("Unsupported format specifier '%c'", spec)
+        }
+        pushed += 1
+
+        // Move over the format specifier, only if we have characters remaining.
+        if next_i := spec_i + 1; next_i < len(fmt) {
+            fmt = fmt[next_i:]
+        } else {
+            break
+        }
     }
 
-    // Restore old error handler.
-    L.handler = h.prev
-    return intrinsics.volatile_load(&h.code)
+    stop  := get_top(L)
+    start := stop - pushed
+    args  := L.registers[start:stop]
+    s := vm_concat(L, &args[0], args)
+    vm_pop(L, pushed - 1)
+    return ostring_to_string(s)
 }
 
-vm_throw :: proc(L: ^VM, code: Error) -> ! {
-    h := L.handler
-    // Unprotected call?
-    if h == nil {
-        panic("[PANIC] lulu panic: unprotected call")
+@(private="package")
+vm_push_string :: proc(L: ^State, s: string) {
+    interned := ostring_new(L, s)
+    vm_push_value(L, value_make(interned))
+}
+
+@(private="package")
+vm_push_value :: proc(L: ^State, v: Value) {
+    base := vm_save_base(L)
+    top  := vm_save_top(L) + 1
+    L.registers = L.stack[base:top]
+    L.stack[top - 1] = v
+}
+
+@(private="package")
+vm_concat :: proc(L: ^State, dst: ^Value, args: []Value) -> ^Ostring {
+    b := &L.builder
+    strings.builder_reset(b)
+    for v in args {
+        s := value_get_string(v)
+        n := strings.write_string(b, s)
+        if n != len(s) {
+            debug_memory_error(L, "concatenate string '%s'", s)
+        }
     }
-    intrinsics.volatile_store(&h.code, code)
-    libc.longjmp(&h.buf, 1)
+    text := strings.to_string(b^)
+    s    := ostring_new(L, text)
+    dst^  = value_make(s)
+    return s
 }
 
-/*
-Throws a runtime error and reports a message in the form `file:line:col: message`.
-
-**Links**
-- https://www.gnu.org/prep/standards/standards.html#Errors
- */
-vm_syntax_error :: proc(L: ^VM, file: ^Ostring, line, col: i32, format: string, args: ..any) -> ! {
-    file := ostring_to_string(file)
-    fmt.eprintf("[ERROR] %s:%i:%i: ", file, line, col, flush=false)
-    fmt.eprintfln(format, ..args)
-    vm_throw(L, .Syntax)
+@(private="package")
+vm_pop :: proc(L: ^State, n: int) {
+    L.registers = L.registers[:get_top(L) - n]
 }
 
-vm_error_memory :: proc(L: ^VM, format := "", args: ..any, loc := #caller_location) -> ! {
-    file := loc.file_path
-    line := loc.line
-    col  := loc.column
-    fmt.eprintf("[FATAL] %s:%i:%i ", file, line, col, flush=false)
-    if format != "" {
-        fmt.eprintfln(format, ..args)
-    } else {
-        fmt.eprintln("Out of memry.")
-    }
-    vm_throw(L, .Memory)
+@(private="package")
+vm_save_base :: proc(L: ^State) -> (index: int) #no_bounds_check {
+    func_base := &L.registers[0]
+    stack     := &L.stack[0]
+    return intrinsics.ptr_sub(func_base, stack)
+}
+
+@(private="package")
+vm_save_top :: proc(L: ^State) -> (index: int) #no_bounds_check {
+    func_top := &L.registers[get_top(L)]
+    stack    := &L.stack[0]
+    return intrinsics.ptr_sub(func_top, stack)
 }
 
 // @(private="file")
@@ -186,13 +236,14 @@ vm_error_memory :: proc(L: ^VM, format := "", args: ..any, loc := #caller_locati
 // }
 
 
-vm_execute :: proc(L: ^VM, chunk: ^Chunk) {
+@(private="package")
+vm_execute :: proc(L: ^State) {
     Op :: #type proc "contextless" (a, b: f64) -> f64
 
     /*
     Works only for register-immediate encodings.
      */
-    arith_imm :: proc(L: ^VM, pc: int, ra: ^Value, op: Op, rb: ^Value, imm: u16) {
+    arith_imm :: proc(L: ^State, pc: int, ra: ^Value, op: Op, rb: ^Value, imm: u16) {
         if left, ok := value_to_number(rb^); ok {
             right := cast(f64)imm
             ra^    = value_make(op(left, right))
@@ -205,7 +256,7 @@ vm_execute :: proc(L: ^VM, chunk: ^Chunk) {
     /*
     Works for both register-register and register-constant encodings.
     */
-    arith :: proc(L: ^VM, pc: int, ra: ^Value, op: Op, rb, rc: ^Value) {
+    arith :: proc(L: ^State, pc: int, ra: ^Value, op: Op, rb, rc: ^Value) {
         try: {
             left   := value_to_number(rb^) or_break try
             right  := value_to_number(rc^) or_break try
@@ -216,7 +267,7 @@ vm_execute :: proc(L: ^VM, chunk: ^Chunk) {
         debug_arith_error(L, rb, rc)
     }
 
-    protect :: proc(L: ^VM, pc: int) {
+    protect :: proc(L: ^State, pc: int) {
         L.frame.saved_pc = pc
     }
 
@@ -236,19 +287,21 @@ vm_execute :: proc(L: ^VM, chunk: ^Chunk) {
         disassemble_at(chunk, i, pc)
     }
 
-    L.frame = Frame{chunk, 0, L.stack[:chunk.stack_used], chunk.constants[:]}
-    code   := raw_data(chunk.code)
-    ip     := code
-    frame  := &L.frame
+
+    frame := L.frame
+    chunk := frame.chunk
+
+    // Registers array.
+    R := frame.registers
+
+    // Constants array.
+    K := chunk.constants[:]
+
+    code: [^]Instruction = &chunk.code[0]
+    ip := code
 
     // Table of defined global variables.
     _G := L.globals_table
-
-    // Registers array.
-    R := frame.stack
-
-    // Constants array.
-    K := frame.constants
 
     // Zero-initalize the stack frame.
     for &v in R {
@@ -257,7 +310,7 @@ vm_execute :: proc(L: ^VM, chunk: ^Chunk) {
 
     when ODIN_DEBUG do fmt.println("[EXECUTION]")
     for {
-        i  := ip[0]
+        i  := ip[0] // *ip
         pc := intrinsics.ptr_sub(ip, code)
         ip = &ip[1] // ip++
         print_stack(chunk, i, pc, R)
@@ -286,13 +339,13 @@ vm_execute :: proc(L: ^VM, chunk: ^Chunk) {
             ra^ = K[getarg_bx(i)]
 
         case .Get_Global:
-            key := K[getarg_bx(i)]
-            if value, ok := table_get(_G, key); !ok {
-                what := value_get_string(key)
+            k := K[getarg_bx(i)]
+            if v, ok := table_get(_G, k); !ok {
+                what := value_get_string(k)
                 protect(L, pc)
                 debug_runtime_error(L, "Attempt to read undefined global '%s'", what)
             } else {
-                ra^ = value;
+                ra^ = v;
             }
 
         case .Set_Global:
@@ -301,26 +354,25 @@ vm_execute :: proc(L: ^VM, chunk: ^Chunk) {
 
         // Unary
         case .Len:
-            if rb := &R[i.b]; !value_is_string(rb^) {
-                what := value_type_name(rb^)
-                protect(L, pc)
-                debug_type_error(L, "get length of", rb)
-            } else {
+            #partial switch rb := &R[i.b]; value_type(rb^) {
+            case .String:
                 n  := value_get_ostring(rb^).len
                 ra^ = value_make(cast(f64)n)
+            case:
+                protect(L, pc)
+                debug_type_error(L, "get length of", rb)
             }
 
         case .Not:
-            not_b := value_is_falsy(R[i.b])
-            ra^    = value_make(not_b)
+            ra^ = value_make(value_is_falsy(R[i.b]))
 
         case .Unm:
-            if rb := &R[i.b]; !value_is_number(rb^) {
+            rb := &R[i.b]
+            if n, ok := value_to_number(rb^); ok {
+                ra^ = value_make(number_unm(n))
+            } else {
                 protect(L, pc)
                 debug_arith_error(L, rb, rb)
-            } else {
-                n  := number_unm(value_get_number(rb^))
-                ra^ = value_make(n)
             }
 
         // Arithmetic (register-immediate)
@@ -368,19 +420,4 @@ vm_execute :: proc(L: ^VM, chunk: ^Chunk) {
             unreachable("Invalid opcode %v", op)
         }
     }
-}
-
-vm_concat :: proc(L: ^VM, ra: ^Value, args: []Value) {
-    b := &L.builder
-    strings.builder_reset(b)
-    for v in args {
-        s := value_get_string(v)
-        n := strings.write_string(b, s)
-        if n != len(s) {
-            vm_error_memory(L)
-        }
-    }
-    text := strings.to_string(b^)
-    s    := ostring_new(L, text)
-    ra^   = value_make(s)
 }

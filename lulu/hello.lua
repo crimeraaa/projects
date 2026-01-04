@@ -4,4 +4,4 @@
 
 local what, whom = "hi", "mom"
 
-return what .. ' ' whom .. '!' -- parsed as: `return what .. ' '; whom .. '!'`
+return what .. 1 + whom .. '!'

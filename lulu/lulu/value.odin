@@ -39,6 +39,7 @@ value_make :: proc {
     value_make_number,
     value_make_ostring,
     value_make_table,
+    value_make_chunk,
 }
 
 value_make_nil :: #force_inline proc "contextless" () -> Value {
@@ -146,10 +147,9 @@ value_type_string :: proc(t: Value_Type) -> string {
     case .Number:   return "number"
     case .String:   return "string"
     case .Table:    return "table"
-    case .Chunk:
-        break
+    case .Chunk:    return "chunk"
     }
-    unreachable("Invalid type: %v", t)
+    unreachable()
 }
 
 value_is_nil :: #force_inline proc(v: Value) -> bool {
@@ -180,6 +180,11 @@ value_get_ostring :: #force_inline proc(v: Value) -> ^Ostring {
 value_get_table :: #force_inline proc(v: Value) -> ^Table {
     check_type(v, .Table)
     return &value_get_object(v).table
+}
+
+value_get_chunk :: #force_inline proc(v: Value) -> ^Chunk {
+    check_type(v, .Chunk)
+    return &value_get_object(v).chunk
 }
 
 value_get_string :: #force_inline proc(v: Value) -> string {

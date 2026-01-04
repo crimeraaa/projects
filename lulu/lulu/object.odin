@@ -2,7 +2,12 @@
 package lulu
 
 import "base:intrinsics"
-import "core:mem"
+import "core:fmt"
+import "core:terminal/ansi"
+
+RED   :: ansi.ESC + ansi.CSI + ansi.FG_RED   + "m"
+GREEN :: ansi.ESC + ansi.CSI + ansi.FG_GREEN + "m"
+RESET :: ansi.ESC + ansi.CSI + ansi.RESET    + "m"
 
 Object :: struct #raw_union {
     using base: Object_Header,
@@ -11,17 +16,11 @@ Object :: struct #raw_union {
     chunk:      Chunk,
 }
 
-// Aliases to document intention. Generally meant for iteration.
-Object_List :: Object
-
-// Aliases to document intention.
-GC_List     :: Object
-
 // Only exists to be 'inherited from'. Do not create lone instances of this type.
 Object_Header :: struct #packed {
-    next: ^Object_List,
-    type:  Value_Type,
-    mark:  bit_set[Object_Mark; u8],
+    next: ^Object,
+    type: Value_Type,
+    mark: bit_set[Object_Mark; u8],
 }
 
 // Flags for the garbage collector.
@@ -60,26 +59,26 @@ members, e.g. `Ostring`. If `T` is fixed-size then it should remain zero.
 - We are in a protected call, so upon allocation failure we are able to
 recover to the first protected caller.
  */
-object_new :: proc($T: typeid, L: ^VM, list: ^^Object_List, extra := 0) -> ^T
+object_new :: proc($T: typeid, L: ^State, list: ^^Object, extra := 0) -> ^T
 where intrinsics.type_is_subtype_of(T, Object_Header) {
-    size     := size_of(T) + extra
-    ptr, err := mem.alloc(size, align_of(T), context.allocator)
-    if ptr == nil || err != nil {
-        vm_error_memory(L)
-    }
-    derived := cast(^T)ptr
+    o := new(T, L, count=1, extra=extra)
 
     // Chain the new object.
-    derived.next = list^
-    when      T == Ostring do derived.type = Value_Type.String \
-    else when T == Table   do derived.type = Value_Type.Table \
-    else when T == Chunk   do derived.type = Value_Type.Chunk \
+    o.next = list^
+    when      T == Ostring do o.type = Value_Type.String \
+    else when T == Table   do o.type = Value_Type.Table  \
+    else when T == Chunk   do o.type = Value_Type.Chunk  \
     else do #panic("Invalid T")
 
     // This object is freshly allocated so it has never been traversed.
-    derived.mark = {.White}
-    list^ = cast(^Object)derived
-    return derived
+    o.mark = {.White}
+    list^  = cast(^Object)o
+
+    when ODIN_DEBUG {
+        ts := value_type_string(o.type)
+        fmt.printfln(GREEN + " [NEW] " + RESET + "%8s: %p (%i bytes)", ts, o, size_of(T) + extra)
+    }
+    return o
 }
 
 /*
@@ -94,22 +93,27 @@ Free an object and without unlinking it.
 - The linked list containing `o` is not (yet) invalidated. It is the duty of
 the garbage collector to handle the unlinking for us.
  */
-object_free :: proc(o: ^Object) {
-    switch o.type {
-    case .String:   ostring_free(&o.string)
-    case .Table:    table_free(&o.table)
-    case .Chunk:    chunk_free(&o.chunk)
+object_free :: proc(L: ^State, o: ^Object) {
+    t := o.type
+    switch t {
+    case .String:   ostring_free(L, &o.string)
+    case .Table:    table_free(L, &o.table)
+    case .Chunk:    chunk_free(L, &o.chunk)
     case .Nil, .Boolean, .Number:
-        unreachable("Invalid object to free: %v", o.type)
+        unreachable("Invalid object to free: %v", t)
+    }
+
+    when ODIN_DEBUG {
+        fmt.printfln(RED + "[FREE] " + RESET + "%8s: %p", value_type_string(t), o)
     }
 }
 
-object_free_all :: proc(L: ^VM, list: ^Object_List) {
+object_free_all :: proc(L: ^State, list: ^Object) {
     node := list
     for node != nil {
         // Save here because contents are about to be freed.
         next := node.next
-        object_free(node)
+        object_free(L, node)
         node = next
     }
 }

@@ -18,13 +18,13 @@ Token :: struct {
 @(private="package")
 Token_Data :: struct #raw_union {
     number: f64,
-    ostring: ^Ostring,
+    string: ^Ostring,
 }
 
 @(private="package")
 Lexer :: struct {
     // Parent state which will catch any errors we throw.
-    L: ^VM,
+    L: ^State,
 
     // Used to build string literals with escape characters.
     // Also helps in string interning.
@@ -138,7 +138,7 @@ to construct string literals with escape sequences.
 - input: The actual text data to be lexed.
  */
 @(private="package")
-lexer_make :: proc(L: ^VM, builder: ^strings.Builder, name: ^Ostring, input: string) -> Lexer {
+lexer_make :: proc(L: ^State, builder: ^strings.Builder, name: ^Ostring, input: string) -> Lexer {
     x := Lexer{L=L, builder=builder, name=name, input=input, line=1}
     // Read first char so first `lexer_scan_token()` call is valid.
     read_rune(&x)
@@ -169,13 +169,12 @@ read_rune :: proc(x: ^Lexer) -> (r: rune) {
 }
 
 /*
-Reports a formatted error message and throws a syntax error to the parent VM.
+Reports a error message and throws a syntax error to the parent VM.
  */
-error :: proc(x: ^Lexer, format: string, args: ..any) -> ! {
-    file := x.name
-    line := x.line
-    col  := cast(i32)x.cursor
-    vm_syntax_error(x.L, file, line, col, format, ..args)
+error :: proc(x: ^Lexer, msg: string) -> ! {
+    here    := make_token(x, nil)
+    here.col = cast(i32)x.cursor
+    debug_syntax_error(x, here, msg)
 }
 
 peek_rune :: proc(x: ^Lexer) -> (r: rune) {
@@ -261,7 +260,9 @@ syntax error is thrown.
  */
 expect_rune :: proc(x: ^Lexer, want: rune) {
     if !match_rune(x, want) {
-        error(x, "Expected '%c'", want)
+        buf: [64]byte
+        msg := fmt.bprintf(buf[:], "Expected '%c'", want)
+        error(x, msg)
     }
 }
 
@@ -276,7 +277,9 @@ advance_rune :: proc(x: ^Lexer) {
     // assert(utf8.rune_size(prev_rune) == size)
     x.cursor += peek_size(x)
     if x.curr_rune == utf8.RUNE_ERROR {
-        error(x, "Invalid rune '%c' (%i)", x.curr_rune, x.curr_rune)
+        buf: [64]byte
+        msg := fmt.bprintf(buf[:], "Invalid rune '%c' (%i)", x.curr_rune, x.curr_rune)
+        error(x, msg)
     }
     read_rune(x)
 }
@@ -391,7 +394,9 @@ make_token_type_string :: proc(x: ^Lexer, type: Token_Type, s: string) -> Token 
 lexer_scan_token :: proc(x: ^Lexer) -> Token {
     r := skip_whitespace(x)
     if is_eof(x) {
-        return make_token(x, Token_Type.EOF)
+        token := make_token(x, Token_Type.EOF)
+        token.col = x.col
+        return token
     }
     // Lexeme start is the first non-whitespace, non-comment character.
     x.start = x.cursor
@@ -404,7 +409,7 @@ lexer_scan_token :: proc(x: ^Lexer) -> Token {
         // Keywords were interned on startup, so we can already check.
         // for their types.
         s := ostring_new(x.L, token.lexeme)
-        token.ostring = s
+        token.string = s
         token.type    = .Identifier if s.kw_type == nil else s.kw_type
         return token
     } else if is_number(r) {
@@ -461,12 +466,12 @@ make_number_token :: proc(x: ^Lexer, leader: rune) -> Token {
             token := make_token(x, Token_Type.Number)
             i, ok := strconv.parse_uint(token.lexeme[2:], base)
             if !ok {
-                error(x, "Malformed integer '%s'", token.lexeme)
+                error(x, "Malformed integer")
             }
             f := cast(f64)i
             // `i` as an `f64` might not be accurately represented?
             if cast(uint)f != i {
-                error(x, "Invalid f64 integer '%s'", token.lexeme)
+                error(x, "Invalid f64 integer")
             }
             token.number = f
             return token
@@ -494,7 +499,7 @@ make_number_token :: proc(x: ^Lexer, leader: rune) -> Token {
     token := make_token(x, Token_Type.Number)
     n, ok := strconv.parse_f64(token.lexeme)
     if !ok {
-        error(x, "Malformed number '%s'", token.lexeme)
+        error(x, "Malformed number")
     }
     token.number = n
     return token
@@ -546,7 +551,7 @@ make_rune_token :: proc(x: ^Lexer, r: rune) -> Token {
 
 make_string_token :: proc(x: ^Lexer, q: rune) -> Token {
     // Wrapper to help catch memory errors.
-    write :: proc(L: ^VM, b: ^strings.Builder, r: rune, size: int) {
+    write :: proc(L: ^State, b: ^strings.Builder, r: rune, size: int) {
         n, err := strings.write_rune(b, r)
 
         /*
@@ -563,7 +568,7 @@ make_string_token :: proc(x: ^Lexer, q: rune) -> Token {
         We can use that to check if we successfully wrote `r`.
          */
         if err != nil || n != size {
-            vm_error_memory(L)
+            debug_memory_error(L, "write rune '%c'", r)
         }
     }
 
@@ -597,7 +602,9 @@ make_string_token :: proc(x: ^Lexer, q: rune) -> Token {
             case '\n', '\\', '\"', '\'', '[', ']':
                 break
             case:
-                error(x, "Unsupported escape sequence '%c'", esc)
+                buf: [64]byte
+                msg := fmt.bprintf(buf[:], "Unsupported escape sequence '%c'", esc)
+                error(x, msg)
             }
             write(L, b, esc, esc_size)
 
@@ -611,7 +618,7 @@ make_string_token :: proc(x: ^Lexer, q: rune) -> Token {
 
     token := make_token(x, Token_Type.String)
     // Skip single quotes in the string.
-    token.lexeme  = token.lexeme[1:len(token.lexeme) - 1]
-    token.ostring = ostring_new(L, strings.to_string(b^))
+    token.lexeme = token.lexeme[1:len(token.lexeme) - 1]
+    token.string = ostring_new(L, strings.to_string(b^))
     return token
 }

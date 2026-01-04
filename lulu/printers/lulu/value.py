@@ -120,7 +120,7 @@ class Value_Printer:
     };
     ```
     """
-    __type: gdb.Value
+    __type: str
     __data: gdb.Value
 
 
@@ -134,16 +134,15 @@ class Value_Printer:
 
     def __init__(self, val: gdb.Value):
         # In GDB, enums are already pretty-printed to their names
-        self.__type = val["type"]
+        self.__type = str(val["type"]).lower()
         self.__data = val["data"]
 
     def to_string(self) -> str:
-        t = str(self.__type).lower()
-        if t in self.__TOSTRING:
-            return self.__TOSTRING[t](self.__data)
+        if self.__type in self.__TOSTRING:
+            return self.__TOSTRING[self.__type](self.__data)
 
         # Assumes data.pointer == (void *)data.object
         p = self.__data["pointer"]
-        return f"{t}: {p}"
+        return f"{self.__type}: {p}"
 
 

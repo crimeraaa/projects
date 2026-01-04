@@ -1,12 +1,25 @@
 #+private file
 package lulu
 
+import "core:mem"
+
+// This is required because `log2(0)` is undefined, so a zero-sized table
+// is unrepresentable with `log2_cap`. So the empty table is actually
+// represented by the address of this entry with `log2_cap=0` for an actual
+// capacity of 1.
+@rodata
+EMPTY_TABLE_ENTRY: Entry
+
 @(private="package")
 Table :: struct {
     using base: Object_Header,
 
+    // Table capacity is stored as a log2 (such that `1 << log2_cap` is
+    // equivalent to `2 ** log2_cap`) to help reduce padding.
+    log2_cap: u8,
+
     // List of all key-value pairs ('entries').
-    entries: []Entry,
+    entries: [^]Entry,
 
     // Number of active entries in `entries`.
     count: int,
@@ -35,11 +48,14 @@ Key :: struct #raw_union {
 }
 
 @(private="package")
-table_new :: proc(L: ^VM, cap: int) -> (t: ^Table) {
-    g := G(L)
-    t = object_new(Table, L, &g.objects)
+table_new :: proc(L: ^State, cap: int) -> (t: ^Table) {
+    t = object_new(Table, L, &L.global_state.objects)
+
+    // Required so that `table_resize()` below sees the empty table rather
+    // than attempting to dereference a nil entries array with 1 element.
+    t.entries = &EMPTY_TABLE_ENTRY
     if cap > 0 {
-        table_resize(L, t, min(cap, 8))
+        table_resize(L, t, max(cap, 8))
     }
     return t
 }
@@ -52,9 +68,17 @@ referenced in other parts of the program.
 **Deallocates using `context.allocator`.*
  */
 @(private="package")
-table_free :: proc(t: ^Table) {
-    slice_delete(t.entries)
-    free(t)
+table_free :: proc(L: ^State, t: ^Table) {
+    delete_slice(L, table_entries(t))
+    free(L, t)
+}
+
+table_entries :: proc(t: ^Table) -> []Entry {
+    return t.entries[:table_cap(t)]
+}
+
+table_cap :: proc(t: ^Table) -> (cap: int) {
+    return 1 << t.log2_cap
 }
 
 /*
@@ -68,14 +92,18 @@ beforehand (i.e. it was non-nil) else `false`.
  */
 @(private="package")
 table_get :: proc(t: ^Table, k: Value) -> (v: Value, ok: bool) #optional_ok {
-    if len(t.entries) == 0 {
+    if table_is_empty(t) {
         return value_make(), false
     }
 
     hash := hash_value(k)
     entry: ^Entry
-    entry, ok = find_entry(t.entries, k, hash)
+    entry, ok = find_entry(table_entries(t), k, hash)
     return entry.value, ok
+}
+
+table_is_empty :: proc(t: ^Table) -> bool {
+    return t.entries == &EMPTY_TABLE_ENTRY
 }
 
 /*
@@ -91,15 +119,15 @@ that , in case they want to handle things like metamethods, they can check if
 `v == nil` to determine when to trigger the `__newindex` metamethod.
  */
 @(private="package")
-table_set :: proc(L: ^VM, t: ^Table, k: Value) -> (v: ^Value) {
+table_set :: proc(L: ^State, t: ^Table, k: Value) -> (v: ^Value) {
     // 75% load factor.
-    if cap := len(t.entries); t.count + 1 > cap * 3 / 2 {
-        cap = min(cap * 2, 8)
+    if cap := table_cap(t); t.count + 1 > cap * 3 / 2 {
+        cap = max(cap * 2, 8)
         table_resize(L, t, cap)
     }
 
     hash := hash_value(k)
-    entry, ok := find_entry(t.entries, k, hash)
+    entry, ok := find_entry(table_entries(t), k, hash)
     if !ok {
         t.count += 1
     }
@@ -110,9 +138,10 @@ table_set :: proc(L: ^VM, t: ^Table, k: Value) -> (v: ^Value) {
 }
 
 @(private="package")
-table_resize :: proc(L: ^VM, t: ^Table, cap: int) {
-    old_entries := t.entries
-    new_entries := slice_make(Entry, L, cap)
+table_resize :: proc(L: ^State, t: ^Table, new_cap: int) {
+    old_entries  := table_entries(t)
+    new_log2_cap := log2(new_cap)
+    new_entries  := make_slice(Entry, L, 1 << new_log2_cap)
 
     // We may have nil keys in the old table so we need to ignore them.
     new_count := 0
@@ -127,9 +156,25 @@ table_resize :: proc(L: ^VM, t: ^Table, cap: int) {
         new_count += 1
     }
 
-    delete(old_entries)
-    t.count   = new_count
-    t.entries = new_entries
+    if !table_is_empty(t) {
+        delete(old_entries)
+    }
+
+    t.log2_cap = new_log2_cap
+    t.entries  = raw_data(new_entries)
+    t.count    = new_count
+}
+
+log2 :: proc(cap: int) -> (exp: u8) {
+    assert(cap > 0)
+    for {
+        pow := 1 << exp
+        if pow >= cap {
+            break
+        }
+        exp += 1
+    }
+    return exp
 }
 
 /*
@@ -143,7 +188,7 @@ else `false`.
  */
 find_entry :: proc(entries: []Entry, k: Value, hash: u32) -> (entry: ^Entry, ok: bool) #optional_ok {
     tomb: ^Entry
-    cap := cast(uint)len(entries)
+    cap := uint(len(entries))
     for i := mod_pow2(cast(uint)hash, cap); /* empty */; i = mod_pow2(i + 1, cap) {
         entry = &entries[i]
 

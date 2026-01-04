@@ -1,8 +1,6 @@
 #+private package
 package lulu
 
-import "core:mem"
-
 Chunk :: struct {
     using base: Object_Header,
 
@@ -13,16 +11,20 @@ Chunk :: struct {
     stack_used: int,
 
     // List of all possible locals for this chunk.
-    locals: [dynamic]Local,
+    locals: []Local_Info,
 
     // Constant values that are referred to within this compiled chunk.
-    constants: [dynamic]Value,
+    constants: []Value,
 
     // List of all instructions to be executed.
     code: []Instruction,
 
-    // Maps each index in `code` to its corresponding line.
-    lines: []i32,
+    // Maps each index in `code` to its corresponding line and column.
+    loc: []Location_Info,
+}
+
+Location_Info :: struct {
+    line, col: i32,
 }
 
 /*
@@ -31,7 +33,7 @@ and go out of scope at known points in the program. The lifetime is given
 by the half-open range (in terms of program counter indexes)
 `[birth_pc, death_pc)`.
  */
-Local :: struct {
+Local_Info :: struct {
     name: ^Ostring,
 
     // Inclusive start index of the instruction in the parent chunk where this
@@ -43,7 +45,7 @@ Local :: struct {
     death_pc: int,
 }
 
-local_name :: proc(var: Local) -> string {
+local_name :: proc(var: Local_Info) -> string {
     return ostring_to_string(var.name)
 }
 
@@ -60,9 +62,8 @@ Creates a new blank chunk for use when parsing.
 - We are in a protected call, so we are able to catch out-of-memory errors
 within `object_new()`.
  */
-chunk_new :: proc(L: ^VM, name: ^Ostring) -> ^Chunk {
-    g := G(L)
-    c := object_new(Chunk, L, &g.objects)
+chunk_new :: proc(L: ^State, name: ^Ostring) -> ^Chunk {
+    c := object_new(Chunk, L, &L.global_state.objects)
     c.name = name
     // Minimum stack usage is 2 to allow all instructions to unconditionally
     // read r0 and r1.
@@ -77,9 +78,11 @@ array for example.
 
 *Allocates using `context.allocator`.*
  */
-chunk_fix :: proc(L: ^VM, c: ^Chunk, pc: int) {
-    slice_resize(L, &c.code,  pc)
-    slice_resize(L, &c.lines, pc)
+chunk_fix :: proc(L: ^State, c: ^Chunk, #any_int pc, local_count, constant_count: int) {
+    resize_slice(L, &c.code,      pc)
+    resize_slice(L, &c.loc,       pc)
+    resize_slice(L, &c.constants, constant_count)
+    resize_slice(L, &c.locals,    local_count)
 }
 
 /*
@@ -87,12 +90,12 @@ Frees the chunk contents and the chunk pointer itself.
 
 *Deallocates using `context.allocator`.*
  */
-chunk_free :: proc(c: ^Chunk) {
+chunk_free :: proc(L: ^State, c: ^Chunk) {
     delete(c.locals)
     delete(c.constants)
-    delete(c.code)
-    delete(c.lines)
-    mem.free(c)
+    delete_slice(L, c.code)
+    delete_slice(L, c.loc)
+    free(L, c)
 }
 
 /*
@@ -104,10 +107,11 @@ Adds `i` to the end of the code array.
 - We are in a protected call, so failures to append code can be caught
 and handled.
  */
-chunk_push_code :: proc(L: ^VM, c: ^Chunk, pc: int, i: Instruction, line: i32) {
-    slice_insert(L, &c.code,  pc, i)
-    slice_insert(L, &c.lines, pc, line)
-
+chunk_push_code :: proc(L: ^State, c: ^Chunk, pc: ^int, i: Instruction, line, col: i32) -> int {
+    insert_slice(L, &c.code, pc^, i)
+    insert_slice(L, &c.loc, pc^, Location_Info{line=line, col=col})
+    pc^ += 1
+    return pc^ - 1
 }
 
 /*
@@ -119,25 +123,19 @@ Adds `v` to the end of the constants array.
 - We are in a protected call, so failures to append values can be caught
 and handled.
  */
-chunk_push_constant :: proc(L: ^VM, c: ^Chunk, v: Value) -> (index: u32) {
-    index   = cast(u32)len(c.constants)
-    _, err := append(&c.constants, v)
-    if err != nil {
-        vm_error_memory(L, "Failed to append constant value")
-    }
-    return index
+chunk_push_constant :: proc(L: ^State, c: ^Chunk, count: ^u32, v: Value) -> (index: u32) {
+    insert_slice(L, &c.constants, count^, v)
+    count^ += 1
+    return count^ - 1
 }
 
 /*
 Appends the local variable information `local` to the chunk's locals array.
  */
-chunk_push_local :: proc(L: ^VM, c: ^Chunk, local: Local) -> (index: u16) {
-    index = cast(u16)len(c.locals)
-    _, err := append(&c.locals, local)
-    if err != nil {
-        vm_error_memory(L, "Failed to append local '%s'", local_name(local))
-    }
-    return index
+chunk_push_local :: proc(L: ^State, c: ^Chunk, count: ^u16, local: Local_Info) -> (index: u16) {
+    insert_slice(L, &c.locals, count^, local)
+    count^ += 1
+    return count^ - 1
 }
 
 /*
@@ -151,7 +149,7 @@ somewhere along `pc`.
 **Analogous to**
 - `luaF_getlocalname(const Proto *f, int local_number, int pc)` in Lua 5.1.5.
  */
-find_local :: proc(chunk: ^Chunk, reg, pc: int) -> (name: string, ok: bool) {
+find_local :: proc(chunk: ^Chunk, #any_int reg, pc: int) -> (name: string, ok: bool) {
     // Convert to 1-based index for quick comparison to zero.
     counter := reg + 1
     for local in chunk.locals {
