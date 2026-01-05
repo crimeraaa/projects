@@ -20,10 +20,10 @@ Chunk :: struct {
     code: []Instruction,
 
     // Maps each index in `code` to its corresponding line and column.
-    loc: []Location_Info,
+    loc: []Location,
 }
 
-Location_Info :: struct {
+Location :: struct {
     line, col: i32,
 }
 
@@ -78,11 +78,11 @@ array for example.
 
 *Allocates using `context.allocator`.*
  */
-chunk_fix :: proc(L: ^State, c: ^Chunk, #any_int pc, local_count, constant_count: int) {
-    resize_slice(L, &c.code,      pc)
-    resize_slice(L, &c.loc,       pc)
-    resize_slice(L, &c.constants, constant_count)
-    resize_slice(L, &c.locals,    local_count)
+chunk_fix :: proc(L: ^State, c: ^Chunk, cl: ^Compiler) {
+    resize_slice(L, &c.code,      cl.pc)
+    resize_slice(L, &c.loc,       cl.pc)
+    resize_slice(L, &c.constants, cast(int)cl.constants_count)
+    resize_slice(L, &c.locals,    cast(int)cl.locals_count)
 }
 
 /*
@@ -91,11 +91,11 @@ Frees the chunk contents and the chunk pointer itself.
 *Deallocates using `context.allocator`.*
  */
 chunk_free :: proc(L: ^State, c: ^Chunk) {
-    delete(c.locals)
-    delete(c.constants)
+    delete_slice(L, c.locals)
+    delete_slice(L, c.constants)
     delete_slice(L, c.code)
     delete_slice(L, c.loc)
-    free(L, c)
+    free_ptr(L, c)
 }
 
 /*
@@ -109,7 +109,7 @@ and handled.
  */
 chunk_push_code :: proc(L: ^State, c: ^Chunk, pc: ^int, i: Instruction, line, col: i32) -> int {
     insert_slice(L, &c.code, pc^, i)
-    insert_slice(L, &c.loc, pc^, Location_Info{line=line, col=col})
+    insert_slice(L, &c.loc, pc^, Location{line=line, col=col})
     pc^ += 1
     return pc^ - 1
 }

@@ -24,14 +24,15 @@ Report a runtime error due to attempting `action` on `culprit`.
 because it allows us to determine the variable type and name, if any.
  */
 debug_type_error :: proc(L: ^State, action: string, culprit: ^Value) -> ! {
-    frame := L.frame
-    chunk := frame.chunk
+    frame     := L.frame
+    callee    := frame.callee^
     type_name := value_type_name(culprit^)
 
     // If `culprit` came from the stack, it may come from a variable of some
     // kind. Try to find the variable name if at all possible.
     reg, is_reg := find_ptr_index(frame.registers, culprit);
-    if is_reg {
+    if is_reg && value_type(callee) == .Chunk {
+        chunk := value_get_chunk(callee)
         if scope, name, is_var := find_variable(chunk, reg, frame.saved_pc); is_var {
             debug_runtime_error(L, "Attempt to %s %s '%s' (a %s value)",
                 action, scope, name, type_name)
@@ -47,16 +48,25 @@ Throws a runtime error and reports an error message.
 - `L.frame.saved_pc` was set beforehand so we know where to look.
  */
 debug_runtime_error :: proc(L: ^State, format := "", args: ..any) -> ! {
-    msg   := vm_push_fstring(L, format, ..args)
-    frame := L.frame
-    if chunk := frame.chunk; chunk != nil {
+    msg      := vm_push_fstring(L, format, ..args)
+    frame    := L.frame
+    function := frame.callee^
+    #partial switch value_type(function) {
+    case .Chunk:
+        chunk := value_get_chunk(function)
         file := chunk_name(chunk)
         loc  := chunk.loc[frame.saved_pc]
         line := cast(int)loc.line
         col  := cast(int)loc.col
         vm_push_fstring(L, "%s:%i:%i: %s", file, line, col, msg)
+
+    case .Api_Proc:
+        vm_push_fstring(L, "[Odin] %s", msg)
+
+    case:
+        unreachable()
     }
-    vm_throw(L, .Runtime)
+    throw_error(L, .Runtime)
 }
 
 /*
@@ -71,7 +81,7 @@ debug_syntax_error :: proc(x: ^Lexer, here: Token, msg: string) -> ! {
     line := cast(int)here.line
     col  := cast(int)here.col
     vm_push_fstring(L, "%s:%i:%i: %s near '%s'", file, line, col, msg, here.lexeme)
-    vm_throw(x.L, .Syntax)
+    throw_error(x.L, .Syntax)
 }
 
 debug_memory_error :: proc(L: ^State, format: string, args: ..any, loc := #caller_location) -> ! {
@@ -80,7 +90,7 @@ debug_memory_error :: proc(L: ^State, format: string, args: ..any, loc := #calle
     col  := loc.column
     fmt.eprintf("%s:%i:%i Failed to ", file, line, col, flush=false)
     fmt.eprintfln(format, ..args)
-    vm_throw(L, .Memory)
+    throw_error(L, .Memory)
 }
 
 @(disabled=!ODIN_DEBUG)
@@ -176,7 +186,7 @@ disassemble_at :: proc(chunk: ^Chunk, i: Instruction, pc: int, pad := 0) {
     }
 
     ra := get_reg(chunk, i.a, pc, buf1[:])
-    if info.a {
+    if info.a && op != .Call {
         fmt.printf("%s := ", ra)
     }
 
@@ -193,23 +203,34 @@ disassemble_at :: proc(chunk: ^Chunk, i: Instruction, pc: int, pad := 0) {
     case .Set_Global: fmt.printf("_G.%s := %s", get_global(chunk, arg), ra)
     case .Len..=.Unm:
         rb := get_reg(chunk, arg.(BC).b, pc, buf1[:])
-        fmt.printf("%s%s", op_string(op), rb)
+        fmt.printf("%s%s", _op_string(op), rb)
 
     case .Add_Imm..=.Sub_Imm:
         rb := get_reg(chunk, arg.(BC).b, pc, buf1[:])
-        fmt.printf("%s %s %i", rb, op_string(op), arg.(BC).c)
+        fmt.printf("%s %s %i", rb, _op_string(op), arg.(BC).c)
 
     case .Add_Const..=.Pow_Const:
         rb := get_reg(chunk, arg.(BC).b, pc, buf1[:])
         kc := value_to_string(chunk.constants[arg.(BC).c], buf2[:])
-        fmt.printf("%s %s %s", rb, op_string(op), kc)
+        fmt.printf("%s %s %s", rb, _op_string(op), kc)
 
     case .Add..=.Pow:
         rb := get_reg(chunk, arg.(BC).b, pc, buf1[:])
         rc := get_reg(chunk, arg.(BC).c, pc, buf2[:])
-        fmt.printf("%s %s %s", rb, op_string(op), rc)
+        fmt.printf("%s %s %s", rb, _op_string(op), rc)
 
     case .Concat: fmt.printf("concat $r[%i:%i]", i.b, i.c)
+
+    case .Call:
+        base_reg  := cast(int)i.a
+        arg_first := base_reg + 1
+        arg_count := cast(int)arg.(BC).b
+        ret_count := cast(int)arg.(BC).c
+        if ret_count > 0 {
+            fmt.printf("$r[%i:%i] := ", base_reg, base_reg + ret_count)
+        }
+        fmt.printf("%s($r[%i:%i])", ra, arg_first, arg_first + arg_count)
+
     case .Return:
         start := i.a
         stop  := start + arg.(BC).b
@@ -223,7 +244,7 @@ disassemble_at :: proc(chunk: ^Chunk, i: Instruction, pc: int, pad := 0) {
 }
 
 @(private="file")
-op_string :: proc(op: Opcode) -> string {
+_op_string :: proc(op: Opcode) -> string {
     #partial switch op {
     // Unary
     case .Len: return "#"
@@ -270,7 +291,7 @@ find_variable :: proc(chunk: ^Chunk, #any_int reg, pc: int) -> (scope, name: str
     } // Probably global, table field or upvalue?
     else {
         // Find the instruction which last mutated `reg`.
-        i := symbolic_execute(chunk, reg, pc)
+        i := _symbolic_execute(chunk, reg, pc)
         #partial switch i.op {
         case .Move:
             // R[A] wasn't the culprit, so maybe R[B] was?
@@ -293,7 +314,7 @@ the error at `pc` was thrown. This, in turn, allows us to determine if the
 error occured on a global variable, table field, upvalue, or not a variable.
  */
 @(private="file")
-symbolic_execute :: proc(chunk: ^Chunk, reg, last_pc: int) -> (i: Instruction) {
+_symbolic_execute :: proc(chunk: ^Chunk, reg, last_pc: int) -> (i: Instruction) {
     // Stores index of the last instruction that changed `reg`, initially
     // pointing to the final, neutral return.
     prev_pc := len(chunk.code) - 1

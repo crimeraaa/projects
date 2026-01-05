@@ -122,7 +122,7 @@ strings, we allocated everything in one go and can thus free it in the same way.
 - Freeing memory never fails.
  */
 ostring_free :: proc(L: ^State, s: ^Ostring) {
-    free(L, s, s.len + 1)
+    free_ptr(L, s, extra=s.len + 1)
 }
 
 /*

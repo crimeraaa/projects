@@ -47,6 +47,7 @@ Pow,        //  A B C   | R[A] := R[B] ^ R[C]
 Concat,     //  A B C   | R[A] := concat R[i] for B <= i < C
 
 // Control Flow
+Call,       //  A B C   | R[A : A+C]:= R[A]( R[A+1 : A+B+1] )
 Return,     //  A B     | return R[A:A+B]
 }
 
@@ -136,6 +137,7 @@ OP_INFO := [Opcode]Op_Info{
     .Concat     = {mode=.ABC, a=true, b=.Reg, c=.Reg},
 
     // Control flow
+    .Call       = {mode=.ABC, a=true,  b=.Reg, c=.Imm},
     .Return     = {mode=.ABC, a=false, b=.Imm},
 }
 

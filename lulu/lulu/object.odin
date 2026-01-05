@@ -2,12 +2,6 @@
 package lulu
 
 import "base:intrinsics"
-import "core:fmt"
-import "core:terminal/ansi"
-
-RED   :: ansi.ESC + ansi.CSI + ansi.FG_RED   + "m"
-GREEN :: ansi.ESC + ansi.CSI + ansi.FG_GREEN + "m"
-RESET :: ansi.ESC + ansi.CSI + ansi.RESET    + "m"
 
 Object :: struct #raw_union {
     using base: Object_Header,
@@ -61,24 +55,22 @@ recover to the first protected caller.
  */
 object_new :: proc($T: typeid, L: ^State, list: ^^Object, extra := 0) -> ^T
 where intrinsics.type_is_subtype_of(T, Object_Header) {
-    o := new(T, L, count=1, extra=extra)
+    obj  := new_ptr(T, L, count=1, extra=extra)
+    base := cast(^Object)obj
 
     // Chain the new object.
-    o.next = list^
-    when      T == Ostring do o.type = Value_Type.String \
-    else when T == Table   do o.type = Value_Type.Table  \
-    else when T == Chunk   do o.type = Value_Type.Chunk  \
+    obj.next = list^
+    when      T == Ostring do obj.type = Value_Type.String \
+    else when T == Table   do obj.type = Value_Type.Table  \
+    else when T == Chunk   do obj.type = Value_Type.Chunk  \
     else do #panic("Invalid T")
 
     // This object is freshly allocated so it has never been traversed.
-    o.mark = {.White}
-    list^  = cast(^Object)o
+    obj.mark = {.White}
+    list^    = base
 
-    when ODIN_DEBUG {
-        ts := value_type_string(o.type)
-        fmt.printfln(GREEN + " [NEW] " + RESET + "%8s: %p (%i bytes)", ts, o, size_of(T) + extra)
-    }
-    return o
+    // gc_log_object(ansi.FG_GREEN, "[NEW]", T, obj)
+    return obj
 }
 
 /*
@@ -93,19 +85,16 @@ Free an object and without unlinking it.
 - The linked list containing `o` is not (yet) invalidated. It is the duty of
 the garbage collector to handle the unlinking for us.
  */
-object_free :: proc(L: ^State, o: ^Object) {
-    t := o.type
+object_free :: proc(L: ^State, obj: ^Object) {
+    t := obj.type
     switch t {
-    case .String:   ostring_free(L, &o.string)
-    case .Table:    table_free(L, &o.table)
-    case .Chunk:    chunk_free(L, &o.chunk)
-    case .Nil, .Boolean, .Number:
+    case .String: ostring_free(L, &obj.string)
+    case .Table:  table_free(L, &obj.table)
+    case .Chunk:  chunk_free(L, &obj.chunk)
+    case .Nil, .Boolean, .Number, .Light_Userdata, .Api_Proc:
         unreachable("Invalid object to free: %v", t)
     }
 
-    when ODIN_DEBUG {
-        fmt.printfln(RED + "[FREE] " + RESET + "%8s: %p", value_type_string(t), o)
-    }
 }
 
 object_free_all :: proc(L: ^State, list: ^Object) {

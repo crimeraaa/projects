@@ -39,17 +39,69 @@ main :: proc() {
     }
 
     L, ok := lulu.new_state()
-    defer lulu.close(L)
+    defer {
+        lulu.close(L)
+        fmt.println(L.global_state.bytes_allocated, "bytes remaining")
+    }
+    data := Pmain_Data{os.args, 0}
+    err  := lulu.api_pcall(L, pmain, &data)
 
-    switch len(os.args) {
-    case 1: run_repl(L)
+    if err != nil {
+        os.exit(cast(int)err)
+    }
+
+    if data.code != 0 {
+        os.exit(data.code)
+    }
+}
+
+Pmain_Data :: struct {
+    args: []string,
+    code: int,
+}
+
+pmain :: proc(L: ^lulu.State) -> (ret_count: int) {
+    data := cast(^Pmain_Data)lulu.to_userdata(L, 1)
+    lulu.push_value(L, lulu.GLOBALS_INDEX)
+    lulu.set_global(L, "_G")
+
+    lulu.push_api_proc(L, print)
+    lulu.set_global(L, "print")
+
+    switch len(data.args) {
+    case 1:
+        run_repl(L)
+
     case 2:
-        err := run_file(L, os.args[1])
+        err := run_file(L, data.args[1])
         if err != nil {
             fmt.eprintln("[ERROR]:", os.error_string(err))
         }
+        data.code = 1
     }
-    fmt.println(L.global_state.bytes_allocated, "bytes remaining")
+    return 0
+}
+
+print :: proc(L: ^lulu.State) -> (ret_count: int) {
+    arg_count := lulu.get_top(L)
+    for i in 1..=arg_count {
+        if i > 1 {
+            fmt.print("\t")
+        }
+        t := lulu.type(L, i)
+        #partial switch t {
+        case .Nil:     fmt.print("nil")
+        case .Boolean: fmt.print("true" if lulu.to_boolean(L, i) else "false")
+        case .Number:  fmt.print(lulu.to_number(L, i))
+        case .String:  fmt.print(lulu.to_string(L, i))
+        case:
+            ts := lulu.type_name_at(L, i)
+            p  := lulu.to_pointer(L, i)
+            fmt.printf("%s: %p", ts, p)
+        }
+    }
+    fmt.println()
+    return 0
 }
 
 run_repl :: proc(L: ^lulu.State) {

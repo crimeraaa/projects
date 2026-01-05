@@ -70,7 +70,7 @@ referenced in other parts of the program.
 @(private="package")
 table_free :: proc(L: ^State, t: ^Table) {
     delete_slice(L, table_entries(t))
-    free(L, t)
+    free_ptr(L, t)
 }
 
 table_entries :: proc(t: ^Table) -> []Entry {
@@ -227,9 +227,8 @@ hash_value :: proc(v: Value) -> u32 {
     case .Boolean:  return hash_any(value_get_bool(v))
     case .Number:   return hash_any(value_get_number(v))
     case .String:   return value_get_ostring(v).hash
-    case .Table:    return hash_any(value_get_object(v))
-    case .Chunk:
-        break
+    case .Light_Userdata, .Api_Proc, .Table, .Chunk:
+        return hash_any(value_get_pointer(v))
     }
     unreachable("Invalid type '%v'", t)
 }

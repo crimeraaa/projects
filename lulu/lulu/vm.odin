@@ -7,17 +7,18 @@ import "core:strings"
 import "core:strconv"
 import "core:unicode/utf8"
 
+
 // **Note(2025-01-05)**
 //
-// Although the fields are public, please refrain from accessing and modifying
-// them.
+// Although the fields are public, do not directly access nor modify them.
+// Use only the public API to do so.
 //
 State :: struct {
     // Shared state across all VM instances.
     global_state: ^Global_State,
 
     // Hash table of all defined global variables.
-    globals_table: ^Table,
+    globals_table: Value,
 
     // Used for string concatenation and internal string formatting.
     builder: strings.Builder,
@@ -28,15 +29,20 @@ State :: struct {
     // Stack window of current function, a 'window' into `stack`.
     registers: []Value,
 
-    // Current frame informationo.
-    frame: ^Frame,
+    // Current frame information.
+    frame:       ^Frame,
     frame_index: int,
-    frames: [16]Frame,
+    frames:      [16]Frame,
+
+    // Stack used across all active call frames.
     stack: [64]Value,
 }
 
 @(private="package")
 Global_State :: struct {
+    // Pointer to the main state we were allocated alongside.
+    main_state: ^State,
+
     // Hash table of all interned strings.
     intern: Intern,
 
@@ -49,7 +55,10 @@ Global_State :: struct {
 
 @(private="package")
 Frame :: struct {
-    chunk: ^Chunk,
+    // The value which represents the function being called. It must be a pointer
+    // so that we can try to report the variable name which points to the
+    // function.
+    callee: ^Value,
 
     // Index of instruction where we left off (e.g. if we dispatch a Lua
     // function call).
@@ -62,10 +71,11 @@ Frame :: struct {
 @(private="package")
 vm_init :: proc(L: ^State, g: ^Global_State) -> (ok: bool) {
     init :: proc(L: ^State, _: rawptr) {
+        g := L.global_state
 
         // Ensure that, when we start interning strings, we already have
         // valid indexes.
-        intern_resize(L, &L.global_state.intern, 32)
+        intern_resize(L, &g.intern, 32)
         s := ostring_new(L, MEMORY_ERROR_MESSAGE)
         s.mark += {.Fixed}
         for kw_type in Token_Type.And..=Token_Type.While {
@@ -77,7 +87,7 @@ vm_init :: proc(L: ^State, g: ^Global_State) -> (ok: bool) {
 
         // Ensure that the globals table is of some non-zero minimum size.
         t := table_new(L, 17)
-        L.globals_table = t
+        L.globals_table = value_make(t)
 
         // Initialize concat string builder with some reasonable default size.
         L.builder = strings.builder_make(32, context.allocator)
@@ -87,10 +97,11 @@ vm_init :: proc(L: ^State, g: ^Global_State) -> (ok: bool) {
     }
 
     L.global_state = g
+    g.main_state   = L
 
     // Don't use `vm_raw_pcall()`, because we won't be able to push an error
     // object in case of memory errors.
-    err := vm_raw_run_protected(L, init, nil)
+    err := raw_run_unrestoring(L, init, nil)
     return err == nil
 }
 
@@ -201,22 +212,27 @@ vm_concat :: proc(L: ^State, dst: ^Value, args: []Value) -> ^Ostring {
 }
 
 @(private="package")
-vm_pop :: proc(L: ^State, n: int) {
-    L.registers = L.registers[:get_top(L) - n]
+vm_pop :: proc(L: ^State, count: int) {
+    L.registers = L.registers[:get_top(L) - count]
 }
 
 @(private="package")
 vm_save_base :: proc(L: ^State) -> (index: int) #no_bounds_check {
-    func_base := &L.registers[0]
-    stack     := &L.stack[0]
-    return intrinsics.ptr_sub(func_base, stack)
+    callee_base := &L.registers[0]
+    stack_base  := &L.stack[0]
+    return intrinsics.ptr_sub(callee_base, stack_base)
 }
 
 @(private="package")
 vm_save_top :: proc(L: ^State) -> (index: int) #no_bounds_check {
-    func_top := &L.registers[get_top(L)]
-    stack    := &L.stack[0]
-    return intrinsics.ptr_sub(func_top, stack)
+    callee_top := &L.registers[get_top(L)]
+    stack_base := &L.stack[0]
+    return intrinsics.ptr_sub(callee_top, stack_base)
+}
+
+@(private="package")
+vm_save_stack :: proc(L: ^State, value: ^Value) -> (index: int) {
+    return find_ptr_index_unsafe(L.stack[:], value)
 }
 
 // @(private="file")
@@ -289,7 +305,7 @@ vm_execute :: proc(L: ^State) {
 
 
     frame := L.frame
-    chunk := frame.chunk
+    chunk := value_get_chunk(frame.callee^)
 
     // Registers array.
     R := frame.registers
@@ -302,11 +318,6 @@ vm_execute :: proc(L: ^State) {
 
     // Table of defined global variables.
     _G := L.globals_table
-
-    // Zero-initalize the stack frame.
-    for &v in R {
-        v = value_make()
-    }
 
     when ODIN_DEBUG do fmt.println("[EXECUTION]")
     for {
@@ -340,7 +351,7 @@ vm_execute :: proc(L: ^State) {
 
         case .Get_Global:
             k := K[getarg_bx(i)]
-            if v, ok := table_get(_G, k); !ok {
+            if v, ok := table_get(value_get_table(_G), k); !ok {
                 what := value_get_string(k)
                 protect(L, pc)
                 debug_runtime_error(L, "Attempt to read undefined global '%s'", what)
@@ -350,7 +361,7 @@ vm_execute :: proc(L: ^State) {
 
         case .Set_Global:
             key := K[getarg_bx(i)]
-            table_set(L, _G, key)^ = ra^
+            table_set(L, value_get_table(_G), key)^ = ra^
 
         // Unary
         case .Len:
@@ -402,6 +413,11 @@ vm_execute :: proc(L: ^State) {
         case .Concat: vm_concat(L, ra, R[i.b:i.c])
 
         // Control flow
+        case .Call:
+            arg_count := cast(int)i.b
+            ret_count := cast(int)i.c
+            run_call(L, ra, arg_count, ret_count)
+
         case .Return:
             fmt.printf("%q returned: ", chunk_name(chunk))
             buf: [VALUE_TO_STRING_BUFFER_SIZE]byte

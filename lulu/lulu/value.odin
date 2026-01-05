@@ -10,21 +10,26 @@ Value :: struct {
     type: Value_Type,
 }
 
+/*
+**NOTE(2025-01-05)**
+- ORDER: This must match `api.odin:Type`!
+ */
 Value_Type :: enum u8 {
-    Nil, Boolean, Number,
+    // Non-collectible Types
+    Nil, Boolean, Number, Light_Userdata, Api_Proc,
 
-    // Object Types (User-facing)
-    String, Table,
-
-    // Object Types (Internal-use)
-    Chunk,
+    // Collectible Types (User-facing Object Types)
+    String, Table, Chunk,
 }
 
 Value_Data :: struct #raw_union {
-    boolean:  bool,
-    number:   f64,
-    pointer:  rawptr,
-    object:  ^Object,
+    boolean: bool,
+    number:  f64,
+    pointer: rawptr,
+
+    // An API procedure is directly callable if it has no upvalues.
+    procedure: Api_Proc,
+    object: ^Object,
 }
 
 // === VALUE DATA PAYLOADS ================================================= {{{
@@ -37,8 +42,10 @@ value_make :: proc {
     value_make_nil,
     value_make_boolean,
     value_make_number,
+    value_make_lightuserdata,
     value_make_ostring,
     value_make_table,
+    value_make_api_proc,
     value_make_chunk,
 }
 
@@ -63,6 +70,20 @@ value_make_number :: #force_inline proc "contextless" (n: f64) -> Value {
     return v
 }
 
+value_make_lightuserdata :: #force_inline proc "contextless" (p: rawptr) -> Value {
+    v: Value
+    v.pointer = p
+    v.type    = .Light_Userdata
+    return v
+}
+
+value_make_api_proc :: #force_inline proc "contextless" (p: Api_Proc) -> Value {
+    v: Value
+    v.procedure = p
+    v.type      = .Api_Proc
+    return v
+}
+
 value_make_object :: proc(o: ^Object, t: Value_Type) -> Value {
     v: Value
     // Check for consistency.
@@ -77,18 +98,18 @@ value_type :: #force_inline proc "contextless" (v: Value) -> Value_Type {
 }
 
 @(private="file")
-check_type :: #force_inline proc(v: Value, t: Value_Type) {
+_check_type :: #force_inline proc(v: Value, t: Value_Type) {
     assert(value_type(v) == t, "Expected '%s' but got '%s'",
         value_type_string(t), value_type_name(v))
 }
 
 value_get_bool :: #force_inline proc(v: Value) -> (b: bool) {
-    check_type(v, .Boolean)
+    _check_type(v, .Boolean)
     return v.boolean
 }
 
 value_get_number :: #force_inline proc(v: Value) -> (f: f64) {
-    check_type(v, .Number)
+    _check_type(v, .Number)
     return v.number
 }
 
@@ -96,10 +117,15 @@ value_get_pointer :: #force_inline proc(v: Value) -> (p: rawptr) {
     return v.pointer
 }
 
+value_get_api_proc :: #force_inline proc(v: Value) -> (p: Api_Proc) {
+    _check_type(v, .Api_Proc)
+    return v.procedure
+}
+
 value_get_object :: #force_inline proc(v: Value) -> (o: ^Object) {
     o = v.object
     // Ensure consistency.
-    check_type(v, o.type)
+    _check_type(v, o.type)
     return o
 }
 
@@ -142,12 +168,14 @@ value_type_name :: #force_inline proc(v: Value) -> string {
 
 value_type_string :: proc(t: Value_Type) -> string {
     switch t {
-    case .Nil:      return "nil"
-    case .Boolean:  return "boolean"
-    case .Number:   return "number"
-    case .String:   return "string"
-    case .Table:    return "table"
-    case .Chunk:    return "chunk"
+    case .Nil:              return "nil"
+    case .Boolean:          return "boolean"
+    case .Number:           return "number"
+    case .Light_Userdata:    return "lightuserdata"
+    case .String:           return "string"
+    case .Table:            return "table"
+    case .Api_Proc, .Chunk:
+        return "function"
     }
     unreachable()
 }
@@ -164,6 +192,10 @@ value_is_number :: #force_inline proc(v: Value) -> bool {
     return value_type(v) == .Number
 }
 
+value_is_api_proc :: #force_inline proc(v: Value) -> bool {
+    return value_type(v) == .Api_Proc
+}
+
 value_is_string :: #force_inline proc(v: Value) -> bool {
     return value_type(v) == .String
 }
@@ -173,17 +205,17 @@ value_is_falsy :: #force_inline proc(v: Value) -> bool {
 }
 
 value_get_ostring :: #force_inline proc(v: Value) -> ^Ostring {
-    check_type(v, .String)
+    _check_type(v, .String)
     return &value_get_object(v).string
 }
 
 value_get_table :: #force_inline proc(v: Value) -> ^Table {
-    check_type(v, .Table)
+    _check_type(v, .Table)
     return &value_get_object(v).table
 }
 
 value_get_chunk :: #force_inline proc(v: Value) -> ^Chunk {
-    check_type(v, .Chunk)
+    _check_type(v, .Chunk)
     return &value_get_object(v).chunk
 }
 
@@ -202,10 +234,8 @@ value_eq :: proc(a, b: Value) -> bool {
     case .Nil:      return true
     case .Boolean:  return value_get_bool(a)    == value_get_bool(b)
     case .Number:   return value_get_number(a)  == value_get_number(b)
-    case .String:   return value_get_ostring(a) == value_get_ostring(b)
-    case .Table:    return value_get_table(a)   == value_get_table(b)
-    case .Chunk:
-        break
+    case .Light_Userdata, .Api_Proc, .String, .Table, .Chunk:
+        return value_get_pointer(a) == value_get_pointer(b)
     }
     unreachable("Invalid value to compare: %v", t)
 }
@@ -230,12 +260,10 @@ value_to_string :: proc(v: Value, buf: []byte) -> string {
     case .Boolean: return "true" if value_get_bool(v) else "false"
     case .Number:  return number_to_string(value_get_number(v), buf)
     case .String:  return value_get_string(v)
-    case .Table:
+    case .Light_Userdata, .Api_Proc, .Table, .Chunk:
         s := value_type_string(t)
-        p := cast(u64)cast(uintptr)value_get_pointer(v)
+        p := value_get_pointer(v)
         return fmt.bprintf(buf, "%s: %p", s, p)
-    case .Chunk:
-        break
     }
     unreachable("Invalid value to write: %v", t)
 }

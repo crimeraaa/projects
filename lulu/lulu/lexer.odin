@@ -172,7 +172,7 @@ read_rune :: proc(x: ^Lexer) -> (r: rune) {
 Reports a error message and throws a syntax error to the parent VM.
  */
 error :: proc(x: ^Lexer, msg: string) -> ! {
-    here    := make_token(x, nil)
+    here    := make_token_type(x, nil)
     here.col = cast(i32)x.cursor
     debug_syntax_error(x, here, msg)
 }
@@ -284,15 +284,24 @@ advance_rune :: proc(x: ^Lexer) {
     read_rune(x)
 }
 
-skip_comment_multi :: proc(x: ^Lexer, nest_open: int) {
+skip_comment_multi :: proc(x: ^Lexer, nest_open: int) -> (start, stop: int) {
+    start = x.cursor
     for !is_eof(x) {
         r := peek_rune(x)
         switch r {
         case ']':
-            nest_close := consume_rune(x, '=')
+            stop = x.cursor
+
+            // Skip the first ']' so we can see the '=' or the second ']'.
+            advance_rune(x)
+            nest_close := consume_rune_multi(x, '=')
             if match_rune(x, ']') && nest_open == nest_close {
-                return
+                return start, stop
             }
+
+            // Didn't find ']' with appropriate number of '=', continue so that
+            // we don't needlessly advance.
+            continue
         case '\n':
             next_line(x)
         }
@@ -308,7 +317,7 @@ next_line :: proc(x: ^Lexer) {
 
 skip_comment :: proc(x: ^Lexer) {
     if match_rune(x, '[') {
-        nest_open := consume_rune(x, '=')
+        nest_open := consume_rune_multi(x, '=')
         // Is definitely a multiline comment?
         if match_rune(x, '[') {
             skip_comment_multi(x, nest_open)
@@ -372,11 +381,6 @@ is_alphanumeric :: proc(r: rune) -> bool {
     return is_alpha(r) || is_number(r)
 }
 
-make_token :: proc {
-    make_token_type,
-    make_token_type_string,
-}
-
 make_token_type :: proc(x: ^Lexer, type: Token_Type) -> Token {
     return make_token_type_string(x, type, x.input[x.start:x.cursor])
 }
@@ -394,7 +398,7 @@ make_token_type_string :: proc(x: ^Lexer, type: Token_Type, s: string) -> Token 
 lexer_scan_token :: proc(x: ^Lexer) -> Token {
     r := skip_whitespace(x)
     if is_eof(x) {
-        token := make_token(x, Token_Type.EOF)
+        token := make_token_type(x, Token_Type.EOF)
         token.col = x.col
         return token
     }
@@ -405,12 +409,12 @@ lexer_scan_token :: proc(x: ^Lexer) -> Token {
     advance_rune(x)
     if is_alpha(r) {
         consume_proc(x, is_alphanumeric)
-        token := make_token(x, Token_Type.Identifier)
-        // Keywords were interned on startup, so we can already check.
-        // for their types.
+        token := make_token_type(x, Token_Type.Identifier)
+        // Keywords were interned on startup, so we can already check for their
+        // types.
         s := ostring_new(x.L, token.lexeme)
         token.string = s
-        token.type    = .Identifier if s.kw_type == nil else s.kw_type
+        token.type   = .Identifier if s.kw_type == nil else s.kw_type
         return token
     } else if is_number(r) {
         return make_number_token(x, r)
@@ -427,7 +431,7 @@ Continuously advances while the current character matches `r`.
 **Returns**
 - n: The number of times `r` was matched.
  */
-consume_rune :: proc(x: ^Lexer, r: rune) -> (n: int) {
+consume_rune_multi :: proc(x: ^Lexer, r: rune) -> (n: int) {
     for !is_eof(x) && peek_rune(x) == r {
         advance_rune(x)
         n += 1
@@ -463,7 +467,7 @@ make_number_token :: proc(x: ^Lexer, leader: rune) -> Token {
             // Advance ONLY if we absolutely have a base prefix.
             advance_rune(x)
             consume_proc(x, is_alphanumeric)
-            token := make_token(x, Token_Type.Number)
+            token := make_token_type(x, Token_Type.Number)
             i, ok := strconv.parse_uint(token.lexeme[2:], base)
             if !ok {
                 error(x, "Malformed integer")
@@ -496,7 +500,7 @@ make_number_token :: proc(x: ^Lexer, leader: rune) -> Token {
     // a valid number. This helps us inform the user ASAP.
     consume_proc(x, is_alphanumeric)
 
-    token := make_token(x, Token_Type.Number)
+    token := make_token_type(x, Token_Type.Number)
     n, ok := strconv.parse_f64(token.lexeme)
     if !ok {
         error(x, "Malformed number")
@@ -511,7 +515,20 @@ make_rune_token :: proc(x: ^Lexer, r: rune) -> Token {
     // Balanced Pairs
     case '(': type = .Paren_Open
     case ')': type = .Paren_Close
-    case '[': type = .Bracket_Open
+    case '[':
+        nest_open := consume_rune_multi(x, '=')
+        if match_rune(x, '[') {
+            start, stop := skip_comment_multi(x, nest_open)
+            token       := make_token_type_string(x, .String, x.input[start:stop])
+            interned    := ostring_new(x.L, token.lexeme)
+            token.string = interned
+            return token
+        } else {
+            if nest_open > 0 {
+                error(x, "Expected a multiline string")
+            }
+            type = .Bracket_Open
+        }
     case ']': type = .Bracket_Close
     case '{': type = .Curly_Open
     case '}': type = .Curly_Close
@@ -546,7 +563,7 @@ make_rune_token :: proc(x: ^Lexer, r: rune) -> Token {
     case '<': type = .Less_Than    if match_rune(x, '=') else .Less_Equal
     case '>': type = .Greater_Than if match_rune(x, '=') else .Greater_Equal
     }
-    return make_token(x, type)
+    return make_token_type(x, type)
 }
 
 make_string_token :: proc(x: ^Lexer, q: rune) -> Token {
@@ -616,7 +633,7 @@ make_string_token :: proc(x: ^Lexer, q: rune) -> Token {
         }
     }
 
-    token := make_token(x, Token_Type.String)
+    token := make_token_type(x, Token_Type.String)
     // Skip single quotes in the string.
     token.lexeme = token.lexeme[1:len(token.lexeme) - 1]
     token.string = ostring_new(L, strings.to_string(b^))

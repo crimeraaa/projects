@@ -3,12 +3,15 @@ package lulu
 import "core:strings"
 
 Type :: enum {
+    // API only. Represents a value that does not exist in the stack.
     None = -1,
     Nil,
     Boolean,
     Number,
+    Light_Userdata,
     String,
     Table,
+    Function,
 }
 
 Error :: enum {
@@ -28,8 +31,25 @@ Error :: enum {
     Memory,
 }
 
-@(private="file", rodata)
-VALUE_NONE: Value
+/*
+API. Lulu passes data to Odin similar to how Lua passes data to C.
+
+1. A new stack frame (the callee's) is pushed on top of the previous stack
+frame (the caller's).
+2. The arguments, if any, are pushed to the stack.
+3. Arguments are accessible starting from index `1`.
+4. The API procedure will push its return values, if any, to the stack.
+5. Upon return, the previous stack frame (the caller's) is now able to see
+the results.
+
+ */
+Api_Proc :: #type proc(L: ^State) -> (ret_count: int)
+
+
+/*
+Pseudo index to access the globals table of the given state.
+ */
+GLOBALS_INDEX :: -16_000
 
 
 /*
@@ -49,7 +69,7 @@ current function upvalues.
 - 3.3 - Pseudo-Indices: https://www.lua.org/manual/5.1/manual.html#3.3
  */
 @(private="file")
-get_index :: proc(L: ^State, index: int) -> ^Value {
+_get_any_index :: proc(L: ^State, index: int) -> ^Value {
     i   := index
     top := get_top(L)
     if i > 0 {
@@ -59,20 +79,47 @@ get_index :: proc(L: ^State, index: int) -> ^Value {
         i += top
     }
 
-    return &L.registers[i] if 0 <= i && i < top else &VALUE_NONE
+    if 0 <= i && i < top {
+        return &L.registers[i]
+    }
+
+    // Original value may have been a pseudo index.
+    switch index {
+    case GLOBALS_INDEX: return &L.globals_table
+    }
+    return &_VALUE_NONE
 }
 
+@(private="file")
+_get_stack_index :: proc(L: ^State, index: int) -> ^Value {
+    i := index
+    if i > 0 {
+        i -= 1
+    } else {
+        assert(i != 0)
+        i += get_top(L)
+    }
+
+    // Let slice bounds checking fail if we got a unacceptable index or a
+    // pseudo-index.
+    return &L.registers[i]
+}
+
+@(private="file", rodata)
+_VALUE_NONE: Value
+
 new_state :: proc() -> (L: ^State, ok: bool) {
-    @static
-    g: Global_State
+    Main_State :: struct {
+        global_state: Global_State,
+        main_state: State,
+    }
 
     @static
-    vm: State
-    ok = vm_init(&vm, &g)
-    if ok {
-        L = &vm
-    } else {
-        vm_destroy(L)
+    ms: Main_State
+    ok = vm_init(&ms.main_state, &ms.global_state)
+    L  = &ms.main_state if ok else nil
+    if !ok {
+        vm_destroy(&ms.main_state)
     }
     return L, ok
 }
@@ -98,42 +145,147 @@ pop :: proc(L: ^State, count: int) {
 }
 
 type :: proc(L: ^State, index: int) -> Type {
-    v := get_index(L, index)
-    if v == &VALUE_NONE {
+    v := _get_any_index(L, index)
+    if v == &_VALUE_NONE {
         return .None
     }
 
     // lulu.Value_Type to lulu.Type
     vt := value_type(v^)
     switch vt {
-    case .Nil:      return .Nil
-    case .Boolean:  return .Boolean
-    case .Number:   return .Number
-    case .String:   return .String
-    case .Table:    return .Table
-    case .Chunk:
-        break;
+    case .Nil:              return .Nil
+    case .Boolean:          return .Boolean
+    case .Number:           return .Number
+    case .Light_Userdata:   return .Light_Userdata
+    case .String:           return .String
+    case .Table:            return .Table
+    case .Chunk, .Api_Proc:
+        return .Function
     }
-    unreachable("Invalid value type %v", vt)
+    unreachable()
+}
+
+type_name_at :: proc(L: ^State, index: int) -> string {
+    v := _get_any_index(L, index)
+    if v == &_VALUE_NONE {
+        return "(no value)"
+    }
+    return value_type_name(v^)
 }
 
 to_boolean :: proc(L: ^State, index: int) -> (b: bool) {
-    v := get_index(L, index)^
+    v := _get_any_index(L, index)^
     return !value_is_falsy(v)
 }
 
 to_number :: proc(L: ^State, index: int) -> (n: f64, ok: bool) #optional_ok {
-    v := get_index(L, index)^
+    v := _get_any_index(L, index)^
     ok = value_is_number(v)
     n  = value_get_number(v) if ok else 0.0
     return n, ok
 }
 
+to_pointer :: proc(L: ^State, index: int) -> (p: rawptr, ok: bool) #optional_ok {
+    v := _get_any_index(L, index)^
+    t := value_type(v)
+    #partial switch t {
+    case .Light_Userdata: return value_get_pointer(v), true
+    case .Table: return value_get_table(v), true
+    case .Chunk: return value_get_chunk(v), true
+
+    // WARNING(2025-01-05): Generally a bad idea!
+    case .Api_Proc: return transmute(rawptr)value_get_api_proc(v), true
+    case:
+        break
+    }
+    return nil, false
+}
+
+to_userdata :: proc(L: ^State, index: int) -> (p: rawptr, ok: bool) #optional_ok {
+    v := _get_any_index(L, index)^
+    t := value_type(v)
+    #partial switch t {
+    case .Light_Userdata: return value_get_pointer(v), true
+    case:
+        break
+    }
+    return nil, false
+}
+
 to_string :: proc(L: ^State, index: int) -> (s: string, ok: bool) #optional_ok {
-    v := get_index(L, index)^
+    v := _get_any_index(L, index)^
     ok = value_is_string(v)
     s  = value_get_string(v) if ok else ""
     return s, ok
+}
+
+/*
+Push `R[index]` to the top of the stack.
+
+**Parameters**
+- index: Either an acceptable index or a pseudo-index.
+
+**Side-effects**
+- push: 1
+- pop:  0
+ */
+push_value :: proc(L: ^State, index: int) {
+    v := _get_any_index(L, index)^
+    vm_push_value(L, v)
+}
+
+push_boolean :: proc(L: ^State, b: bool) {
+    v := value_make(b)
+    vm_push_value(L, v)
+}
+
+push_number :: proc(L: ^State, n: f64) {
+    v := value_make(n)
+    vm_push_value(L, v)
+}
+
+push_lightuserdata :: proc(L: ^State, p: rawptr) {
+    v := value_make(p)
+    vm_push_value(L, v)
+}
+
+push_string :: proc(L: ^State, s: string) {
+    v := value_make(ostring_new(L, s))
+    vm_push_value(L, v)
+}
+
+push_api_proc :: proc(L: ^State, p: Api_Proc) {
+    v := value_make(p)
+    vm_push_value(L, v)
+}
+
+/*
+Push `_G[key]` to the top of the stack.
+
+**Side-effects**
+- push: 1
+- pop:  0
+ */
+get_global :: proc(L: ^State, name: string) {
+    t := value_get_table(L.globals_table)
+    k := value_make(ostring_new(L, name))
+    v := table_get(t, k)
+    vm_push_value(L, v)
+}
+
+/*
+`_G[name] = R[-1]`, where `R[-1]` is the most recently pushed value.
+
+**Side-effects**
+- push: 0
+- pop:  1
+ */
+set_global :: proc(L: ^State, name: string) {
+    t := value_get_table(L.globals_table)
+    k := value_make(ostring_new(L, name))
+    v := table_set(L, t, k)
+    v^ = _get_stack_index(L, -1)^
+    vm_pop(L, 1)
 }
 
 load :: proc(L: ^State, name, input: string) -> Error {
@@ -151,41 +303,33 @@ load :: proc(L: ^State, name, input: string) -> Error {
         name  := ostring_new(L, data.name)
         program(L, data.builder, name, data.input)
     }
-    return vm_raw_pcall(L, parse, &Data{&b, name, input})
+    return raw_run_restoring(L, parse, &Data{&b, name, input})
 }
 
 pcall :: proc(L: ^State, arg_count, ret_count: int) -> Error {
     Data :: struct {
+        callee: ^Value,
         arg_count, ret_count: int,
     }
 
-    call :: proc(L: ^State, user_data: rawptr) {
-        data     := (cast(^Data)user_data)^
-        old_base := vm_save_base(L)
-        old_top  := vm_save_top(L)
-
-        new_base := old_top - data.arg_count
-        callee   := L.stack[new_base - 1]
-        chunk    := value_get_chunk(callee)
-        new_top  := new_base + chunk.stack_used
-
-        // Push new stack frame.
-        registers := L.stack[new_base:new_top]
-        frame     := &L.frames[L.frame_index]
-        L.frame_index += 1
-        L.frame        = frame
-
-        // Initialize the newly pushed stack frame.
-        frame.chunk     = chunk
-        frame.registers = registers
-        frame.saved_pc  = -1
-
-        vm_execute(L)
-
-        // Restore previous stack frame.
-        L.frame_index -= 1
-        L.frame = &L.frames[L.frame_index]
-        set_top(L, new_base - 1 + data.ret_count)
+    wrapper :: proc(L: ^State, user_data: rawptr) {
+        data := (cast(^Data)user_data)^
+        run_call(L, data.callee, data.arg_count, data.ret_count)
     }
-    return vm_raw_pcall(L, call, &Data{arg_count, ret_count})
+
+    callee := _get_stack_index(L, -(arg_count + 1))
+    return raw_run_restoring(L, wrapper, &Data{callee, arg_count, ret_count})
+}
+
+/*
+Pushes the API procedure `p` and raw pointer `user_data` to the stack
+and calls `p` with `user_data` as its sole argument.
+
+**Returns**
+- err: An API error code, if any, were caught.
+ */
+api_pcall :: proc(L: ^State, p: Api_Proc, user_data: rawptr) -> (err: Error) {
+    vm_push_value(L, value_make(p))
+    vm_push_value(L, value_make(user_data))
+    return pcall(L, arg_count=1, ret_count=0)
 }

@@ -42,7 +42,6 @@ Rule :: struct {
     right: Precedence,
 }
 
-@(private="package")
 parser_make :: proc(L: ^State, builder: ^strings.Builder, name: ^Ostring, input: string) -> Parser {
     p := Parser{lexer=lexer_make(L, builder, name, input)}
     advance_token(&p)
@@ -52,6 +51,7 @@ parser_make :: proc(L: ^State, builder: ^strings.Builder, name: ^Ostring, input:
 @(private="package")
 program :: proc(L: ^State, b: ^strings.Builder, name: ^Ostring, input: string) {
     chunk := chunk_new(L, name)
+    // Ensure `chunk` cannot be collected.
     vm_push_value(L, value_make(chunk))
 
     p := parser_make(L, b, name, input)
@@ -151,15 +151,26 @@ statement :: proc(p: ^Parser, c: ^Compiler)  {
         advance_token(p)
         var := resolve_variable(p, c)
         if check_either_token(p, .Comma, .Assign) {
-            head := &Assign_List{var=var, prev=nil}
-            assignment(p, c, head, 1)
+            assignment(p, c, &Assign_List{var=var, prev=nil}, 1)
         } else {
-            // No function calls yet
-            parser_error(p, "Expected an assignment statement")
+            expect_token(p, .Paren_Open)
+            arg_count: u16
+            callee_reg := compiler_push_expr_next(c, &var)
+            if !check_token(p, .Paren_Close) {
+                arg_first: u16
+                arg_first, arg_count = expression_list(p, c)
+                compiler_pop_reg(c, arg_first, arg_count)
+            }
+            expect_token(p, .Paren_Close)
+            compiler_code_abc(c, .Call, callee_reg, arg_count, 0)
+            compiler_pop_expr(c, &var)
         }
     case .Return:
         advance_token(p)
         return_statement(p, c)
+
+    case:
+        parser_error(p, "Expected a statement")
     }
     match_token(p, .Semicolon)
 }
@@ -204,17 +215,12 @@ local_statement :: proc(p: ^Parser, c: ^Compiler) {
 }
 
 adjust_assign :: proc(c: ^Compiler, lhs_count, rhs_count: u16) {
-    // Nothing to do?
-    if lhs_count == rhs_count {
-        return
-    }
-
-    // local x, y = 1, 2, 3
     if lhs_count < rhs_count {
+        // `local x, y = 1, 2, 3`
         extra := rhs_count - lhs_count
         compiler_pop_reg(c, c.free_reg - 1, extra)
-    } // local x, y, z = 1, 2
-    else {
+    } else if lhs_count > rhs_count {
+        // `local x, y, z = 1, 2`
         extra := lhs_count - rhs_count
         reg   := compiler_push_reg(c, extra)
         compiler_load_nil(c, reg, extra)

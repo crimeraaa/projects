@@ -53,7 +53,7 @@ compiler_end :: proc(c: ^Compiler) {
     L     := c.L
     chunk := c.chunk
     compiler_code_return(c, 0, 0)
-    chunk_fix(L, chunk, c.pc, c.locals_count, c.constants_count)
+    chunk_fix(L, chunk, c)
     disassemble(chunk)
 }
 
@@ -125,12 +125,12 @@ compiler_pop_locals :: proc(c: ^Compiler, count: u16) {
 
 compiler_add_string :: proc(c: ^Compiler, s: ^Ostring) -> (index: u32) {
     value := value_make(s)
-    index = add_constant(c, value)
+    index = _add_constant(c, value)
     return index
 }
 
 @(private="file")
-add_constant :: proc(c: ^Compiler, v: Value) -> (index: u32) {
+_add_constant :: proc(c: ^Compiler, v: Value) -> (index: u32) {
     L := c.L
     chunk := c.chunk
     for constant, index in chunk.constants[:] {
@@ -151,7 +151,7 @@ Appends `i` to the current chunk's code array.
 - pc: The index of the instruction we just emitted.
  */
 @(private="file")
-add_instruction :: proc(c: ^Compiler, i: Instruction) -> (pc: int) {
+_add_instruction :: proc(c: ^Compiler, i: Instruction) -> (pc: int) {
     L := c.L
     p := c.parser
 
@@ -164,7 +164,7 @@ compiler_code_abc :: proc(cl: ^Compiler, op: Opcode, a, b, c: u16) -> (pc: int) 
     assert(OP_INFO[op].mode == .ABC)
 
     i := instruction_make_abc(op, a, b, c)
-    return add_instruction(cl, i)
+    return _add_instruction(cl, i)
 }
 
 compiler_code_abx :: proc(c: ^Compiler, op: Opcode, a: u16, bx: u32) -> (pc: int) {
@@ -173,7 +173,7 @@ compiler_code_abx :: proc(c: ^Compiler, op: Opcode, a: u16, bx: u32) -> (pc: int
     assert(OP_INFO[op].c == nil)
 
     i := instruction_make_abx(op, a, bx)
-    return add_instruction(c, i)
+    return _add_instruction(c, i)
 }
 
 compiler_code_return :: proc(c: ^Compiler, reg, count: u16) {
@@ -270,7 +270,7 @@ This is the 2nd simplest register allocation strategy.
  */
 compiler_push_expr_any :: proc(c: ^Compiler, e: ^Expr) -> (reg: u16) {
     // Convert `.Local` to `.Register`
-    discharge_expr_variables(c, e)
+    _discharge_expr_variables(c, e)
     if e.type == .Register {
         return e.reg
     }
@@ -292,12 +292,12 @@ care should be taken to ensure needlessly redundant work is avoided.
 - `lcode.c:luaK_exp2nextreg(FuncState *fs, expdesc *e)` in Lua 5.1.5.
  */
 compiler_push_expr_next :: proc(c: ^Compiler, e: ^Expr) -> (reg: u16) {
-    discharge_expr_variables(c, e)
+    _discharge_expr_variables(c, e)
     // If `e` is the current topmost register, reuse it.
     compiler_pop_expr(c, e)
 
     reg = compiler_push_reg(c)
-    discharge_expr_to_reg(c, e, reg)
+    _discharge_expr_to_reg(c, e, reg)
     return reg
 
 }
@@ -310,7 +310,7 @@ Emits the bytecode needed to retrieve variables represented by `e`.
 to type `.Pc_Pending_Register`.
  */
 @(private="file")
-discharge_expr_variables :: proc(c: ^Compiler, e: ^Expr) {
+_discharge_expr_variables :: proc(c: ^Compiler, e: ^Expr) {
     #partial switch e.type {
     case .Global:
         pc := compiler_code_abx(c, .Get_Global, 0, e.index)
@@ -338,7 +338,7 @@ the destination, hence it is termed 'discharged' (i.e. finalized).
 - `lcode.c:discharge2reg(FuncState *fs, expdesc *e, int reg)` in Lua 5.1.5.
  */
 @(private="file")
-discharge_expr_to_reg :: proc(c: ^Compiler, e: ^Expr, reg: u16) {
+_discharge_expr_to_reg :: proc(c: ^Compiler, e: ^Expr, reg: u16) {
     switch e.type {
     case .Nil:
         compiler_load_nil(c, reg, 1)
@@ -353,7 +353,7 @@ discharge_expr_to_reg :: proc(c: ^Compiler, e: ^Expr, reg: u16) {
             compiler_code_abx(c, .Load_Imm, reg, imm)
         } // Otherwise, we need to load this number in a dedicated instruction.
         else {
-            i := add_constant(c, value_make(n))
+            i := _add_constant(c, value_make(n))
             compiler_code_abx(c, .Load_Const, reg, i)
         }
 
@@ -396,10 +396,10 @@ the index of the constant fits in `K[C]`. Otherwise `false` if `e` could not
 be transformed to a constant or it was a constant but couldn't fit in `K[C]`.
  */
 @(private="file")
-push_expr_k :: proc(c: ^Compiler, e: ^Expr) -> (index: u16, ok: bool) {
+_push_expr_k :: proc(c: ^Compiler, e: ^Expr) -> (index: u16, ok: bool) {
     // Helper to transform constants into K.
     push_k :: proc(c: ^Compiler, e: ^Expr, v: Value) -> (k: u16, ok: bool) {
-        index := add_constant(c, v)
+        index := _add_constant(c, v)
         e^     = expr_make_index(.Constant, index)
         return check_k(index)
     }
@@ -500,7 +500,7 @@ compiler_code_arith :: proc(c: ^Compiler, op: Opcode, left, right: ^Expr) {
         return
     }
 
-    act_op, arg_b, arg_c := arith(c, op, left, right)
+    act_op, arg_b, arg_c := _arith(c, op, left, right)
 
     // For high precedence recursive calls, remember that we are the
     // right-hand-side of our parent expression. So in those cases, when we're
@@ -510,12 +510,12 @@ compiler_code_arith :: proc(c: ^Compiler, op: Opcode, left, right: ^Expr) {
 }
 
 @(private="file")
-arith :: proc(c: ^Compiler, op: Opcode, left, right: ^Expr) -> (act_op: Opcode, arg_b: u16, arg_c: u16) {
+_arith :: proc(c: ^Compiler, op: Opcode, left, right: ^Expr) -> (act_op: Opcode, arg_b: u16, arg_c: u16) {
     op := op
     rb := compiler_push_expr_any(c, left)
 
     // First try register-immediate.
-    try: if imm, neg, ok := check_imm(right); ok {
+    try: if imm, neg, ok := _check_imm(right); ok {
         #partial switch op {
         case .Add: op = .Add_Imm
         case .Sub: op = .Sub_Imm
@@ -548,7 +548,7 @@ arith :: proc(c: ^Compiler, op: Opcode, left, right: ^Expr) -> (act_op: Opcode, 
 
         // If it doesn't fit in K[C], then we need to load it in a separate
         // instruction via `compiler_push_expr_any()`.
-        kc := push_expr_k(c, right) or_break try
+        kc := _push_expr_k(c, right) or_break try
         compiler_pop_expr(c, left)
         return op, rb, kc
     }
@@ -570,7 +570,7 @@ arith :: proc(c: ^Compiler, op: Opcode, left, right: ^Expr) -> (act_op: Opcode, 
 }
 
 @(private="file")
-check_imm :: #force_inline proc(e: ^Expr) -> (imm: u16, neg, ok: bool) {
+_check_imm :: #force_inline proc(e: ^Expr) -> (imm: u16, neg, ok: bool) {
     if expr_is_number(e) {
         n  := e.number
         neg = n < 0.0
