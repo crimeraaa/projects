@@ -31,8 +31,12 @@ debug_type_error :: proc(L: ^State, action: string, culprit: ^Value) -> ! {
     // If `culprit` came from the stack, it may come from a variable of some
     // kind. Try to find the variable name if at all possible.
     reg, is_reg := find_ptr_index(frame.registers, culprit);
-    if is_reg && value_type(callee) == .Chunk {
-        chunk := value_get_chunk(callee)
+    with_name: if is_reg && value_is_function(callee) {
+        closure := value_get_function(callee)
+        if !closure.is_lua {
+            break with_name
+        }
+        chunk := closure.lua.chunk
         if scope, name, is_var := find_variable(chunk, reg, frame.saved_pc); is_var {
             debug_runtime_error(L, "Attempt to %s %s '%s' (a %s value)",
                 action, scope, name, type_name)
@@ -48,23 +52,19 @@ Throws a runtime error and reports an error message.
 - `L.frame.saved_pc` was set beforehand so we know where to look.
  */
 debug_runtime_error :: proc(L: ^State, format := "", args: ..any) -> ! {
-    msg      := vm_push_fstring(L, format, ..args)
-    frame    := L.frame
-    function := frame.callee^
-    #partial switch value_type(function) {
-    case .Chunk:
-        chunk := value_get_chunk(function)
-        file := chunk_name(chunk)
+    msg     := vm_push_fstring(L, format, ..args)
+    frame   := L.frame
+    closure := value_get_function(frame.callee^)
+    if closure.is_lua {
+        chunk := closure.lua.chunk
+        file  := chunk_name(chunk)
+        // If `frame.saved_pc == -1` then we forgot to protect!
         loc  := chunk.loc[frame.saved_pc]
-        line := cast(int)loc.line
-        col  := cast(int)loc.col
+        line := int(loc.line)
+        col  := int(loc.col)
         vm_push_fstring(L, "%s:%i:%i: %s", file, line, col, msg)
-
-    case .Api_Proc:
+    } else {
         vm_push_fstring(L, "[Odin] %s", msg)
-
-    case:
-        unreachable()
     }
     throw_error(L, .Runtime)
 }
@@ -78,8 +78,8 @@ Throws a runtime error and reports a message in the form `file:line:col: message
 debug_syntax_error :: proc(x: ^Lexer, here: Token, msg: string) -> ! {
     L := x.L
     file := ostring_to_string(x.name)
-    line := cast(int)here.line
-    col  := cast(int)here.col
+    line := int(here.line)
+    col  := int(here.col)
     vm_push_fstring(L, "%s:%i:%i: %s near '%s'", file, line, col, msg, here.lexeme)
     throw_error(x.L, .Syntax)
 }
@@ -177,11 +177,11 @@ disassemble_at :: proc(chunk: ^Chunk, i: Instruction, pc: int, pad := 0) {
         // }
 
     case .ABx:
-        arg = getarg_bx(i)
+        arg = i.x.bx
         fmt.printf("% -9i ; ", arg)
 
     case .AsBx:
-        arg = getarg_bx(i)
+        arg = i.x.bx
         fmt.printf("% -9i ; ", arg)
     }
 
@@ -193,7 +193,7 @@ disassemble_at :: proc(chunk: ^Chunk, i: Instruction, pc: int, pad := 0) {
     switch op {
     case .Move:       fmt.print(get_reg(chunk, arg.(BC).b, pc, buf1[:]))
     case .Load_Nil:   fmt.printf("$r[%i:%i] := nil", i.a, arg.(BC).b)
-    case .Load_Bool:  fmt.print(cast(bool)arg.(BC).b)
+    case .Load_Bool:  fmt.print(bool(arg.(BC).b))
     case .Load_Imm:   fmt.print(arg.(Bx))
     case .Load_Const:
         v := chunk.constants[arg.(Bx)]
@@ -203,7 +203,7 @@ disassemble_at :: proc(chunk: ^Chunk, i: Instruction, pc: int, pad := 0) {
     case .Set_Global: fmt.printf("_G.%s := %s", get_global(chunk, arg), ra)
     case .Len..=.Unm:
         rb := get_reg(chunk, arg.(BC).b, pc, buf1[:])
-        fmt.printf("%s%s", _op_string(op), rb)
+        fmt.printf("%s(%s)", _op_string(op), rb)
 
     case .Add_Imm..=.Sub_Imm:
         rb := get_reg(chunk, arg.(BC).b, pc, buf1[:])
@@ -222,20 +222,30 @@ disassemble_at :: proc(chunk: ^Chunk, i: Instruction, pc: int, pad := 0) {
     case .Concat: fmt.printf("concat $r[%i:%i]", i.b, i.c)
 
     case .Call:
-        base_reg  := cast(int)i.a
+        base_reg  := int(i.a)
         arg_first := base_reg + 1
-        arg_count := cast(int)arg.(BC).b
-        ret_count := cast(int)arg.(BC).c
-        if ret_count > 0 {
+        arg_count := int(arg.(BC).b) + VARIADIC
+        ret_count := int(arg.(BC).c) + VARIADIC
+        if ret_count == VARIADIC {
+            fmt.printf("$r[%i:] := ", base_reg)
+        } else if ret_count > 0 {
             fmt.printf("$r[%i:%i] := ", base_reg, base_reg + ret_count)
         }
-        fmt.printf("%s($r[%i:%i])", ra, arg_first, arg_first + arg_count)
+
+        if arg_count == VARIADIC {
+            fmt.printf("%s($r[%i:])", ra, arg_first)
+        } else {
+            fmt.printf("%s($r[%i:%i])", ra, arg_first, arg_first + arg_count)
+        }
 
     case .Return:
-        start := i.a
-        stop  := start + arg.(BC).b
-        if start == stop - 1 {
-            fmt.printf("return %s", get_reg(chunk, start, pc, buf1[:]))
+        start := int(i.a)
+        count := int(arg.(BC).b) + VARIADIC
+        stop  := start + count
+        if count == VARIADIC {
+            fmt.printf("return $r[%i:]", start)
+        } else if start == stop - 1 {
+            fmt.printf("return %s", get_reg(chunk, u16(start), pc, buf1[:]))
         } else {
             fmt.printf("return $r[%i:%i]", start, stop)
         }
@@ -247,8 +257,8 @@ disassemble_at :: proc(chunk: ^Chunk, i: Instruction, pc: int, pad := 0) {
 _op_string :: proc(op: Opcode) -> string {
     #partial switch op {
     // Unary
-    case .Len: return "#"
-    case .Not: return "not "
+    case .Len: return "len"
+    case .Not: return "not"
     case .Unm: return "-"
 
     // Arithmetic
@@ -301,7 +311,7 @@ find_variable :: proc(chunk: ^Chunk, #any_int reg, pc: int) -> (scope, name: str
 
         case .Get_Global:
             scope = "global"
-            name  = value_get_string(chunk.constants[getarg_bx(i)])
+            name  = value_get_string(chunk.constants[i.x.bx])
             ok    = true
         }
     }
@@ -319,9 +329,9 @@ _symbolic_execute :: proc(chunk: ^Chunk, reg, last_pc: int) -> (i: Instruction) 
     // pointing to the final, neutral return.
     prev_pc := len(chunk.code) - 1
 
-    NEUTRAL_RETURN := Instruction{op=.Return, a=0, b=0, c=0}
-    assert(chunk.code[prev_pc] == NEUTRAL_RETURN, "Expected %v but got %v",
-        NEUTRAL_RETURN, chunk.code[prev_pc])
+    NEUTRAL_RETURN := instruction_make_abc(.Return, 0, 1, 0)
+    assert(instruction_eq(chunk.code[prev_pc], NEUTRAL_RETURN), "Expected %v but got %v",
+        NEUTRAL_RETURN.base, chunk.code[prev_pc].base)
 
     // TODO(2026-01-03): Verify bytecode correctness? Execute jumps?
     for pc in 0..<last_pc {
@@ -330,7 +340,7 @@ _symbolic_execute :: proc(chunk: ^Chunk, reg, last_pc: int) -> (i: Instruction) 
 
         // This instruction mutates R[A] and `reg` is the destination?
         if OP_INFO[op].a {
-            if cast(int)i.a == reg {
+            if int(i.a) == reg {
                 prev_pc = pc
             }
         }

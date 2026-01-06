@@ -88,7 +88,7 @@ compiler_resolve_local :: proc(c: ^Compiler, name: ^Ostring) -> (reg: u16, ok: b
     // Iterate from innermost scope going outwards.
     #reverse for i, reg in c.active_locals[:c.active_count] {
         if c.chunk.locals[i].name == name {
-            return cast(u16)reg, true
+            return u16(reg), true
         }
     }
     return 0, false
@@ -124,8 +124,7 @@ compiler_pop_locals :: proc(c: ^Compiler, count: u16) {
 }
 
 compiler_add_string :: proc(c: ^Compiler, s: ^Ostring) -> (index: u32) {
-    value := value_make(s)
-    index = _add_constant(c, value)
+    index = _add_constant(c, value_make_ostring(s))
     return index
 }
 
@@ -135,7 +134,7 @@ _add_constant :: proc(c: ^Compiler, v: Value) -> (index: u32) {
     chunk := c.chunk
     for constant, index in chunk.constants[:] {
         if value_eq(v, constant) {
-            return cast(u32)index
+            return u32(index)
         }
     }
     return chunk_push_constant(L, chunk, &c.constants_count, v)
@@ -177,7 +176,18 @@ compiler_code_abx :: proc(c: ^Compiler, op: Opcode, a: u16, bx: u32) -> (pc: int
 }
 
 compiler_code_return :: proc(c: ^Compiler, reg, count: u16) {
-    compiler_code_abc(c, .Return, reg, count, 0)
+    compiler_code_abc(c, .Return, reg, count - u16(VARIADIC), 0)
+}
+
+compiler_set_returns :: proc(c: ^Compiler, call: ^Expr, ret_count: u16) {
+    // Expression is an open function call?
+    if call.type == .Call {
+        // VARIADIC is -1, so we encode 0.
+        // Likewise, returning 0 values is actually encoded as C=1.
+        ip := &c.chunk.code[call.pc]
+        ip.c  = (ret_count - u16(VARIADIC))
+        call^ = expr_make_reg(.Register, ip.a)
+    }
 }
 
 // === }}} =====================================================================
@@ -199,14 +209,15 @@ compiler_push_reg :: proc(c: ^Compiler, count: u16 = 1) -> (reg: u16) {
         parser_error(c.parser, msg)
     }
 
-    if cast(int)c.free_reg > c.chunk.stack_used {
-        c.chunk.stack_used = cast(int)c.free_reg
+    if int(c.free_reg) > c.chunk.stack_used {
+        c.chunk.stack_used = int(c.free_reg)
     }
     return reg
 }
 
 /*
-Pops the topmost `count` registers, ensuring that `reg` matches that register.
+Pops the topmost `count` registers, ensuring that `reg` will be the new top
+upon done popping.
 
 **Guarantees**
 - If we are popping registers out of order then we panic, because that is a
@@ -321,6 +332,9 @@ _discharge_expr_variables :: proc(c: ^Compiler, e: ^Expr) {
     // no information on the register allocation state here.
     case .Local:
         e.type = .Register
+
+    case .Call:
+        compiler_set_returns(c, e, 1)
     }
 }
 
@@ -338,22 +352,22 @@ the destination, hence it is termed 'discharged' (i.e. finalized).
 - `lcode.c:discharge2reg(FuncState *fs, expdesc *e, int reg)` in Lua 5.1.5.
  */
 @(private="file")
-_discharge_expr_to_reg :: proc(c: ^Compiler, e: ^Expr, reg: u16) {
+_discharge_expr_to_reg :: proc(c: ^Compiler, e: ^Expr, reg: u16, loc := #caller_location) {
     switch e.type {
     case .Nil:
         compiler_load_nil(c, reg, 1)
 
     case .Boolean:
-        compiler_code_abc(c, .Load_Bool, reg, cast(u16)e.boolean, 0)
+        compiler_code_abc(c, .Load_Bool, reg, u16(e.boolean), 0)
 
     case .Number:
         // Can we load it as a positive integer immediately from Bx?
         if n := e.number; 0.0 <= n && n <= MAX_IMM_Bx && n == math.floor(n) {
-            imm := cast(u32)n
+            imm := u32(n)
             compiler_code_abx(c, .Load_Imm, reg, imm)
         } // Otherwise, we need to load this number in a dedicated instruction.
         else {
-            i := _add_constant(c, value_make(n))
+            i := _add_constant(c, value_make_number(n))
             compiler_code_abx(c, .Load_Const, reg, i)
         }
 
@@ -361,8 +375,8 @@ _discharge_expr_to_reg :: proc(c: ^Compiler, e: ^Expr, reg: u16) {
         compiler_code_abx(c, .Load_Const, reg, e.index)
 
     // We assume `discharge_expr_variables()` was called beforehand
-    case .Global, .Local:
-        unreachable("Invalid expr to discharge: %v", e.type)
+    case .Global, .Local, .Call:
+        unreachable("Invalid expr to discharge: %v", e.type, loc=loc)
 
     case .Pc_Pending_Register:
         c.chunk.code[e.pc].a = reg
@@ -407,17 +421,17 @@ _push_expr_k :: proc(c: ^Compiler, e: ^Expr) -> (index: u16, ok: bool) {
     // Constant index fits in a K register?
     // i.e. when it is masked t fit, we do not lose any of the original bits.
     check_k :: proc(index: u32) -> (k: u16, ok: bool) {
-        return cast(u16)index, index <= MAX_K_C
+        return u16(index), index <= MAX_K_C
     }
 
     switch e.type {
-    case .Nil:      return push_k(c, e, value_make())
-    case .Boolean:  return push_k(c, e, value_make(e.boolean))
-    case .Number:   return push_k(c, e, value_make(e.number))
+    case .Nil:      return push_k(c, e, value_make_nil())
+    case .Boolean:  return push_k(c, e, value_make_boolean(e.boolean))
+    case .Number:   return push_k(c, e, value_make_number(e.number))
     case .Constant: return check_k(e.index)
 
     // Nothing we can do.
-    case .Global, .Pc_Pending_Register:
+    case .Global, .Call, .Pc_Pending_Register:
         break
 
     // Already has a register, reuse it.
@@ -452,7 +466,7 @@ register allocation for its result by the caller.
  */
 compiler_code_unary :: proc(c: ^Compiler, op: Opcode, e: ^Expr) {
     // Constant folding to avoid unnecessary work.
-    if op == .Unm && expr_is_number(e) {
+    if op == .Unm && e.type == .Number {
         e.number = number_unm(e.number)
         return
     }
@@ -482,7 +496,7 @@ compiler_code_arith :: proc(c: ^Compiler, op: Opcode, left, right: ^Expr) {
     }
 
     // Can constant fold?
-    fold: if expr_is_number(left) && expr_is_number(right) {
+    fold: if left.type == .Number && right.type == .Number {
         a := left.number
         b := right.number
         res: f64
@@ -511,14 +525,13 @@ compiler_code_arith :: proc(c: ^Compiler, op: Opcode, left, right: ^Expr) {
 
 @(private="file")
 _arith :: proc(c: ^Compiler, op: Opcode, left, right: ^Expr) -> (act_op: Opcode, arg_b: u16, arg_c: u16) {
-    op := op
     rb := compiler_push_expr_any(c, left)
 
     // First try register-immediate.
     try: if imm, neg, ok := _check_imm(right); ok {
         #partial switch op {
-        case .Add: op = .Add_Imm
-        case .Sub: op = .Sub_Imm
+        case .Add: act_op = .Add_Imm if !neg else .Sub_Imm
+        case .Sub: act_op = .Sub_Imm if !neg else .Add_Imm
 
         // Have an immediate but we don't have a dedicated instruction for this
         // particular arithmetic operation.
@@ -527,21 +540,18 @@ _arith :: proc(c: ^Compiler, op: Opcode, left, right: ^Expr) -> (act_op: Opcode,
         case:
             unreachable()
         }
-        if neg {
-            op = .Sub_Imm if op == .Add_Imm else .Add_Imm
-        }
 
         compiler_pop_expr(c, left)
-        return op, rb, imm
+        return act_op, rb, imm
     } else if expr_is_literal(right) {
         // Wasn't register-immediate, try register-constant next.
         #partial switch op {
-        case .Add: op = .Add_Const
-        case .Sub: op = .Sub_Const
-        case .Mul: op = .Mul_Const
-        case .Div: op = .Div_Const
-        case .Mod: op = .Mod_Const
-        case .Pow: op = .Pow_Const
+        case .Add: act_op = .Add_Const
+        case .Sub: act_op = .Sub_Const
+        case .Mul: act_op = .Mul_Const
+        case .Div: act_op = .Div_Const
+        case .Mod: act_op = .Mod_Const
+        case .Pow: act_op = .Pow_Const
         case:
             unreachable()
         }
@@ -550,7 +560,7 @@ _arith :: proc(c: ^Compiler, op: Opcode, left, right: ^Expr) -> (act_op: Opcode,
         // instruction via `compiler_push_expr_any()`.
         kc := _push_expr_k(c, right) or_break try
         compiler_pop_expr(c, left)
-        return op, rb, kc
+        return act_op, rb, kc
     }
 
     // Neither register-immediate nor register-constant, do register-register.
@@ -571,15 +581,15 @@ _arith :: proc(c: ^Compiler, op: Opcode, left, right: ^Expr) -> (act_op: Opcode,
 
 @(private="file")
 _check_imm :: #force_inline proc(e: ^Expr) -> (imm: u16, neg, ok: bool) {
-    if expr_is_number(e) {
+    if e.type == .Number {
         n  := e.number
         neg = n < 0.0
         n   = abs(n)
         // Is an integer in range of the immediate operand?
-        ok  = n <= MAX_IMM_C && n == math.trunc(n)
-        return cast(u16)n if ok else 0, neg, ok
+        ok  = n <= MAX_IMM_C && n == math.floor(n)
+        imm = u16(n) if ok else 0
     }
-    return 0, false, false
+    return imm, neg, ok
 }
 
 

@@ -173,7 +173,7 @@ Reports a error message and throws a syntax error to the parent VM.
  */
 error :: proc(x: ^Lexer, msg: string) -> ! {
     here    := make_token_type(x, nil)
-    here.col = cast(i32)x.cursor
+    here.col = i32(x.cursor)
     debug_syntax_error(x, here, msg)
 }
 
@@ -390,7 +390,7 @@ make_token_type_string :: proc(x: ^Lexer, type: Token_Type, s: string) -> Token 
     t.type = type
     t.lexeme = s
     t.line   = x.line
-    t.col    = x.col - cast(i32)len(s)
+    t.col    = x.col - i32(len(s))
     return t
 }
 
@@ -472,9 +472,9 @@ make_number_token :: proc(x: ^Lexer, leader: rune) -> Token {
             if !ok {
                 error(x, "Malformed integer")
             }
-            f := cast(f64)i
+            f := f64(i)
             // `i` as an `f64` might not be accurately represented?
-            if cast(uint)f != i {
+            if uint(f) != i {
                 error(x, "Invalid f64 integer")
             }
             token.number = f

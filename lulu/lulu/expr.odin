@@ -42,6 +42,9 @@ Expr_Type :: enum {
     // (always Register A) to be finalized? See `Expr.pc`.
     Pc_Pending_Register,
 
+    // Expression is a call instruction which we can manipulate. See `Expr.pc`.
+    Call,
+
     // Expression is 'discharged', i.e. it is now stored in a register?
     // See `Expr.reg`.
     Register,
@@ -80,10 +83,6 @@ expr_make_number :: #force_inline proc(n: f64) -> (e: Expr) {
     e.type   = .Number
     e.number = n
     return e
-}
-
-expr_is_number :: #force_inline proc(e: ^Expr) -> bool {
-    return e.type == .Number
 }
 
 expr_is_literal :: #force_inline proc(e: ^Expr) -> bool {

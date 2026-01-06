@@ -47,8 +47,8 @@ Pow,        //  A B C   | R[A] := R[B] ^ R[C]
 Concat,     //  A B C   | R[A] := concat R[i] for B <= i < C
 
 // Control Flow
-Call,       //  A B C   | R[A : A+C]:= R[A]( R[A+1 : A+B+1] )
-Return,     //  A B     | return R[A:A+B]
+Call,       //  A B C   | R[A : A+C]:= R[A]( R[A+1 : A+B-1] ) ; (*) See note.
+Return,     //  A B     | return R[A:A+B-1] ; (*) See note.
 }
 
 /*
@@ -69,12 +69,33 @@ having dedicated instructions for woking with various operand combinations.
 
 Operand B will never function as an RK.
 Operand C will only function as RK in table manipulation instructions.
+
+**Notes**
+(*) OP_CALL, OP_RETURN:
+    - Arguments B and C are encoded in terms of `VARIADIC` (a.k.a. `-1`).
+    - When encoding we add 1 (or subtract `VARIADIC`), i.e. `B - 1` and `C - 1`,
+    in order to reliably represent `-1` in the unsigned operand.
+    - When decoding, we first treat the operand as a signed integer and then
+    subtract 1 (or add `VARIADIC`) to get the intended count.
  */
-Instruction :: bit_field u32 {
+Instruction :: struct #raw_union {
+    using base: Instruction_ABC,
+
+    // Extended
+    x: Instruction_ABx,
+}
+
+Instruction_ABC :: bit_field u32 {
     op: Opcode | SIZE_OP,
     a:  u16    | SIZE_A,
     c:  u16    | SIZE_C,
     b:  u16    | SIZE_B,
+}
+
+Instruction_ABx :: bit_field u32 {
+    op: Opcode | SIZE_OP,
+    a:  u16    | SIZE_A,
+    bx: u32    | SIZE_Bx,
 }
 
 SIZE_OP  :: 6
@@ -137,25 +158,26 @@ OP_INFO := [Opcode]Op_Info{
     .Concat     = {mode=.ABC, a=true, b=.Reg, c=.Reg},
 
     // Control flow
-    .Call       = {mode=.ABC, a=true,  b=.Reg, c=.Imm},
+    .Call       = {mode=.ABC, a=true,  b=.Imm, c=.Imm},
     .Return     = {mode=.ABC, a=false, b=.Imm},
 }
 
 instruction_make_abc :: proc(op: Opcode, a, b, c: u16) -> Instruction {
-    i := Instruction{op=op, a=a, b=b, c=c}
+    i := Instruction{base={op=op, a=a, b=b, c=c}}
     return i
 }
 
 instruction_make_abx :: proc(op: Opcode, a: u16, bx: u32) -> Instruction {
-    i := Instruction{op=op, a=a}
-    setarg_bx(&i, bx)
+    i := Instruction{x={op=op, a=a, bx=bx}}
     return i
 }
 
-instruction_make_sbx :: proc(op: Opcode, a: u16, sbx: i32) -> Instruction {
-    i := Instruction{op=op, a=a}
-    setarg_sbx(&i, sbx)
-    return i
+instruction_make_asbx :: proc(op: Opcode, a: u16, sbx: i32) -> Instruction {
+    return instruction_make_abx(op, a, u32(sbx + MAX_sBx))
+}
+
+instruction_eq :: proc(i1, i2: Instruction) -> bool {
+    return i1.base == i2.base
 }
 
 // // Required for RK registers to work.
@@ -195,31 +217,13 @@ instruction_make_sbx :: proc(op: Opcode, a: u16, sbx: i32) -> Instruction {
 //     return c, is_k
 // }
 
-
-getarg_bx :: proc(i: Instruction) -> u32 {
-    lo := cast(u32)i.c
-    hi := cast(u32)i.b << SIZE_C
-    return hi | lo
-}
-
-setarg_bx :: proc(i: ^Instruction, bx: u32) {
-    assert(bx <= MAX_Bx)
-
-    // Bit fields already have masking semantics, so no need to do them here.
-    hi := cast(u16)(bx >> SIZE_C)
-    lo := cast(u16)bx
-
-    i.c = lo
-    i.b = hi
-}
-
 getarg_sbx :: proc(i: Instruction) -> i32 {
-    bx  := getarg_bx(i)
-    sbx := cast(i32)bx - MAX_Bx
+    bx  := i.x.bx
+    sbx := i32(bx) - MAX_Bx
     return sbx
 }
 
 setarg_sbx :: proc(i: ^Instruction, sbx: i32) {
     assert(MIN_sBx <= sbx && sbx <= MAX_sBx)
-    setarg_bx(i, cast(u32)(sbx + MAX_Bx))
+    i.x.bx = u32(sbx + MAX_Bx)
 }

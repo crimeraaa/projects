@@ -3,6 +3,7 @@ package lulu
 
 import "base:intrinsics"
 import "core:c/libc"
+import "core:mem"
 
 Error_Handler :: struct {
     buf:    libc.jmp_buf,
@@ -87,7 +88,7 @@ raw_run_restoring :: proc(L: ^State, p: proc(^State, rawptr), user_data: rawptr)
     case .Memory:
         // We failed to (re)allocate some memory but we were able to get past VM
         // startup, so the memory error message is definitely interned.
-        err_obj := value_make(ostring_new(L, MEMORY_ERROR_MESSAGE))
+        err_obj := value_make_ostring(ostring_new(L, MEMORY_ERROR_MESSAGE))
         L.stack[old_top] = err_obj
     }
 
@@ -96,7 +97,11 @@ raw_run_restoring :: proc(L: ^State, p: proc(^State, rawptr), user_data: rawptr)
     return err
 }
 
-run_call :: proc(L: ^State, callee: ^Value, arg_count, ret_count: int) {
+run_call :: proc(L: ^State, func: ^Value, arg_count, ret_expect: int) {
+    if !value_is_function(func^) {
+        debug_type_error(L, "call", func)
+    }
+
     // Index of the very first argument for the current stack frame.
     // Majority of the following instructions operate on indices to the full
     // stack, not just the registers window.
@@ -105,78 +110,87 @@ run_call :: proc(L: ^State, callee: ^Value, arg_count, ret_count: int) {
     // Index of 1 past the last valid stack index for the current stack frame.
     old_top  := vm_save_top(L)
 
+    // Index of `callee` in the current stack frame. Upon return, this is
+    // the first index to be overwritten (if there are nonzero return values).
+    call_index := vm_save_stack(L, func)
+
     // Index of the very first argument for the current stack frame,
     // which is always right after `callee`.
-    new_base := vm_save_stack(L, callee) + 1
+    new_base := call_index + 1
 
-    callee_type := value_type(callee^);
+    closure := value_get_function(func^)
 
     // Index of 1 past the last valid stack index for the new stack frame.
     // We start with the index of 1 past the last argument which is a good
     // default.
     new_top := new_base + arg_count
-    #partial switch callee_type {
-    case .Api_Proc:
-        // When calling API procedures, they can only see their arguments.
-        // So there is nothing more we can do.
-        break
-
-    case .Chunk:
+    // When calling API procedures, they can only see their arguments.
+    // So there is nothing more we can do.
+    if closure.is_lua {
         // When calling Lua functions, they can see their arguments
         // along with stack space needed for temporaries. Use whichever
         // one is larger to determine the actual top of the new stack frame.
-        chunk := value_get_chunk(callee^)
-        if extra := chunk.stack_used - arg_count; extra > 0 {
+        if extra := closure.lua.chunk.stack_used - arg_count; extra > 0 {
             new_top += extra
         }
 
         // Set all non-arguments (or unprovided arguments) to `nil`.
-        for &reg in L.stack[new_base + arg_count:new_top] {
-            reg = value_make()
-        }
-    case:
-        unreachable("Cannot call value %v", callee_type)
+        extra := L.stack[new_base + arg_count:new_top]
+        mem.zero_slice(extra)
     }
 
     // Push new stack frame.
-    frame         := &L.frames[L.frame_index]
-    L.frame_index += 1
-    L.frame        = frame
+    next           := &L.frames[L.frame_count]
+    L.frame_count  += 1
+    L.frame         = next
 
     // Initialize the newly pushed stack frame.
-    registers       := L.stack[new_base:new_top]
+    registers      := L.stack[new_base:new_top]
     L.registers     = registers
-    frame.callee    = callee
-    frame.registers = registers
-    frame.saved_pc  = -1
+    next.callee     = func
+    next.registers  = registers
+    next.saved_pc   = -1
 
-    // Can call the Odin procedure directly?
-    if callee_type == .Api_Proc {
-        procedure := value_get_api_proc(callee^)
-        procedure(L)
+    ret_actual: int
+    if !closure.is_lua {
+        // Can call the Odin procedure directly?
+        ret_actual = closure.api.procedure(L)
+        // API procedure may have pushed an arbitrary amount of values.
+        new_top = vm_save_top(L)
     } else {
-        vm_execute(L)
+        ret_actual = vm_execute(L)
     }
 
     // Move return values from the now-finished callee to the top of our
     // previous stack frame.
-    ret_src := L.stack[new_top - ret_count:new_top]
-    ret_dst := L.stack[old_top:old_top + ret_count]
-    copy(ret_dst, ret_src)
+    ret_from := L.stack[new_top - ret_actual:new_top]
+    ret_to   := L.stack[call_index:call_index + ret_actual]
+    copy(ret_to, ret_from)
 
+    // If we have less return values than expected, set the unassigned
+    // registers to `nil`.
+    if extra := ret_expect - ret_actual; extra > 0 {
+        // Index of 1 past the last returned value.
+        last   := call_index + ret_actual
+        extra2 := L.stack[last:last + extra]
+        mem.zero_slice(extra2)
+        ret_actual += extra
+    }
 
-    // Restore previous stack frame.
-    L.frame_index -= 1
-    frame         = &L.frames[L.frame_index]
-    L.frame       = frame
-    L.registers   = frame.registers
-
-    // Lua chunks/closures, when not dealing with varargs, already have
-    // the correct register state. Only API procedures need to worry about
-    // seeing the returned values.
-    if value_is_api_proc(L.frame.callee^) {
-        new_top         = new_base - 1 + ret_count
-        L.registers     = L.stack[old_base:new_top]
-        frame.registers = L.registers
+    // Restore previous stack frame, if one exists.
+    if n := L.frame_count - 2; n >= 0 {
+        prev := &L.frames[n]
+        // Parent caller needs to see the now-returned values because
+        // they have no other way of knowing.
+        if !value_get_function(prev.callee^).is_lua || ret_expect == VARIADIC {
+            new_top = call_index + ret_actual
+            prev.registers = L.stack[old_base:new_top]
+        }
+        L.frame_count -= 1
+        L.frame        = prev
+        L.registers    = prev.registers
+    } else {
+        L.frame_count = 0
+        L.frame       = nil
     }
 }

@@ -2,6 +2,7 @@ package lulu_repl
 
 import "core:fmt"
 import os "core:os/os2"
+import "core:math"
 import "core:mem"
 
 import "lulu"
@@ -38,26 +39,27 @@ main :: proc() {
         }
     }
 
-    L, ok := lulu.new_state()
+    ms: lulu.Main_State
+    L, ok := lulu.new_state(&ms)
     defer {
         lulu.close(L)
         fmt.println(L.global_state.bytes_allocated, "bytes remaining")
     }
-    data := Pmain_Data{os.args, 0}
+    data := Pmain_Data{os.args, nil}
     err  := lulu.api_pcall(L, pmain, &data)
 
     if err != nil {
-        os.exit(cast(int)err)
+        os.exit(int(err))
     }
 
-    if data.code != 0 {
-        os.exit(data.code)
+    if data.err != nil {
+        os.exit(1)
     }
 }
 
 Pmain_Data :: struct {
     args: []string,
-    code: int,
+    err: os.Error,
 }
 
 pmain :: proc(L: ^lulu.State) -> (ret_count: int) {
@@ -65,67 +67,99 @@ pmain :: proc(L: ^lulu.State) -> (ret_count: int) {
     lulu.push_value(L, lulu.GLOBALS_INDEX)
     lulu.set_global(L, "_G")
 
+
     lulu.push_api_proc(L, print)
     lulu.set_global(L, "print")
 
+    lulu.push_api_proc(L, tostring)
+    lulu.set_global(L, "tostring")
+
+    lulu.push_api_proc(L, modf)
+    lulu.set_global(L, "modf")
+
     switch len(data.args) {
     case 1:
-        run_repl(L)
+        data.err = run_repl(L)
 
     case 2:
-        err := run_file(L, data.args[1])
-        if err != nil {
-            fmt.eprintln("[ERROR]:", os.error_string(err))
+        data.err = run_file(L, data.args[1])
+    }
+
+    if data.err != nil {
+        if data.err == .EOF {
+            data.err = nil
+        } else {
+            fmt.eprintln("[ERROR]:", os.error_string(data.err))
         }
-        data.code = 1
     }
     return 0
 }
 
 print :: proc(L: ^lulu.State) -> (ret_count: int) {
     arg_count := lulu.get_top(L)
+    lulu.get_global(L, "tostring")
     for i in 1..=arg_count {
         if i > 1 {
-            fmt.print("\t")
+            fmt.print("\t", flush=false)
         }
-        t := lulu.type(L, i)
-        #partial switch t {
-        case .Nil:     fmt.print("nil")
-        case .Boolean: fmt.print("true" if lulu.to_boolean(L, i) else "false")
-        case .Number:  fmt.print(lulu.to_number(L, i))
-        case .String:  fmt.print(lulu.to_string(L, i))
-        case:
-            ts := lulu.type_name_at(L, i)
-            p  := lulu.to_pointer(L, i)
-            fmt.printf("%s: %p", ts, p)
-        }
+        lulu.push_value(L, -1)
+        lulu.push_value(L, i)
+        lulu.call(L, 1, 1)
+        fmt.print(lulu.to_string(L, -1), flush=false)
+        lulu.pop(L, 1)
     }
     fmt.println()
     return 0
 }
 
-run_repl :: proc(L: ^lulu.State) {
+tostring :: proc(L: ^lulu.State) -> (ret_count: int) {
+    i := 1
+    t := lulu.type(L, i)
+    #partial switch t {
+    case .Nil:     lulu.push_string(L, "nil")
+    case .Boolean: lulu.push_string(L, "true" if lulu.to_boolean(L, i) else "false")
+    case .Number, .String:
+        // Convert stack slot in-place
+        lulu.to_string(L, i)
+    case:
+        ts := lulu.type_name_at(L, i)
+        p  := lulu.to_pointer(L, i)
+        lulu.push_fstring(L, "%s: %p", ts, p)
+    }
+    return 1
+}
+
+modf :: proc(L: ^lulu.State) -> (ret_count: int) {
+    if number, ok := lulu.to_number(L, 1); ok {
+        integer, fraction  := math.modf(number)
+        lulu.push_number(L, integer)
+        lulu.push_number(L, fraction)
+        lulu.push_boolean(L, true)
+        return 3
+
+        // mantissa, exponent := math.frexp(number)
+        // lulu.push_number(L, mantissa)
+        // lulu.push_number(L, f64(exponent))
+        // return 4
+    }
+    return 0
+}
+
+run_repl :: proc(L: ^lulu.State) -> (err: os.Error) {
     for {
         fmt.print(">>> ")
         line_buf: [512]byte
-        line_read, read_err := os.read(os.stdin, line_buf[:])
-        if read_err != nil {
-            if read_err == .EOF {
-                fmt.println()
-            } else {
-                fmt.println("[ERROR]:", os.error_string(read_err))
-            }
-            break
-        }
+        line_read := os.read(os.stdin, line_buf[:]) or_return
         // Skip the newline stored at `line_buf[line_read]`.
         run_input(L, "stdin", string(line_buf[:line_read - 1]))
     }
+    unreachable()
 }
 
 run_file :: proc(L: ^lulu.State, name: string) -> (err: os.Error) {
     buf := os.read_entire_file(name, context.allocator) or_return
-    defer delete(buf)
     run_input(L, name, string(buf))
+    delete(buf)
     return nil
 }
 

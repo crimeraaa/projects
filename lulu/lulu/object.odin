@@ -7,6 +7,7 @@ Object :: struct #raw_union {
     using base: Object_Header,
     string:     Ostring,
     table:      Table,
+    closure:    Closure,
     chunk:      Chunk,
 }
 
@@ -55,14 +56,16 @@ recover to the first protected caller.
  */
 object_new :: proc($T: typeid, L: ^State, list: ^^Object, extra := 0) -> ^T
 where intrinsics.type_is_subtype_of(T, Object_Header) {
-    obj  := new_ptr(T, L, count=1, extra=extra)
+    obj  := new_ptr(T, L, extra=extra)
     base := cast(^Object)obj
 
     // Chain the new object.
     obj.next = list^
-    when      T == Ostring do obj.type = Value_Type.String \
-    else when T == Table   do obj.type = Value_Type.Table  \
-    else when T == Chunk   do obj.type = Value_Type.Chunk  \
+    when      T == Ostring     do obj.type = Value_Type.String      \
+    else when T == Table       do obj.type = Value_Type.Table       \
+    else when T == Chunk       do obj.type = Value_Type.Chunk       \
+    else when T == Api_Closure do obj.type = Value_Type.Function    \
+    else when T == Lua_Closure do obj.type = Value_Type.Function    \
     else do #panic("Invalid T")
 
     // This object is freshly allocated so it has never been traversed.
@@ -88,10 +91,11 @@ the garbage collector to handle the unlinking for us.
 object_free :: proc(L: ^State, obj: ^Object) {
     t := obj.type
     switch t {
-    case .String: ostring_free(L, &obj.string)
-    case .Table:  table_free(L, &obj.table)
-    case .Chunk:  chunk_free(L, &obj.chunk)
-    case .Nil, .Boolean, .Number, .Light_Userdata, .Api_Proc:
+    case .String:   ostring_free(L, &obj.string)
+    case .Table:    table_free(L, &obj.table)
+    case .Chunk:    chunk_free(L, &obj.chunk)
+    case .Function: closure_free(L, &obj.closure)
+    case .Nil, .Boolean, .Number, .Light_Userdata:
         unreachable("Invalid object to free: %v", t)
     }
 

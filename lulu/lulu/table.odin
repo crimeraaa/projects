@@ -1,8 +1,6 @@
 #+private file
 package lulu
 
-import "core:mem"
-
 // This is required because `log2(0)` is undefined, so a zero-sized table
 // is unrepresentable with `log2_cap`. So the empty table is actually
 // represented by the address of this entry with `log2_cap=0` for an actual
@@ -81,6 +79,18 @@ table_cap :: proc(t: ^Table) -> (cap: int) {
     return 1 << t.log2_cap
 }
 
+@(private="package")
+table_len :: proc(t: ^Table) -> (len: int) {
+    for {
+        i := value_make_number(f64(len + 1))
+        if v, ok := table_get(t, i); !ok || value_is_nil(v) {
+            break
+        }
+        len += 1
+    }
+    return len
+}
+
 /*
 Queries the table `t` for key `k`. The value at the corresponding key is
 returned.
@@ -92,10 +102,6 @@ beforehand (i.e. it was non-nil) else `false`.
  */
 @(private="package")
 table_get :: proc(t: ^Table, k: Value) -> (v: Value, ok: bool) #optional_ok {
-    if table_is_empty(t) {
-        return value_make(), false
-    }
-
     hash := hash_value(k)
     entry: ^Entry
     entry, ok = find_entry(table_entries(t), k, hash)
@@ -137,7 +143,6 @@ table_set :: proc(L: ^State, t: ^Table, k: Value) -> (v: ^Value) {
     return &entry.value
 }
 
-@(private="package")
 table_resize :: proc(L: ^State, t: ^Table, new_cap: int) {
     old_entries  := table_entries(t)
     new_log2_cap := log2(new_cap)
@@ -189,7 +194,7 @@ else `false`.
 find_entry :: proc(entries: []Entry, k: Value, hash: u32) -> (entry: ^Entry, ok: bool) #optional_ok {
     tomb: ^Entry
     cap := uint(len(entries))
-    for i := mod_pow2(cast(uint)hash, cap); /* empty */; i = mod_pow2(i + 1, cap) {
+    for i := mod_pow2(uint(hash), cap); /* empty */; i = mod_pow2(i + 1, cap) {
         entry = &entries[i]
 
         // Entry is either partially or completely empty?
@@ -227,7 +232,7 @@ hash_value :: proc(v: Value) -> u32 {
     case .Boolean:  return hash_any(value_get_bool(v))
     case .Number:   return hash_any(value_get_number(v))
     case .String:   return value_get_ostring(v).hash
-    case .Light_Userdata, .Api_Proc, .Table, .Chunk:
+    case .Light_Userdata, .Table, .Function, .Chunk:
         return hash_any(value_get_pointer(v))
     }
     unreachable("Invalid type '%v'", t)

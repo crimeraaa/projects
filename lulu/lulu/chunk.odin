@@ -81,8 +81,8 @@ array for example.
 chunk_fix :: proc(L: ^State, c: ^Chunk, cl: ^Compiler) {
     resize_slice(L, &c.code,      cl.pc)
     resize_slice(L, &c.loc,       cl.pc)
-    resize_slice(L, &c.constants, cast(int)cl.constants_count)
-    resize_slice(L, &c.locals,    cast(int)cl.locals_count)
+    resize_slice(L, &c.constants, int(cl.constants_count))
+    resize_slice(L, &c.locals,    int(cl.locals_count))
 }
 
 /*

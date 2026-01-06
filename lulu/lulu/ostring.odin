@@ -56,7 +56,7 @@ hash_bytes :: #force_inline proc(data: []byte) -> u32 {
 
     hash := u32(FNV1A_OFFSET)
     for b in data {
-        hash ~= cast(u32)b
+        hash ~= u32(b)
         hash *= FNV1A_PRIME
     }
     return hash
@@ -85,7 +85,7 @@ ostring_new :: proc(L: ^State, text: string) -> ^Ostring {
     assert(table_cap >= 2)
 
     hash  := hash_bytes(transmute([]byte)text)
-    index := mod_pow2(cast(uint)hash, cast(uint)table_cap)
+    index := mod_pow2(uint(hash), uint(table_cap))
     for node := table[index]; node != nil; node = node.next {
         s := &node.string
         if hash == s.hash && text == ostring_to_string(s) {
@@ -147,7 +147,7 @@ intern_resize :: proc(L: ^State, intern: ^Intern, new_cap: int) {
         // Rehash all children for this list.
         for this_node != nil {
             ostring := &this_node.string
-            index   := mod_pow2(cast(uint)ostring.hash, cast(uint)new_cap)
+            index   := mod_pow2(uint(ostring.hash), uint(new_cap))
 
             // Save because it's about to be replaced.
             next_node := ostring.next
