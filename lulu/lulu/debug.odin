@@ -143,12 +143,17 @@ disassemble_at :: proc(chunk: ^Chunk, i: Instruction, pc: int, pad := 0) {
     }
 
     loc := chunk.loc[pc]
-    if pc > 0 && chunk.loc[pc - 1] == loc {
-        fmt.printf("[%0*i] |------- ", pad, pc)
+    if pc > 0 && chunk.loc[pc - 1].line == loc.line {
+        fmt.printf("[%0*i] |--- ", pad, pc)
+        // fmt.printf("[%0*i] |------- ", pad, pc)
     } else {
-        buf: [64]byte
-        loc_repr := fmt.bprintf(buf[:], "%i:%i", loc.line, loc.col)
-        fmt.printf("[%0*i] %-8s ", pad, pc, loc_repr)
+        // left-align
+        fmt.printf("[%0*i] %- 4i ", pad, pc, loc.line)
+
+        // buf: [64]byte
+        // loc_repr := fmt.bprintf(buf[:], "%i", loc.line)
+        // loc_repr := fmt.bprintf(buf[:], "%i:%i", loc.line, loc.col)
+        // fmt.printf("[%0*i] %-8s ", pad, pc, loc_repr)
     }
 
     buf1, buf2: [VALUE_TO_STRING_BUFFER_SIZE]byte
@@ -186,7 +191,8 @@ disassemble_at :: proc(chunk: ^Chunk, i: Instruction, pc: int, pad := 0) {
     }
 
     ra := get_reg(chunk, i.a, pc, buf1[:])
-    if info.a && op != .Call {
+    RA_SLICE_OPS :: bit_set[Opcode]{.Load_Nil, .Call}
+    if info.a && op not_in RA_SLICE_OPS {
         fmt.printf("%s := ", ra)
     }
 
@@ -330,7 +336,8 @@ _symbolic_execute :: proc(chunk: ^Chunk, reg, last_pc: int) -> (i: Instruction) 
     prev_pc := len(chunk.code) - 1
 
     NEUTRAL_RETURN := instruction_make_abc(.Return, 0, 1, 0)
-    assert(instruction_eq(chunk.code[prev_pc], NEUTRAL_RETURN), "Expected %v but got %v",
+    fmt.assertf(instruction_eq(chunk.code[prev_pc], NEUTRAL_RETURN),
+        "\nExpected %v but got %v",
         NEUTRAL_RETURN.base, chunk.code[prev_pc].base)
 
     // TODO(2026-01-03): Verify bytecode correctness? Execute jumps?

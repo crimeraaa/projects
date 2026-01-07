@@ -13,6 +13,9 @@ Compiler :: struct {
     // Sister state, mainly used for context during error handling.
     parser: ^Parser,
 
+    // Current block information for local resolution and shadowing checking.
+    block: ^Block,
+
     // Not owned by us, but we are the ones filling in the data.
     chunk: ^Chunk,
 
@@ -32,7 +35,7 @@ Compiler :: struct {
     // Index of the first free register.
     free_reg: u16,
 
-    // How many array slots are actively occupied in `active_locals`.
+    // How many active locals are occupying the array slots in `active_locals`.
     active_count: u16,
 
     // Indexes are assigned registers. Since they are registers, they must
@@ -42,6 +45,19 @@ Compiler :: struct {
     // more than `MAX_REG` overall local variable information (e.g. many
     // short-lived locals).
     active_locals: [MAX_REG]u16,
+}
+
+Block :: struct {
+    // Pointer to the previous block, which exists on the stack.
+    // This is a stack-allocated linked list.
+    prev: ^Block,
+
+    // 'Previous local count'.
+    //
+    // How many active locals are occupying the array slots in `active_locals`
+    // at the time the block was pushed. This is used to 'pop' locals
+    // upon exiting this block.
+    plcount: u16,
 }
 
 compiler_make :: proc(L: ^State, parser: ^Parser, chunk: ^Chunk) -> Compiler {
@@ -84,11 +100,16 @@ compiler_declare_local :: proc(c: ^Compiler, name: ^Ostring, count: u16) {
     c.active_locals[reg] = index
 }
 
+/*
+**Assumptions**
+- `c.block` is non-`nil`. Even the file scope should have its own block.
+ */
 compiler_resolve_local :: proc(c: ^Compiler, name: ^Ostring) -> (reg: u16, ok: bool) {
     // Iterate from innermost scope going outwards.
-    #reverse for i, reg in c.active_locals[:c.active_count] {
+    #reverse for i, lreg in c.active_locals[c.block.plcount:c.active_count] {
         if c.chunk.locals[i].name == name {
-            return u16(reg), true
+            // Slices have their own indices, so re-add the offset.
+            return u16(lreg) + c.block.plcount, true
         }
     }
     return 0, false
@@ -108,19 +129,32 @@ compiler_define_locals :: proc(c: ^Compiler, count: u16) {
     c.active_count = stop
 }
 
-compiler_pop_locals :: proc(c: ^Compiler, count: u16) {
-    death_pc := c.pc
-    start    := c.active_count - count
-    stop     := c.active_count
-    for i in c.active_locals[start:stop] {
+compiler_push_block :: proc(c: ^Compiler, b: ^Block) {
+    b.prev    = c.block
+    b.plcount = c.active_count
+    c.block   = b
+}
+
+compiler_pop_block :: proc(c: ^Compiler) {
+    fmt.assertf(c.block != nil, "\nNo block to pop, have c.active_count(%i)", c.active_count)
+
+    death_pc   := c.pc
+    prev_count := c.block.plcount
+    curr_count := c.active_count
+
+    // Finalize local information for this scope.
+    for i in c.active_locals[prev_count:curr_count] {
         local := &c.chunk.locals[i]
         assert(local.name != nil)
         assert(local.birth_pc != INVALID_PC)
         assert(local.death_pc == INVALID_PC)
         local.death_pc = death_pc
     }
-    compiler_pop_reg(c, start, stop - start)
-    c.active_count = start
+
+    // Pop this scope's locals, restoring the previous active count.
+    compiler_pop_reg(c, prev_count, curr_count - prev_count)
+    c.block        = c.block.prev
+    c.active_count = prev_count
 }
 
 compiler_add_string :: proc(c: ^Compiler, s: ^Ostring) -> (index: u32) {
@@ -227,7 +261,7 @@ compiler_pop_reg :: proc(c: ^Compiler, reg: u16, count: u16 = 1, loc := #caller_
     // Ensure we pop registers in the correct order.
     prev := c.free_reg - count
     if reg != prev {
-        panic("\nBad pop order: expected reg(%i) but got reg(%i)", prev, reg, loc=loc)
+        fmt.panicf("\nBad pop order: expected reg(%i) but got reg(%i)", prev, reg, loc=loc)
     }
     c.free_reg = prev
 }

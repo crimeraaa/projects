@@ -49,23 +49,28 @@ parser_make :: proc(L: ^State, builder: ^strings.Builder, name: ^Ostring, input:
 }
 
 @(private="package")
-program :: proc(L: ^State, b: ^strings.Builder, name: ^Ostring, input: string) {
+program :: proc(L: ^State, builder: ^strings.Builder, name: ^Ostring, input: string) {
     chunk := chunk_new(L, name)
     // Ensure `chunk` cannot be collected.
     vm_push_value(L, value_make_object(cast(^Object)chunk, .Chunk))
 
-    p := parser_make(L, b, name, input)
+    p := parser_make(L, builder, name, input)
     c := compiler_make(L, &p, chunk)
+
+    // Block for file scope (outermost scope).
+    block: Block
+    compiler_push_block(&c, &block)
 
     for !check_token(&p, .EOF) {
         statement(&p, &c)
         // Ensure all temporary registers were popped.
-        assert(c.free_reg == c.active_count,
+        fmt.assertf(c.free_reg == c.active_count,
             "Expected c.free_reg(%i) but got c.free_reg(%i)",
             c.active_count, c.free_reg)
     }
+
     expect_token(&p, .EOF)
-    compiler_pop_locals(&c, c.active_count)
+    compiler_pop_block(&c)
     compiler_end(&c)
 
     // Make the closure BEFORE popping the chunk in order to prevent the chunk
@@ -151,6 +156,10 @@ error_at :: proc(p: ^Parser, t: Token, msg: string) -> ! {
 
 statement :: proc(p: ^Parser, c: ^Compiler)  {
     #partial switch p.lookahead.type {
+    case .Do:
+        advance_token(p)
+        block(p, c)
+
     case .Local:
         advance_token(p)
         local_statement(p, c)
@@ -173,6 +182,16 @@ statement :: proc(p: ^Parser, c: ^Compiler)  {
         parser_error(p, "Expected a statement")
     }
     match_token(p, .Semicolon)
+}
+
+block :: proc(p: ^Parser, c: ^Compiler) {
+    block: Block
+    compiler_push_block(c, &block)
+    for !check_token(p, .End) {
+        statement(p, c)
+    }
+    expect_token(p, .End)
+    compiler_pop_block(c)
 }
 
 

@@ -78,7 +78,7 @@ value_type :: #force_inline proc "contextless" (v: Value) -> Value_Type {
 
 @(private="file")
 _check_type :: #force_inline proc(v: Value, t: Value_Type) {
-    assert(value_type(v) == t, "Expected '%s' but got '%s'",
+    fmt.assertf(value_type(v) == t, "Expected '%s' but got '%s'",
         value_type_string(t), value_type_name(v))
 }
 
@@ -157,7 +157,7 @@ number_to_string :: proc(n: f64, buf: []byte) -> (s: string) {
     return fmt.bprintf(buf, "%.14g", n)
 }
 
-pointer_to_string :: proc(p: any, buf: []byte) -> (s: string) {
+pointer_to_string :: proc(p: rawptr, buf: []byte) -> (s: string) {
     return fmt.bprintf(buf, "%p", p)
 }
 

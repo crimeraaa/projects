@@ -272,8 +272,19 @@ push_api_proc :: proc(L: ^State, p: Api_Proc) {
     push_api_closure(L, p, 0)
 }
 
+/*
+**Side-effects**
+- push: 1
+- pop: `upvalue_count`
+ */
 push_api_closure :: proc(L: ^State, p: Api_Proc, upvalue_count: u8) {
-    cl := api_closure_new(L, p, upvalue_count)
+    cl   := api_closure_new(L, p, upvalue_count)
+    top  := get_top(L)
+    base := top - int(upvalue_count)
+    for v, i in L.registers[base:top] {
+        cl.api.upvalues[i] = v
+    }
+    vm_pop_value(L,  int(upvalue_count))
     vm_push_value(L, value_make_function(cl))
 }
 

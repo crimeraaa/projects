@@ -1,8 +1,10 @@
 #+private package
 package lulu
 
+import "base:builtin"
 import "base:intrinsics"
 import "core:c/libc"
+import "core:fmt"
 import "core:mem"
 
 Error_Handler :: struct {
@@ -11,6 +13,17 @@ Error_Handler :: struct {
     prev:  ^Error_Handler,
 }
 
+unreachable :: proc(msg := "", args: ..any, loc := #caller_location) -> ! {
+    when ODIN_DEBUG {
+        if msg == "" {
+            panic("Runtime panic", loc=loc)
+       } else {
+            fmt.panicf(msg, ..args, loc=loc)
+       }
+    } else {
+        builtin.unreachable()
+    }
+}
 /*
 Run the procedure `p` in "unrestoring protected mode".
 
@@ -124,19 +137,21 @@ run_call :: proc(L: ^State, func: ^Value, arg_count, ret_expect: int) {
     // We start with the index of 1 past the last argument which is a good
     // default.
     new_top := new_base + arg_count
+
     // When calling API procedures, they can only see their arguments.
     // So there is nothing more we can do.
+    //
+    // Otherwise, when calling Lua functions, they can see their arguments
+    // along with stack space needed for temporaries. Use whichever
+    // one is larger to determine the actual top of the new stack frame.
     if closure.is_lua {
-        // When calling Lua functions, they can see their arguments
-        // along with stack space needed for temporaries. Use whichever
-        // one is larger to determine the actual top of the new stack frame.
         if extra := closure.lua.chunk.stack_used - arg_count; extra > 0 {
             new_top += extra
         }
 
         // Set all non-arguments (or unprovided arguments) to `nil`.
-        extra := L.stack[new_base + arg_count:new_top]
-        mem.zero_slice(extra)
+        empty := L.stack[new_base + arg_count:new_top]
+        mem.zero_slice(empty)
     }
 
     // Push new stack frame.
@@ -171,9 +186,9 @@ run_call :: proc(L: ^State, func: ^Value, arg_count, ret_expect: int) {
     // registers to `nil`.
     if extra := ret_expect - ret_actual; extra > 0 {
         // Index of 1 past the last returned value.
-        last   := call_index + ret_actual
-        extra2 := L.stack[last:last + extra]
-        mem.zero_slice(extra2)
+        last  := call_index + ret_actual
+        empty := L.stack[last:last + extra]
+        mem.zero_slice(empty)
         ret_actual += extra
     }
 

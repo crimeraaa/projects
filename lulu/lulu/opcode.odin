@@ -4,7 +4,7 @@ package lulu
 Opcode :: enum u8 {
 // Op           Args    | Side-effects
 Move,       //  A B     | R[A] := R[B]
-Load_Nil,   //  A B     | R[i] := nil for A <= i < B
+Load_Nil,   //  A B     | R[A:B] := nil
 Load_Bool,  //  A B     | R[A] := (Bool)R[B]
 Load_Imm,   //  A Bx    | R[A] := (Number)Bx
 Load_Const, //  A Bx    | R[A] := K[Bx]
@@ -47,7 +47,7 @@ Pow,        //  A B C   | R[A] := R[B] ^ R[C]
 Concat,     //  A B C   | R[A] := concat R[i] for B <= i < C
 
 // Control Flow
-Call,       //  A B C   | R[A : A+C]:= R[A]( R[A+1 : A+B-1] ) ; (*) See note.
+Call,       //  A B C   | R[A : A+C-1]:= R[A]( R[A+1 : A+B-1] ) ; (*) See note.
 Return,     //  A B     | return R[A:A+B-1] ; (*) See note.
 }
 

@@ -159,7 +159,7 @@ vm_push_fstring :: proc(L: ^State, format: string, args: ..any) -> string {
             vm_push_string(L, arg.(string))
 
         case 'p':
-            repr := pointer_to_string(arg, buf[:])
+            repr := pointer_to_string(arg.(rawptr), buf[:])
             vm_push_string(L, repr)
 
         case:
@@ -437,7 +437,7 @@ vm_execute :: proc(L: ^State) -> (ret_count: int) {
             - Said call must be able to call `get_top()` to get the 1-based
             index of the last variadic argument.
             - This is why `run_call()` will change the length of `L.registers`
-            (but NOT `L.frame.registers`) to fit.
+            (and `L.frame.registers`) to fit.
             - Once the next call is done, this line restores the registers
             array to the one before the variadic return (`L.frame.registers`).
             */

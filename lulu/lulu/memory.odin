@@ -154,6 +154,6 @@ find_ptr_index_unsafe :: proc(array: $S/[]$T, ptr: ^T) -> (index: int) {
     addr  := uintptr(ptr)
     begin := uintptr(raw_data(array))
     // If the result would be negative you're SOL anyway
-    assert(addr >= begin, "Invalid pointer received (%p)", ptr)
+    fmt.assertf(addr >= begin, "Invalid ptr(%p)", ptr)
     return int(addr - begin) / size_of(T)
 }
