@@ -209,6 +209,10 @@ value_is_string :: #force_inline proc(v: Value) -> bool {
     return value_type(v) == .String
 }
 
+value_is_table :: #force_inline proc(v: Value) -> bool {
+    return value_type(v) == .Table
+}
+
 value_is_function :: #force_inline proc(v: Value) -> bool {
     return value_type(v) == .Function
 }

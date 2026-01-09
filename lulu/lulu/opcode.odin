@@ -2,19 +2,26 @@
 package lulu
 
 Opcode :: enum u8 {
-// Op           Args    | Side-effects
-Move,       //  A B     | R[A] := R[B]
-Load_Nil,   //  A B     | R[A:B] := nil
-Load_Bool,  //  A B     | R[A] := (Bool)R[B]
-Load_Imm,   //  A Bx    | R[A] := (Number)Bx
-Load_Const, //  A Bx    | R[A] := K[Bx]
-Get_Global, //  A Bx    | R[A] := _G[K[Bx]]
-Set_Global, //  A Bx    | _G[K[Bx]] := R[A]
+// Op               Args    | Side-effects
+Move,           //  A B     | R[A] := R[B]
+Load_Nil,       //  A B     | R[A:B] := nil
+Load_Bool,      //  A B     | R[A] := (Bool)B
+Load_Imm,       //  A Bx    | R[A] := (Number)Bx
+Load_Const,     //  A Bx    | R[A] := K[Bx]
+Get_Global,     //  A Bx    | R[A] := _G[K[Bx]]
+Get_Table,      //  A B C   | R[A] := R[B][R[C]]
+Get_Field,      //  A B C   | R[A] := R[B][K[C]]
+Set_Global,     //  A Bx    | _G[K[Bx]]  := R[A]
+Set_Table,      //  A B C k | R[A][R[B]] := R[C]
+Set_Table_Const,//  A B C   | R[A][R[B]] := K[C]
+Set_Field,      //  A B C k | R[A][K[B]] := R[C]
+Set_Field_Const,//  A B C   | R[A][K[B]] := K[C]
+New_Table,      //  A Bx    | R[A] := {} ; len=Bx
 
 // Unary
-Len,        //  A B     | R[A] := #R[B]
-Not,        //  A B     | R[A] := not R[B]
-Unm,        //  A B     | R[A] := -R[B]
+Len,    //  A B     | R[A] := #R[B]
+Not,    //  A B     | R[A] := not R[B]
+Unm,    //  A B     | R[A] := -R[B]
 
 // Arithmetic (register-immediate)
 Add_Imm,    //  A B C   | R[A] := R[B] + (Number)C
@@ -81,8 +88,11 @@ Operand C will only function as RK in table manipulation instructions.
 Instruction :: struct #raw_union {
     using base: Instruction_ABC,
 
-    // Extended
-    x: Instruction_ABx,
+    // Extended, unsigned.
+    u: Instruction_ABx,
+
+    // Extended, signed.
+    s: Instruction_AsBx,
 }
 
 Instruction_ABC :: bit_field u32 {
@@ -96,6 +106,12 @@ Instruction_ABx :: bit_field u32 {
     op: Opcode | SIZE_OP,
     a:  u16    | SIZE_A,
     bx: u32    | SIZE_Bx,
+}
+
+Instruction_AsBx :: bit_field u32 {
+    op: Opcode | SIZE_OP,
+    a:  u16    | SIZE_A,
+    bx: i32    | SIZE_Bx,
 }
 
 SIZE_OP  :: 6
@@ -112,7 +128,6 @@ MAX_sBx :: MAX_Bx >> 1
 MIN_sBx :: 0 - MAX_Bx
 
 MAX_REG     :: MAX_A
-MAX_K_C     :: MAX_C
 MAX_IMM_C   :: MAX_C
 MAX_IMM_Bx  :: MAX_Bx
 
@@ -136,13 +151,20 @@ Op_Mode :: enum {
 
 
 OP_INFO := [Opcode]Op_Info{
-    .Move       = {mode=.ABC, a=true,  b=.Reg},
-    .Load_Nil   = {mode=.ABC, a=true,  b=.Reg},
-    .Load_Bool  = {mode=.ABC, a=true,  b=.Imm},
-    .Load_Imm   = {mode=.ABx, a=true,  b=.Imm},
-    .Load_Const = {mode=.ABx, a=true,  b=.Const},
-    .Get_Global = {mode=.ABx, a=true,  b=.Const},
-    .Set_Global = {mode=.ABx, a=false, b=.Const},
+    .Move            = {mode=.ABC, a=true,  b=.Reg},
+    .Load_Nil        = {mode=.ABC, a=true,  b=.Reg},
+    .Load_Bool       = {mode=.ABC, a=true,  b=.Imm},
+    .Load_Imm        = {mode=.ABx, a=true,  b=.Imm},
+    .Load_Const      = {mode=.ABx, a=true,  b=.Const},
+    .Get_Global      = {mode=.ABx, a=true,  b=.Const},
+    .Get_Table       = {mode=.ABC, a=true,  b=.Reg,   c=.Reg},
+    .Get_Field       = {mode=.ABC, a=true,  b=.Reg,   c=.Const},
+    .Set_Global      = {mode=.ABx, a=false, b=.Const},
+    .Set_Table       = {mode=.ABC, a=false, b=.Reg,   c=.Reg},
+    .Set_Table_Const = {mode=.ABC, a=false, b=.Reg,   c=.Const},
+    .Set_Field       = {mode=.ABC, a=false, b=.Const, c=.Reg},
+    .Set_Field_Const = {mode=.ABC, a=false, b=.Const, c=.Const},
+    .New_Table       = {mode=.ABx, a=true,  b=.Imm},
 
     // Unary
     .Len..=.Unm = {mode=.ABC, a=true, b=.Reg},
@@ -162,68 +184,6 @@ OP_INFO := [Opcode]Op_Info{
     .Return     = {mode=.ABC, a=false, b=.Imm},
 }
 
-instruction_make_abc :: proc(op: Opcode, a, b, c: u16) -> Instruction {
-    i := Instruction{base={op=op, a=a, b=b, c=c}}
-    return i
-}
-
-instruction_make_abx :: proc(op: Opcode, a: u16, bx: u32) -> Instruction {
-    i := Instruction{x={op=op, a=a, bx=bx}}
-    return i
-}
-
-instruction_make_asbx :: proc(op: Opcode, a: u16, sbx: i32) -> Instruction {
-    return instruction_make_abx(op, a, u32(sbx + MAX_sBx))
-}
-
 instruction_eq :: proc(i1, i2: Instruction) -> bool {
     return i1.base == i2.base
-}
-
-// // Required for RK registers to work.
-// #assert(SIZE_B == SIZE_C)
-
-// SIZE_RK :: SIZE_B
-// BIT_RK  :: 1 << (SIZE_RK - 1)
-// MASK_RK :: BIT_RK - 1
-
-// reg_is_k :: proc(r: u16) -> (is_k: bool) {
-//     return r & BIT_RK != 0
-// }
-
-// reg_to_rk :: proc(r: u16) -> (rk: u16) {
-//     return r | BIT_RK
-// }
-
-// reg_get_k :: proc(r: u16) -> (k: u16) {
-//     return r & MASK_RK
-// }
-
-// get_rkb :: proc(i: Instruction) -> (b: u16, is_k: bool) {
-//     b    = i.b
-//     is_k = reg_is_k(b)
-//     if is_k {
-//         b = reg_get_k(b)
-//     }
-//     return b, is_k
-// }
-
-// get_rkc :: proc(i: Instruction) -> (c: u16, is_k: bool) {
-//     c    = i.c
-//     is_k = reg_is_k(c)
-//     if is_k {
-//         c = reg_get_k(c)
-//     }
-//     return c, is_k
-// }
-
-getarg_sbx :: proc(i: Instruction) -> i32 {
-    bx  := i.x.bx
-    sbx := i32(bx) - MAX_Bx
-    return sbx
-}
-
-setarg_sbx :: proc(i: ^Instruction, sbx: i32) {
-    assert(MIN_sBx <= sbx && sbx <= MAX_sBx)
-    i.x.bx = u32(sbx + MAX_Bx)
 }

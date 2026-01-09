@@ -238,22 +238,6 @@ vm_save_stack :: proc(L: ^State, value: ^Value) -> (index: int) {
     return find_ptr_index_unsafe(L.stack[:], value)
 }
 
-// @(private="file")
-// get_rk :: #force_inline proc(reg: u16, f: ^Frame) -> ^Value {
-//     if reg_is_k(reg) {
-//         i := reg_get_k(reg)
-//         return &f.constants[i]
-//     }
-//     return &f.stack[reg]
-// }
-
-// @(private="file")
-// get_rkb_rkc :: #force_inline proc(i: Instruction, f: ^Frame) -> (b, c: ^Value) {
-//     b = get_rk(i.b, f)
-//     c = get_rk(i.c, f)
-//     return b, c
-// }
-
 @(private="file")
 Op :: #type proc "contextless" (a, b: f64) -> f64
 
@@ -307,6 +291,34 @@ _print_stack :: proc(chunk: ^Chunk, i: Instruction, pc: int, R: []Value) {
     disassemble_at(chunk, i, pc)
 }
 
+vm_get_table :: proc(L: ^State, t: ^Value, k: Value) -> (v: Value, ok: bool) #optional_ok {
+    if !value_is_table(t^) {
+        debug_type_error(L, "index", t)
+    }
+    return table_get(value_get_table(t^), k)
+}
+
+vm_set_table :: proc(L: ^State, t: ^Value, k, v: Value) {
+    if !value_is_table(t^) {
+        debug_type_error(L, "set index of", t)
+    }
+    dst := table_set(L, value_get_table(t^), k)
+    dst^ = v
+}
+
+@(private="file")
+_get_table :: proc(L: ^State, pc: int, ra, t: ^Value, k: Value) {
+    _protect(L, pc)
+    v, _ := vm_get_table(L, t, k)
+    ra^  = v
+}
+
+@(private="file")
+_set_table :: proc(L: ^State, pc: int, t: ^Value, k, v: Value) {
+    _protect(L, pc)
+    vm_set_table(L, t, k, v)
+}
+
 
 @(private="package")
 vm_execute :: proc(L: ^State) -> (ret_count: int) {
@@ -323,7 +335,7 @@ vm_execute :: proc(L: ^State) -> (ret_count: int) {
     ip:   [^]Instruction = code
 
     // Table of defined global variables.
-    _G := L.globals_table
+    _G := &L.globals_table
 
     when ODIN_DEBUG do fmt.println("[EXECUTION]")
     for {
@@ -339,22 +351,33 @@ vm_execute :: proc(L: ^State) -> (ret_count: int) {
         case .Move:       ra^ = R[i.b]
         case .Load_Nil:   mem.zero_slice(R[a:i.b])
         case .Load_Bool:  ra^ = value_make_boolean(bool(i.b))
-        case .Load_Imm:   ra^ = value_make_number(f64(i.x.bx))
-        case .Load_Const: ra^ = K[i.x.bx]
+        case .Load_Imm:   ra^ = value_make_number(f64(i.u.bx))
+        case .Load_Const: ra^ = K[i.u.bx]
 
         case .Get_Global:
-            k := K[i.x.bx]
-            if v, ok := table_get(value_get_table(_G), k); !ok {
+            k := K[i.u.bx]
+            _protect(L, pc)
+            if v, ok := vm_get_table(L, _G, k); !ok {
                 what := value_get_string(k)
-                _protect(L, pc)
                 debug_runtime_error(L, "Attempt to read undefined global '%s'", what)
             } else {
                 ra^ = v;
             }
 
         case .Set_Global:
-            key := K[i.x.bx]
-            table_set(L, value_get_table(_G), key)^ = ra^
+            _protect(L, pc)
+            vm_set_table(L, _G, K[i.u.bx], ra^)
+
+        case .New_Table:
+            t := table_new(L, int(i.u.bx))
+            ra^ = value_make_table(t)
+
+        case .Get_Table:        _get_table(L, pc, ra, &R[i.b], R[i.c])
+        case .Get_Field:        _get_table(L, pc, ra, &R[i.b], K[i.c])
+        case .Set_Table:        _set_table(L, pc, ra, R[i.b], R[i.c])
+        case .Set_Table_Const:  _set_table(L, pc, ra, R[i.b], K[i.c])
+        case .Set_Field:        _set_table(L, pc, ra, K[i.b], R[i.c])
+        case .Set_Field_Const:  _set_table(L, pc, ra, K[i.b], K[i.c])
 
         // Unary
         case .Len:

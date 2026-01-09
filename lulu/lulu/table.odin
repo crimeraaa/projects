@@ -67,7 +67,9 @@ referenced in other parts of the program.
  */
 @(private="package")
 table_free :: proc(L: ^State, t: ^Table) {
-    delete_slice(L, table_entries(t))
+    if t.entries != &EMPTY_TABLE_ENTRY {
+        delete_slice(L, table_entries(t))
+    }
     free_ptr(L, t)
 }
 
@@ -108,10 +110,6 @@ table_get :: proc(t: ^Table, k: Value) -> (v: Value, ok: bool) #optional_ok {
     return entry.value, ok
 }
 
-table_is_empty :: proc(t: ^Table) -> bool {
-    return t.entries == &EMPTY_TABLE_ENTRY
-}
-
 /*
 Queries the table `t` for key `k`. May resize the table.
 
@@ -127,7 +125,7 @@ that , in case they want to handle things like metamethods, they can check if
 @(private="package")
 table_set :: proc(L: ^State, t: ^Table, k: Value) -> (v: ^Value) {
     // 75% load factor.
-    if cap := table_cap(t); t.count + 1 > cap * 3 / 2 {
+    if cap := table_cap(t); t.count + 1 >= cap * 3 / 2 {
         cap = max(cap * 2, 8)
         table_resize(L, t, cap)
     }
@@ -161,8 +159,9 @@ table_resize :: proc(L: ^State, t: ^Table, new_cap: int) {
         new_count += 1
     }
 
-    if !table_is_empty(t) {
-        delete(old_entries)
+    // We actually own our underlying array?
+    if t.entries != &EMPTY_TABLE_ENTRY {
+        delete_slice(L, old_entries)
     }
 
     t.log2_cap = new_log2_cap
@@ -232,8 +231,11 @@ hash_value :: proc(v: Value) -> u32 {
     case .Boolean:  return hash_any(value_get_bool(v))
     case .Number:   return hash_any(value_get_number(v))
     case .String:   return value_get_ostring(v).hash
-    case .Light_Userdata, .Table, .Function, .Chunk:
+    case .Light_Userdata, .Table, .Function:
         return hash_any(value_get_pointer(v))
+
+    case .Chunk:
+        break
     }
     unreachable("Invalid type '%v'", t)
 }

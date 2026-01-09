@@ -168,7 +168,7 @@ statement :: proc(p: ^Parser, c: ^Compiler)  {
         advance_token(p)
         var := resolve_variable(p, c)
         if check_either_token(p, .Comma, .Assign) {
-            assignment(p, c, &Assign_List{var=var, prev=nil}, 1)
+            assignment(p, c, &Assign_List{dst=var, prev=nil}, 1)
         } else {
             // If a function call, make it disregard the return values.
             compiler_set_returns(c, &var, 0)
@@ -211,14 +211,34 @@ resolve_variable :: proc(p: ^Parser, c: ^Compiler) -> (var: Expr) {
         var = expr_make_index(.Global, index)
     }
 
-    if check_either_token(p, .Period, .Bracket_Open) {
-        parser_error(p, "TODO(2025-01-06) Table access")
-    }
+    field_loop: for {
+        #partial switch p.lookahead.type {
+        // Functions can return tables which can be indexed directly.
+        case .Paren_Open:
+            function_call(p, c, &var)
 
-    if check_token(p, .Paren_Open) {
-        function_call(p, c, &var)
+        case .Period:
+            advance_token(p)
+            expect_token(p, .Identifier)
+            key := expr_make_index(.Constant, compiler_add_string(c, p.consumed.string))
+            compiler_get_table(c, &var, &key)
+
+        case .Bracket_Open:
+            advance_token(p)
+            key := expression(p, c)
+            expect_token(p, .Bracket_Close)
+            compiler_get_table(c, &var, &key)
+
+        case .Colon:
+            advance_token(p)
+            expect_token(p, .Identifier)
+            parser_error(p, "'self' syntax not yet supported")
+
+        case:
+            return var
+        }
     }
-    return var
+    unreachable()
 }
 
 local_statement :: proc(p: ^Parser, c: ^Compiler) {
@@ -237,13 +257,14 @@ local_statement :: proc(p: ^Parser, c: ^Compiler) {
     rhs_count: u16
     if match_token(p, .Assign) {
         rhs_last, rhs_count = expression_list(p, c)
+        compiler_push_expr_next(c, &rhs_last)
     }
 
-    adjust_assign(c, &rhs_last, lhs_count, rhs_count)
+    adjust_assign(c, lhs_count, &rhs_last, rhs_count)
     compiler_define_locals(c, lhs_count)
 }
 
-adjust_assign :: proc(c: ^Compiler, rhs_last: ^Expr, lhs_count, rhs_count: u16) {
+adjust_assign :: proc(c: ^Compiler, lhs_count: u16, rhs_last: ^Expr, rhs_count: u16) {
     switch {
     case rhs_last.type == .Call:
         // Subtract 1 from `rhs_count` first. Concept check:
@@ -258,9 +279,6 @@ adjust_assign :: proc(c: ^Compiler, rhs_last: ^Expr, lhs_count, rhs_count: u16) 
         }
         compiler_set_returns(c, rhs_last, u16(call_ret))
 
-    case lhs_count == rhs_count:
-        compiler_push_expr_next(c, rhs_last)
-
     case lhs_count < rhs_count:
         // `local x, y = 1, 2, 3`
         extra := rhs_count - lhs_count
@@ -272,47 +290,43 @@ adjust_assign :: proc(c: ^Compiler, rhs_last: ^Expr, lhs_count, rhs_count: u16) 
         reg   := compiler_push_reg(c, extra)
         compiler_load_nil(c, reg, extra)
     }
-
 }
 
 Assign_List :: struct {
-    var:   Expr,
+    dst:   Expr,
     prev: ^Assign_List,
 }
 
 assignment :: proc(p: ^Parser, c: ^Compiler, tail: ^Assign_List, lhs_count: u16) {
-    VALID_TARGETS :: bit_set[Expr_Type]{.Global, .Local}
+    VALID_TARGETS :: bit_set[Expr_Type]{.Global, .Local, .Table}
 
-    if tail.var.type not_in VALID_TARGETS {
+    if tail.dst.type not_in VALID_TARGETS {
         parser_error(p, "Invalid assignment target")
     }
 
     if match_token(p, .Comma) {
         // Link a new assignment target using the recursive stack.
         expect_token(p, .Identifier)
-        next := &Assign_List{var=resolve_variable(p, c), prev=tail}
+        next := &Assign_List{dst=resolve_variable(p, c), prev=tail}
         assignment(p, c, next, lhs_count + 1)
         return
     }
     expect_token(p, .Assign)
-
-    first_reg := c.free_reg
     rhs_last, rhs_count := expression_list(p, c)
-    adjust_assign(c, &rhs_last, lhs_count, rhs_count)
+    adjust_assign(c, lhs_count, &rhs_last, rhs_count)
+    compiler_set_variable(c, &tail.dst, &rhs_last)
+    // Needed for below `src_reg` to be correct.
+    compiler_pop_expr(c, &rhs_last)
 
-    src_reg  := c.free_reg - 1
-    for node := tail; node != nil; node = node.prev {
-        var := node.var
-        #partial switch var.type {
-        case .Global: compiler_code_abx(c, .Set_Global, src_reg, var.index)
-        case .Local:  compiler_code_abc(c, .Move, var.reg, src_reg, 0)
-        case:
-            unreachable("Invalid expr to assign: %v", var.type)
-        }
+    src_reg := c.free_reg - 1
+    for node := tail.prev; node != nil; node = node.prev {
+        src := expr_make_reg(.Register, src_reg)
+        compiler_set_variable(c, &node.dst, &src)
         src_reg -= 1
     }
-    // assert(first_reg == top_reg, "base=%i, top=%i", first_reg, top_reg)
-    c.free_reg = first_reg
+
+    // When all assignments are done, pop all the intermediate registers used.
+    c.free_reg = c.active_count
 }
 
 return_statement :: proc(p: ^Parser, c: ^Compiler) {
@@ -358,7 +372,7 @@ function_call :: proc(p: ^Parser, c: ^Compiler, func: ^Expr) {
     // Default case is 1 return.
     arg_count -= u16(VARIADIC)
     ret_count -= u16(VARIADIC)
-    pc   := compiler_code_abc(c, .Call, call_reg, arg_count, ret_count)
+    pc   := compiler_code_ABC(c, .Call, call_reg, arg_count, ret_count)
     func^ = expr_make_pc(.Call, pc)
 }
 
@@ -381,6 +395,48 @@ expression_list :: proc(p: ^Parser, c: ^Compiler) -> (last: Expr, count: u16) {
         compiler_push_expr_next(c, &expr)
     }
     return {}, count
+}
+
+constructor :: proc(p: ^Parser, c: ^Compiler) -> (e: Expr) {
+    // Use a temporary register so set instructions know where to look.
+    table_reg := compiler_push_reg(c)
+    pc := compiler_code_ABx(c, .New_Table, table_reg, 0)
+    e   = expr_make_pc(.Pc_Pending_Register, pc)
+
+    hash_count := 0
+    for !check_token(p, .Curly_Close) {
+        #partial switch p.lookahead.type {
+        case .Identifier:
+            advance_token(p)
+            key := expr_make_index(.Constant, compiler_add_string(c, p.consumed.string))
+            // For now, only allow key-value pairs
+            expect_token(p, .Assign)
+            value := expression(p, c)
+            compiler_set_table(c, table_reg, &key, &value)
+            hash_count += 1
+
+        case .Bracket_Open:
+            advance_token(p)
+            key := expression(p, c)
+            expect_token(p, .Bracket_Close)
+            expect_token(p, .Assign)
+            value := expression(p, c)
+            compiler_set_table(c, table_reg, &key, &value)
+            hash_count += 1
+
+        case:
+            parser_error(p, "Unexpected token in table constructor")
+        }
+
+        if !match_token(p, .Comma) {
+            break
+        }
+    }
+    expect_token(p, .Curly_Close)
+    // Pop the temporary table register.
+    compiler_pop_reg(c, table_reg)
+    c.chunk.code[pc].u.bx = u32(hash_count)
+    return e
 }
 
 /*
@@ -420,6 +476,8 @@ prefix :: proc(p: ^Parser, c: ^Compiler) -> (e: Expr) {
         e = expression(p, c)
         expect_token(p, .Paren_Close, "after expression")
         return e
+
+    case .Curly_Open: return constructor(p, c)
 
     // Unary
     case .Not:      return unary(p, c, .Not)

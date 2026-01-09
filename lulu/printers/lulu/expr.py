@@ -9,7 +9,7 @@ _EXPR_PAYLOADS: Final[dict[str, str]] = {
     "Constant":     "index",
     "Global":       "index",
     "Local":        "reg",
-    "Indexed":      "table",
+    "Table":        "table",
     "Pc_Pending_Register": "pc",
     "Register":     "reg",
     "Jump":         "pc",
@@ -29,16 +29,16 @@ class ExprPrinter:
         memb = _EXPR_PAYLOADS[s] if s in _EXPR_PAYLOADS else None
         if memb:
             s = f"{self.__type}: "
-            # if memb == "indexed":
-            #     s += f"{self.__table('reg')}, {self.__table('field_rk')}"
-            # else:
-            s += f"{memb}={self.__data[memb]}"
+            if memb == "table":
+                s += f"{self.__table('reg')}, {self.__table('key')}"
+            else:
+                s += f"{memb}={self.__data[memb]}"
 
         # s += self.__patch("patch_true")
         # s += self.__patch("patch_false")
         return s
 
-    def __table(self, key: Literal["reg", "field_rk"]) -> str:
+    def __table(self, key: Literal["reg", "key"]) -> str:
         v = self.__data["table"][key]
         return f"{key}={v}"
 

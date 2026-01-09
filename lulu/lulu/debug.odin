@@ -156,10 +156,10 @@ disassemble_at :: proc(chunk: ^Chunk, i: Instruction, pc: int, pad := 0) {
         // fmt.printf("[%0*i] %-8s ", pad, pc, loc_repr)
     }
 
-    buf1, buf2: [VALUE_TO_STRING_BUFFER_SIZE]byte
+    buf1, buf2, buf3: [VALUE_TO_STRING_BUFFER_SIZE]byte
     op := i.op
     // Register A is always used for something
-    fmt.printf("%-12s % -4i ", op, i.a)
+    fmt.printf("%-18s % -4i ", op, i.a)
 
     Arg :: union {
         BC, Bx, sBx
@@ -182,11 +182,11 @@ disassemble_at :: proc(chunk: ^Chunk, i: Instruction, pc: int, pad := 0) {
         // }
 
     case .ABx:
-        arg = i.x.bx
+        arg = i.u.bx
         fmt.printf("% -9i ; ", arg)
 
     case .AsBx:
-        arg = i.x.bx
+        arg = i.u.bx
         fmt.printf("% -9i ; ", arg)
     }
 
@@ -205,8 +205,59 @@ disassemble_at :: proc(chunk: ^Chunk, i: Instruction, pc: int, pad := 0) {
         v := chunk.constants[arg.(Bx)]
         s := value_to_string(v, buf1[:])
         fmt.printf("%q" if value_is_string(v) else "%s", s)
+
     case .Get_Global: fmt.printf("_G.%s", get_global(chunk, arg))
     case .Set_Global: fmt.printf("_G.%s := %s", get_global(chunk, arg), ra)
+    case .New_Table:  fmt.printf("{{}} ; size=%i", arg.(Bx))
+    case .Get_Table:
+        // Use separate buffers to avoid aliasing issues
+        table_reg := get_reg(chunk, arg.(BC).b, pc, buf2[:])
+        key_reg   := get_reg(chunk, arg.(BC).c, pc, buf3[:])
+        fmt.printf("%s[%s]", table_reg, key_reg)
+
+    case .Get_Field:
+        // Use separate buffers to avoid aliasing issues
+        table_reg := get_reg(chunk, arg.(BC).b, pc, buf2[:])
+        key       := chunk.constants[arg.(BC).c]
+        key_k     := value_to_string(key, buf3[:])
+        form      := "%s[%q]" if value_is_string(key) else "%s[%s]"
+        fmt.printf(form, table_reg, key_k)
+
+
+    case .Set_Table:
+        // Use separate buffers to avoid aliasing issues
+        key_reg := get_reg(chunk, arg.(BC).b, pc, buf2[:])
+        val_reg := get_reg(chunk, arg.(BC).c, pc, buf3[:])
+        fmt.printf("%s[%s] := %s", ra, key_reg, val_reg)
+
+
+    case .Set_Table_Const:
+        key_reg := get_reg(chunk, arg.(BC).b, pc, buf2[:])
+        val     := chunk.constants[arg.(BC).c]
+        val_reg := value_to_string(val, buf3[:])
+        fmt.printf("%s[%s] := ", ra, key_reg)
+        fmt.printf("%q" if value_is_string(val) else "%s", val_reg)
+
+    case .Set_Field:
+        // Use separate buffers to avoid aliasing issues
+        key := chunk.constants[arg.(BC).b]
+        kb  := value_to_string(key, buf2[:])
+        rc  := get_reg(chunk, arg.(BC).c, pc, buf3[:])
+        form := "%s[%q] := %s" if value_is_string(key) else "%s[%s] := %s"
+        fmt.printf(form, ra, kb, rc)
+
+    case .Set_Field_Const:
+        // Use separate buffers to avoid aliasing issues
+        key := chunk.constants[arg.(BC).b]
+        key_reg := value_to_string(key, buf2[:])
+
+        val := chunk.constants[arg.(BC).c]
+        val_reg := value_to_string(val, buf3[:])
+
+        form := "%s[%q] := " if value_is_string(key) else "%s[%s] := "
+        fmt.printf(form, ra, key_reg)
+        fmt.printf("%q" if value_is_string(val) else "%s", val_reg)
+
     case .Len..=.Unm:
         rb := get_reg(chunk, arg.(BC).b, pc, buf1[:])
         fmt.printf("%s(%s)", _op_string(op), rb)
@@ -317,7 +368,7 @@ find_variable :: proc(chunk: ^Chunk, #any_int reg, pc: int) -> (scope, name: str
 
         case .Get_Global:
             scope = "global"
-            name  = value_get_string(chunk.constants[i.x.bx])
+            name  = value_get_string(chunk.constants[i.u.bx])
             ok    = true
         }
     }
@@ -335,7 +386,7 @@ _symbolic_execute :: proc(chunk: ^Chunk, reg, last_pc: int) -> (i: Instruction) 
     // pointing to the final, neutral return.
     prev_pc := len(chunk.code) - 1
 
-    NEUTRAL_RETURN := instruction_make_abc(.Return, 0, 1, 0)
+    NEUTRAL_RETURN := Instruction{base={op=.Return, a=0, b=1, c=0}}
     fmt.assertf(instruction_eq(chunk.code[prev_pc], NEUTRAL_RETURN),
         "\nExpected %v but got %v",
         NEUTRAL_RETURN.base, chunk.code[prev_pc].base)

@@ -71,8 +71,6 @@ where intrinsics.type_is_subtype_of(T, Object_Header) {
     // This object is freshly allocated so it has never been traversed.
     obj.mark = {.White}
     list^    = base
-
-    // gc_log_object(ansi.FG_GREEN, "[NEW]", T, obj)
     return obj
 }
 

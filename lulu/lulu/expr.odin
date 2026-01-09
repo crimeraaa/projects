@@ -4,21 +4,34 @@ package lulu
 Expr :: struct {
     type: Expr_Type,
     using data: struct #raw_union {
-        // Index of instruction in the current chunk's code array.
-        pc: int,
-
-        // Register number.
-        reg: u16,
-
-        // Index of the value in the current chunk's constants array.
-        // Must fit in SIZE_Bx bits.
-        index: u32,
-
         // Number literal. Useful for constant folding.
         number: f64,
 
         // Boolean literal.
         boolean: bool,
+
+        // Index of the value in the current chunk's constants array.
+        // Must fit in SIZE_Bx bits.
+        index: u32,
+
+        // Register number.
+        reg: u16,
+
+        // Index of instruction in the current chunk's code array.
+        pc: int,
+
+        table: struct {
+            // Register of the table itself.
+            reg: u16,
+
+            // Register or constant index (which fits in a K register)
+            // of the key we wish to index the table at `reg` with.
+            key: u16,
+
+            // `true` if `key` is a constant index which fits in a K register
+            // else `false` if `key` is a register itself.
+            is_k: bool,
+        }
     }
 }
 
@@ -37,6 +50,11 @@ Expr_Type :: enum {
     // Expression is the name of a local variable. The register of the local
     // can be found in `Expr.reg`.
     Local,
+
+    // Expression is a table index expression.
+    // The register of the table can be found in `Expr.table.reg`
+    // The register/constant-index of the value can be found in `Expr.table.key`.
+    Table,
 
     // Expression is an instruction which needs its destination register
     // (always Register A) to be finalized? See `Expr.pc`.
