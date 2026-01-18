@@ -36,12 +36,12 @@ gc_log_alloc :: proc(
 /*
 Allocates a new pointer of type `T` of `count` elements plus `extra` bytes.
 
-*Allocates using `context.allocator`*.
+*Allocates using `L.global_state.backing_allocator`*.
  */
 new_ptr :: proc($T: typeid, L: ^State, extra := 0, loc := #caller_location) -> ^T {
     g    := L.global_state
     size := size_of(T) + extra
-    ptr, err := mem.alloc(size, align_of(T), context.allocator)
+    ptr, err := mem.alloc(size, align_of(T), allocator=g.backing_allocator)
     if err != nil {
         debug_memory_error(L, "allocate %i bytes", size)
     }
@@ -53,14 +53,14 @@ new_ptr :: proc($T: typeid, L: ^State, extra := 0, loc := #caller_location) -> ^
 /*
 Allocates a new slice of type `T` with `count` elements, zero-initialized.
 
-*Allocates using `context.allocator`.
+*Allocates using `L.global_state.backing_allocator`.
 
 **Assumptions**
 - We are in a protected call, so we are able to catch out-of-memory errors.
  */
 make_slice :: proc($T: typeid, L: ^State, count: int, loc := #caller_location) -> []T {
     g := L.global_state
-    array, err := mem.make_slice([]T, count, context.allocator)
+    array, err := mem.make_slice([]T, count, allocator=g.backing_allocator)
     size := count * size_of(T)
     if err != nil {
         debug_memory_error(L, "allocate %i bytes", size)
@@ -73,20 +73,20 @@ make_slice :: proc($T: typeid, L: ^State, count: int, loc := #caller_location) -
 /*
 Frees a pointer of type `T` of `count` elements plus `extra` bytes.
 
-*Deallocates using `context.allocator`.*
+*Deallocates using `L.global_state.backing_allocator`.*
  */
 free_ptr :: proc(L: ^State, ptr: ^$T, extra := 0, loc := #caller_location) {
     g    := L.global_state
     size := size_of(T) + extra
     gc_log_alloc(^T, ansi.FG_RED, "[FREE]", ptr, size, loc=loc)
     g.bytes_allocated -= size
-    mem.free_with_size(ptr, size, context.allocator)
+    mem.free_with_size(ptr, size, allocator=g.backing_allocator)
 }
 
 /*
 Frees the memory used by the slice `array`.
 
-*Deallocates using `context.allocator`.*
+*Deallocates using `L.global_state.backing_allocator`.*
 
 **Assumptions**
 - Freeing memory never fails.
@@ -96,13 +96,13 @@ delete_slice :: proc(L: ^State, array: $S/[]$T, loc := #caller_location) {
     size := size_of(T) * len(array)
     gc_log_alloc([]T, ansi.FG_RED, "[FREE]", raw_data(array), size, loc=loc)
     g.bytes_allocated -= size
-    mem.delete_slice(array, context.allocator)
+    mem.delete_slice(array, allocator=g.backing_allocator)
 }
 
 /*
 `array[index] = value` but grows `array` if needed.
 
-*Allocates using `context.allocator`*.
+*Allocates using `L.global_state.backing_allocator`*.
 
 **Assumptions**
 - We are in a protected call, so we are able to catch out-of-memory errors.
@@ -119,7 +119,7 @@ insert_slice :: proc(L: ^State, array: ^$S/[]$T, #any_int index: int, value: T) 
 Grows or shrinks `array` to be `count` elements, copying over the old elements
 that fit in the new slice.
 
-*Allocates using `context.allocator`*.
+*Allocates using `L.global_state.backing_allocator`*.
 
 **Assumptions**
 - We are in a proected call, so we are able to catch out-of-memory errors.

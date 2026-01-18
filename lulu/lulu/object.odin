@@ -34,7 +34,7 @@ Object_Mark :: enum u8 {
 /*
 Create a new object of type `T`, appending it to `list`.
 
-*Allocates using `context.allocator`.*
+*Allocates using `L.global_state.backing_allocator`.*
 
 **Parameters**
 - T: The desired type of the resulting object, which must 'inherit' from
@@ -64,8 +64,8 @@ where intrinsics.type_is_subtype_of(T, Object_Header) {
     when      T == Ostring     do obj.type = Value_Type.String      \
     else when T == Table       do obj.type = Value_Type.Table       \
     else when T == Chunk       do obj.type = Value_Type.Chunk       \
-    else when T == Api_Closure do obj.type = Value_Type.Function    \
-    else when T == Lua_Closure do obj.type = Value_Type.Function    \
+    else when T == Closure_Api do obj.type = Value_Type.Function    \
+    else when T == Closure_Lua do obj.type = Value_Type.Function    \
     else do #panic("Invalid T")
 
     // This object is freshly allocated so it has never been traversed.
@@ -77,7 +77,7 @@ where intrinsics.type_is_subtype_of(T, Object_Header) {
 /*
 Free an object and without unlinking it.
 
-*Deallocates using `context.allocator`.*
+*Deallocates using `L.global_state.backing_allocator`.*
 
 **Parameters**
 - o: The object instance to be freed.

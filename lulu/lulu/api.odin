@@ -1,5 +1,7 @@
 package lulu
 
+import "core:mem"
+import "core:slice"
 import "core:strings"
 
 Type :: enum {
@@ -67,10 +69,11 @@ Main_State :: struct {
     main_state:   State,
 }
 
-new_state :: proc(ms: ^Main_State) -> (L: ^State, ok: bool) {
-    ok = vm_init(&ms.main_state, &ms.global_state)
-    L  = &ms.main_state if ok else nil
-    if !ok {
+new_state :: proc(ms: ^Main_State, allocator: mem.Allocator) -> (L: ^State, ok: bool) {
+    ok = vm_init(&ms.main_state, &ms.global_state, allocator)
+    if ok {
+        L = &ms.main_state
+    } else {
         vm_destroy(&ms.main_state)
     }
     return L, ok
@@ -84,9 +87,23 @@ get_top :: proc(L: ^State) -> int {
     return len(L.registers)
 }
 
+/*
+**Analogous to**
+- `lua_settop(lua_State *L, int index)` in the Lua 5.1.5 API.
+
+**Guarantees**
+- If growing the stack view, then the new elements are set to `nil`.
+ */
 set_top :: proc(L: ^State, index: int) {
     if index >= 0 {
-        L.registers = L.registers[:index]
+        old_base := vm_save_base(L)
+        old_top  := vm_save_top(L)
+        new_top  := old_top + index
+        values   := L.stack[old_top:new_top]
+        if new_top > old_top {
+            mem.zero_slice(values)
+        }
+        L.registers = values
     } else {
         vm_pop_value(L, -index)
     }
@@ -268,21 +285,19 @@ push_lightuserdata :: proc(L: ^State, p: rawptr) {
     vm_push_value(L, v)
 }
 
-push_api_proc :: proc(L: ^State, p: Api_Proc) {
-    push_api_closure(L, p, 0)
-}
-
 /*
 **Side-effects**
 - push: 1
 - pop: `upvalue_count`
  */
-push_api_closure :: proc(L: ^State, p: Api_Proc, upvalue_count: u8) {
-    cl   := api_closure_new(L, p, upvalue_count)
+push_api_proc :: proc(L: ^State, p: Api_Proc, upvalue_count: u8 = 0) {
+    cl   := closure_api_new(L, p, upvalue_count)
     top  := get_top(L)
     base := top - int(upvalue_count)
-    for v, i in L.registers[base:top] {
-        cl.api.upvalues[i] = v
+    #no_bounds_check {
+        src := L.registers[base:top]
+        dst := cl.api.upvalues[:upvalue_count]
+        copy(dst, src)
     }
     vm_pop_value(L,  int(upvalue_count))
     vm_push_value(L, value_make_function(cl))
@@ -328,7 +343,7 @@ set_global :: proc(L: ^State, name: string) {
 
 load :: proc(L: ^State, name, input: string) -> Error {
     // Must be outside protected call to ensure that we can defer destroy.
-    b, _ := strings.builder_make(allocator=context.allocator)
+    b, _ := strings.builder_make(allocator=L.global_state.backing_allocator)
     defer strings.builder_destroy(&b)
 
     Data :: struct {
@@ -372,7 +387,7 @@ and calls `p` with `user_data` as its sole argument.
 - err: An API error code, if any, were caught.
  */
 api_pcall :: proc(L: ^State, p: Api_Proc, user_data: rawptr) -> (err: Error) {
-    cl := api_closure_new(L, p, 0)
+    cl := closure_api_new(L, p, 0)
     vm_push_value(L, value_make_function(cl))
     vm_push_value(L, value_make_lightuserdata(user_data))
     return pcall(L, arg_count=1, ret_count=0)

@@ -16,7 +16,7 @@ Set_Table,      //  A B C k | R[A][R[B]] := R[C]
 Set_Table_Const,//  A B C   | R[A][R[B]] := K[C]
 Set_Field,      //  A B C k | R[A][K[B]] := R[C]
 Set_Field_Const,//  A B C   | R[A][K[B]] := K[C]
-New_Table,      //  A Bx    | R[A] := {} ; len=Bx
+New_Table,      //  A B C   | R[A] := {} ; #hash=B, #array=C
 
 // Unary
 Len,    //  A B     | R[A] := #R[B]
@@ -164,7 +164,7 @@ OP_INFO := [Opcode]Op_Info{
     .Set_Table_Const = {mode=.ABC, a=false, b=.Reg,   c=.Const},
     .Set_Field       = {mode=.ABC, a=false, b=.Const, c=.Reg},
     .Set_Field_Const = {mode=.ABC, a=false, b=.Const, c=.Const},
-    .New_Table       = {mode=.ABx, a=true,  b=.Imm},
+    .New_Table       = {mode=.ABC, a=true,  b=.Imm},
 
     // Unary
     .Len..=.Unm = {mode=.ABC, a=true, b=.Reg},

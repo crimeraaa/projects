@@ -13,6 +13,20 @@ Error_Handler :: struct {
     prev:  ^Error_Handler,
 }
 
+Frame :: struct {
+    // The value which represents the function being called. It must be a pointer
+    // so that we can try to report the variable name which points to the
+    // function.
+    callee: ^Value,
+
+    // Index of instruction where we left off (e.g. if we dispatch a Lua
+    // function call).
+    saved_pc: int,
+
+    // Window into VM's primary stack.
+    registers: []Value,
+}
+
 unreachable :: proc(msg := "", args: ..any, loc := #caller_location) -> ! {
     when ODIN_DEBUG {
         if msg == "" {

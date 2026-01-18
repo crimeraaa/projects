@@ -32,17 +32,20 @@ debug_type_error :: proc(L: ^State, action: string, culprit: ^Value) -> ! {
     // kind. Try to find the variable name if at all possible.
     reg, is_reg := find_ptr_index(frame.registers, culprit);
     with_name: if is_reg && value_is_function(callee) {
-        closure := value_get_function(callee)
-        if !closure.is_lua {
+        cl := value_get_function(callee)
+        if !cl.is_lua {
             break with_name
         }
-        chunk := closure.lua.chunk
-        if scope, name, is_var := find_variable(chunk, reg, frame.saved_pc); is_var {
+
+        buf: [VALUE_TO_STRING_BUFFER_SIZE]byte
+        pc := frame.saved_pc
+        scope, name, is_var := find_variable(cl.lua.chunk, reg, pc, buf[:]);
+        if is_var {
             debug_runtime_error(L, "Attempt to %s %s '%s' (a %s value)",
                 action, scope, name, type_name)
         }
     }
-    debug_runtime_error(L, "Attempt to %s a %s value at reg(%i)", action, type_name, reg)
+    debug_runtime_error(L, "Attempt to %s a %s value", action, type_name)
 }
 
 /*
@@ -81,14 +84,14 @@ debug_syntax_error :: proc(x: ^Lexer, here: Token, msg: string) -> ! {
     line := int(here.line)
     col  := int(here.col)
     vm_push_fstring(L, "%s:%i:%i: %s near '%s'", file, line, col, msg, here.lexeme)
-    throw_error(x.L, .Syntax)
+    throw_error(L, .Syntax)
 }
 
 debug_memory_error :: proc(L: ^State, format: string, args: ..any, loc := #caller_location) -> ! {
     file := loc.file_path
     line := loc.line
     col  := loc.column
-    fmt.eprintf("%s:%i:%i Failed to ", file, line, col, flush=false)
+    fmt.eprintf("%s:%i:%i: Failed to ", file, line, col, flush=false)
     fmt.eprintfln(format, ..args)
     throw_error(L, .Memory)
 }
@@ -130,7 +133,7 @@ disassemble :: proc(chunk: ^Chunk) {
 
 @(disabled=!ODIN_DEBUG)
 disassemble_at :: proc(chunk: ^Chunk, i: Instruction, pc: int, pad := 0) {
-    get_reg :: proc(chunk: ^Chunk, reg: u16, pc: int, buf: []byte) -> string {
+    _get_reg :: proc(chunk: ^Chunk, reg: u16, pc: int, buf: []byte) -> string {
         if name, ok := find_local(chunk, reg, pc); ok {
             return name
         } else {
@@ -138,7 +141,7 @@ disassemble_at :: proc(chunk: ^Chunk, i: Instruction, pc: int, pad := 0) {
         }
     }
 
-    get_global :: proc(chunk: ^Chunk, arg: Arg) -> string {
+    _get_global :: proc(chunk: ^Chunk, arg: Arg) -> string {
         return value_get_string(chunk.constants[arg.(Bx)])
     }
 
@@ -190,14 +193,14 @@ disassemble_at :: proc(chunk: ^Chunk, i: Instruction, pc: int, pad := 0) {
         fmt.printf("% -9i ; ", arg)
     }
 
-    ra := get_reg(chunk, i.a, pc, buf1[:])
+    ra := _get_reg(chunk, i.a, pc, buf1[:])
     RA_SLICE_OPS :: bit_set[Opcode]{.Load_Nil, .Call}
     if info.a && op not_in RA_SLICE_OPS {
         fmt.printf("%s := ", ra)
     }
 
     switch op {
-    case .Move:       fmt.print(get_reg(chunk, arg.(BC).b, pc, buf1[:]))
+    case .Move:       fmt.print(_get_reg(chunk, arg.(BC).b, pc, buf1[:]))
     case .Load_Nil:   fmt.printf("$r[%i:%i] := nil", i.a, arg.(BC).b)
     case .Load_Bool:  fmt.print(bool(arg.(BC).b))
     case .Load_Imm:   fmt.print(arg.(Bx))
@@ -206,18 +209,21 @@ disassemble_at :: proc(chunk: ^Chunk, i: Instruction, pc: int, pad := 0) {
         s := value_to_string(v, buf1[:])
         fmt.printf("%q" if value_is_string(v) else "%s", s)
 
-    case .Get_Global: fmt.printf("_G.%s", get_global(chunk, arg))
-    case .Set_Global: fmt.printf("_G.%s := %s", get_global(chunk, arg), ra)
-    case .New_Table:  fmt.printf("{{}} ; size=%i", arg.(Bx))
+    case .Get_Global: fmt.printf("_G.%s", _get_global(chunk, arg))
+    case .Set_Global: fmt.printf("_G.%s := %s", _get_global(chunk, arg), ra)
+    case .New_Table:
+        hash_count  := 1 << (arg.(BC).b - 1) if arg.(BC).b != 0 else 0
+        array_count := 1 << (arg.(BC).c - 1) if arg.(BC).c != 0 else 0
+        fmt.printf("{{}} ; #hash=%i, #array=%i", hash_count, array_count)
     case .Get_Table:
         // Use separate buffers to avoid aliasing issues
-        table_reg := get_reg(chunk, arg.(BC).b, pc, buf2[:])
-        key_reg   := get_reg(chunk, arg.(BC).c, pc, buf3[:])
+        table_reg := _get_reg(chunk, arg.(BC).b, pc, buf2[:])
+        key_reg   := _get_reg(chunk, arg.(BC).c, pc, buf3[:])
         fmt.printf("%s[%s]", table_reg, key_reg)
 
     case .Get_Field:
         // Use separate buffers to avoid aliasing issues
-        table_reg := get_reg(chunk, arg.(BC).b, pc, buf2[:])
+        table_reg := _get_reg(chunk, arg.(BC).b, pc, buf2[:])
         key       := chunk.constants[arg.(BC).c]
         key_k     := value_to_string(key, buf3[:])
         form      := "%s[%q]" if value_is_string(key) else "%s[%s]"
@@ -226,13 +232,13 @@ disassemble_at :: proc(chunk: ^Chunk, i: Instruction, pc: int, pad := 0) {
 
     case .Set_Table:
         // Use separate buffers to avoid aliasing issues
-        key_reg := get_reg(chunk, arg.(BC).b, pc, buf2[:])
-        val_reg := get_reg(chunk, arg.(BC).c, pc, buf3[:])
+        key_reg := _get_reg(chunk, arg.(BC).b, pc, buf2[:])
+        val_reg := _get_reg(chunk, arg.(BC).c, pc, buf3[:])
         fmt.printf("%s[%s] := %s", ra, key_reg, val_reg)
 
 
     case .Set_Table_Const:
-        key_reg := get_reg(chunk, arg.(BC).b, pc, buf2[:])
+        key_reg := _get_reg(chunk, arg.(BC).b, pc, buf2[:])
         val     := chunk.constants[arg.(BC).c]
         val_reg := value_to_string(val, buf3[:])
         fmt.printf("%s[%s] := ", ra, key_reg)
@@ -242,7 +248,7 @@ disassemble_at :: proc(chunk: ^Chunk, i: Instruction, pc: int, pad := 0) {
         // Use separate buffers to avoid aliasing issues
         key := chunk.constants[arg.(BC).b]
         kb  := value_to_string(key, buf2[:])
-        rc  := get_reg(chunk, arg.(BC).c, pc, buf3[:])
+        rc  := _get_reg(chunk, arg.(BC).c, pc, buf3[:])
         form := "%s[%q] := %s" if value_is_string(key) else "%s[%s] := %s"
         fmt.printf(form, ra, kb, rc)
 
@@ -259,21 +265,21 @@ disassemble_at :: proc(chunk: ^Chunk, i: Instruction, pc: int, pad := 0) {
         fmt.printf("%q" if value_is_string(val) else "%s", val_reg)
 
     case .Len..=.Unm:
-        rb := get_reg(chunk, arg.(BC).b, pc, buf1[:])
+        rb := _get_reg(chunk, arg.(BC).b, pc, buf1[:])
         fmt.printf("%s(%s)", _op_string(op), rb)
 
     case .Add_Imm..=.Sub_Imm:
-        rb := get_reg(chunk, arg.(BC).b, pc, buf1[:])
+        rb := _get_reg(chunk, arg.(BC).b, pc, buf1[:])
         fmt.printf("%s %s %i", rb, _op_string(op), arg.(BC).c)
 
     case .Add_Const..=.Pow_Const:
-        rb := get_reg(chunk, arg.(BC).b, pc, buf1[:])
+        rb := _get_reg(chunk, arg.(BC).b, pc, buf1[:])
         kc := value_to_string(chunk.constants[arg.(BC).c], buf2[:])
         fmt.printf("%s %s %s", rb, _op_string(op), kc)
 
     case .Add..=.Pow:
-        rb := get_reg(chunk, arg.(BC).b, pc, buf1[:])
-        rc := get_reg(chunk, arg.(BC).c, pc, buf2[:])
+        rb := _get_reg(chunk, arg.(BC).b, pc, buf1[:])
+        rc := _get_reg(chunk, arg.(BC).c, pc, buf2[:])
         fmt.printf("%s %s %s", rb, _op_string(op), rc)
 
     case .Concat: fmt.printf("concat $r[%i:%i]", i.b, i.c)
@@ -302,7 +308,7 @@ disassemble_at :: proc(chunk: ^Chunk, i: Instruction, pc: int, pad := 0) {
         if count == VARIADIC {
             fmt.printf("return $r[%i:]", start)
         } else if start == stop - 1 {
-            fmt.printf("return %s", get_reg(chunk, u16(start), pc, buf1[:]))
+            fmt.printf("return %s", _get_reg(chunk, u16(start), pc, buf1[:]))
         } else {
             fmt.printf("return $r[%i:%i]", start, stop)
         }
@@ -350,26 +356,40 @@ E.g. the first local variable should always be in register 0.
 - `ldebug.c:getobjname(lua_State *L, CallInfo *ci, int stackpos, const char **name)`
 in Lua 5.1.5.
  */
-find_variable :: proc(chunk: ^Chunk, #any_int reg, pc: int) -> (scope, name: string, ok: bool) {
+find_variable :: proc(chunk: ^Chunk, #any_int reg, pc: int, buf: []byte) -> (scope, name: string, ok: bool) {
     name, ok = find_local(chunk, reg, pc)
     // Found a local?
     if ok {
         scope = "local"
-    } // Probably global, table field or upvalue?
-    else {
-        // Find the instruction which last mutated `reg`.
-        i := _symbolic_execute(chunk, reg, pc)
-        #partial switch i.op {
-        case .Move:
-            // R[A] wasn't the culprit, so maybe R[B] was?
-            if i.a > i.b {
-                return find_variable(chunk, i.b, pc)
-            }
+        return scope, name, ok
+    }
 
-        case .Get_Global:
-            scope = "global"
-            name  = value_get_string(chunk.constants[i.u.bx])
-            ok    = true
+    // Probably global, table field or upvalue?
+    // Find the instruction which last mutated `reg`.
+    i := _symbolic_execute(chunk, reg, pc)
+    #partial switch i.op {
+    case .Move:
+        // R[A] wasn't the culprit, so maybe R[B] was?
+        unreachable("How did you even get here?")
+        // if i.a > i.b {
+        //     return find_variable(chunk, i.b, pc, buf)
+        // }
+
+    case .Get_Global:
+        scope = "global"
+        name  = value_get_string(chunk.constants[i.u.bx])
+        ok    = true
+
+    case .Get_Field:
+        scope = "field"
+        name  = value_to_string(chunk.constants[i.c], buf)
+        ok    = true
+
+    case .Get_Table:
+        scope, name, ok = find_variable(chunk, i.c, pc, buf)
+        if ok do switch scope {
+        case "global": scope = "field from global"
+        case "local":  scope = "field from local"
         }
     }
     return scope, name, ok

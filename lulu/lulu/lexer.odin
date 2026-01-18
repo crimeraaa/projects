@@ -390,7 +390,7 @@ make_token_type_string :: proc(x: ^Lexer, type: Token_Type, s: string) -> Token 
     t.type = type
     t.lexeme = s
     t.line   = x.line
-    t.col    = x.col - i32(len(s))
+    t.col    = i32(int(x.col) - (len(s)))
     return t
 }
 

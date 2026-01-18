@@ -69,7 +69,7 @@ mod_pow2 :: #force_inline proc(a, n: uint) -> uint {
 /*
 Reuse an existing interned copy of `text`, or creates a new one.
 
-*Allocates using `context.allocator`.*
+*Allocates using `L.global_state.backing_allocator`.*
 
 **Parameters**
 - L: Holds the global state which in turn holds the interned strings table.
@@ -116,7 +116,7 @@ ostring_new :: proc(L: ^State, text: string) -> ^Ostring {
 Frees the contents of `s`. Since we are a flexible-array similar to Pascal
 strings, we allocated everything in one go and can thus free it in the same way.
 
-*Deallocates using `context.allocator`.*
+*Deallocates using `L.global_state.backing_allocator`.*
 
 **Assumptions**
 - Freeing memory never fails.
@@ -128,7 +128,7 @@ ostring_free :: proc(L: ^State, s: ^Ostring) {
 /*
 Resize the intern table to fit more strings.
 
-*Allocates using `context.allocator`.*
+*Allocates using `L.global_state.backing_allocator`.*
 
 **Assumptions**
 - We only ever grow the interned strings table.
@@ -139,7 +139,6 @@ intern_resize :: proc(L: ^State, intern: ^Intern, new_cap: int) {
     old_table   := intern.table
     new_table   := make_slice(^Object, L, new_cap)
     intern.table = new_table
-    defer delete_slice(L, old_table)
 
     // Rehash all strings from the old table into the new table.
     for list in old_table {
@@ -147,25 +146,26 @@ intern_resize :: proc(L: ^State, intern: ^Intern, new_cap: int) {
         // Rehash all children for this list.
         for this_node != nil {
             ostring := &this_node.string
-            index   := mod_pow2(uint(ostring.hash), uint(new_cap))
 
             // Save because it's about to be replaced.
             next_node := ostring.next
 
             // Chain this node in the NEW table, using the NEW main index.
-            ostring.next     = new_table[index]
-            new_table[index] = this_node
+            i := mod_pow2(uint(ostring.hash), uint(new_cap))
+            ostring.next = new_table[i]
+            new_table[i] = this_node
 
             // Next iteration.
             this_node = next_node
         }
     }
+    delete_slice(L, old_table)
 }
 
 /*
 Free all the memory used by the interned strings table and the strings themselves.
 
-*Deallocates using `context.allocator`.*
+*Deallocates using `L.global_state.backing_allocator`.*
  */
 intern_destroy :: proc(L: ^State, intern: ^Intern) {
     for list in intern.table {

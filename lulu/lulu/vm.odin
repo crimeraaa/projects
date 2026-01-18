@@ -43,6 +43,9 @@ Global_State :: struct {
     // Pointer to the main state we were allocated alongside.
     main_state: ^State,
 
+    // Allocator passed whenever memory is allocated.
+    backing_allocator: mem.Allocator,
+
     // Hash table of all interned strings.
     intern: Intern,
 
@@ -53,22 +56,8 @@ Global_State :: struct {
     bytes_allocated: int,
 }
 
-Frame :: struct {
-    // The value which represents the function being called. It must be a pointer
-    // so that we can try to report the variable name which points to the
-    // function.
-    callee: ^Value,
-
-    // Index of instruction where we left off (e.g. if we dispatch a Lua
-    // function call).
-    saved_pc: int,
-
-    // Window into VM's primary stack.
-    registers: []Value,
-}
-
 @(private="package")
-vm_init :: proc(L: ^State, g: ^Global_State) -> (ok: bool) {
+vm_init :: proc(L: ^State, g: ^Global_State, allocator: mem.Allocator) -> (ok: bool) {
     init :: proc(L: ^State, _: rawptr) {
         g := L.global_state
 
@@ -85,18 +74,19 @@ vm_init :: proc(L: ^State, g: ^Global_State) -> (ok: bool) {
         }
 
         // Ensure that the globals table is of some non-zero minimum size.
-        t := table_new(L, 17)
+        t := table_new(L, hash_count=17, array_count=0)
         L.globals_table = value_make_table(t)
 
         // Initialize concat string builder with some reasonable default size.
-        L.builder = strings.builder_make(32, context.allocator)
+        L.builder = strings.builder_make(32, g.backing_allocator)
 
         // Ensure the pointed-to data is non-nil.
         L.registers = L.stack[:0]
     }
 
-    L.global_state = g
-    g.main_state   = L
+    L.global_state      = g
+    g.main_state        = L
+    g.backing_allocator = allocator
 
     // Don't use `vm_raw_pcall()`, because we won't be able to push an error
     // object in case of memory errors.
@@ -201,7 +191,11 @@ vm_push_value :: proc(L: ^State, v: Value) {
 vm_concat :: proc(L: ^State, dst: ^Value, args: []Value) -> ^Ostring {
     b := &L.builder
     strings.builder_reset(b)
-    for v in args {
+    for &v in args {
+        if !value_is_string(v) {
+            debug_type_error(L, "concatenate", &v)
+        }
+
         s := value_get_string(v)
         n := strings.write_string(b, s)
         if n != len(s) {
@@ -247,8 +241,7 @@ Works only for register-immediate encodings.
 @(private="file")
 _arith_imm :: proc(L: ^State, pc: int, ra: ^Value, op: Op, rb: ^Value, imm: u16) {
     if left, ok := value_to_number(rb^); ok {
-        right := f64(imm)
-        ra^    = value_make_number(op(left, right))
+        ra^ = value_make_number(op(left, f64(imm)))
     } else {
         _protect(L, pc)
         debug_arith_error(L, rb, rb)
@@ -369,7 +362,9 @@ vm_execute :: proc(L: ^State) -> (ret_count: int) {
             vm_set_table(L, _G, K[i.u.bx], ra^)
 
         case .New_Table:
-            t := table_new(L, int(i.u.bx))
+            hash_count  := 1 << (i.b - 1) if i.b != 0 else 0
+            array_count := 1 << (i.c - 1) if i.c != 0 else 0
+            t := table_new(L, hash_count=hash_count, array_count=array_count)
             ra^ = value_make_table(t)
 
         case .Get_Table:        _get_table(L, pc, ra, &R[i.b], R[i.c])

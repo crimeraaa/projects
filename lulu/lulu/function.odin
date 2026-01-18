@@ -3,8 +3,8 @@ package lulu
 
 Closure :: struct #raw_union {
     using base: Closure_Header,
-    api: Api_Closure,
-    lua: Lua_Closure,
+    api: Closure_Api,
+    lua: Closure_Lua,
 }
 
 // Only exists to be 'inherited from'. Do not create lone instances of this type.
@@ -14,24 +14,24 @@ Closure_Header :: struct #packed {
     upvalue_count: u8,
 }
 
-Api_Closure :: struct {
+Closure_Api :: struct {
     using base_closure: Closure_Header,
     procedure: Api_Proc,
     upvalues:  [0]Value,
 }
 
-Lua_Closure :: struct {
+Closure_Lua :: struct {
     using base_closure: Closure_Header,
     chunk: ^Chunk,
 }
 
-api_closure_new :: proc(L: ^State, procedure: Api_Proc, upvalue_count: u8) -> ^Closure {
+closure_api_new :: proc(L: ^State, procedure: Api_Proc, upvalue_count: u8) -> ^Closure {
     assert(upvalue_count >= 0)
 
     g     := L.global_state
     extra := size_of(Value) * int(upvalue_count)
 
-    cl := object_new(Api_Closure, L, &g.objects, extra)
+    cl := object_new(Closure_Api, L, &g.objects, extra)
     cl.is_lua        = false
     cl.upvalue_count = upvalue_count
     cl.procedure     = procedure
@@ -39,13 +39,13 @@ api_closure_new :: proc(L: ^State, procedure: Api_Proc, upvalue_count: u8) -> ^C
     return cast(^Closure)cl
 }
 
-lua_closure_new :: proc(L: ^State, chunk: ^Chunk, upvalue_count: u8) -> ^Closure {
+closure_lua_new :: proc(L: ^State, chunk: ^Chunk, upvalue_count: u8) -> ^Closure {
     // Upvalue object not yet implemented.
     assert(upvalue_count == 0)
     g     := L.global_state
     extra := int(upvalue_count)
 
-    cl := object_new(Lua_Closure, L, &g.objects, extra)
+    cl := object_new(Closure_Lua, L, &g.objects, extra)
     cl.is_lua        = true
     cl.upvalue_count = upvalue_count
     cl.chunk         = chunk

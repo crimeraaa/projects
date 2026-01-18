@@ -56,7 +56,7 @@ chunk_name :: proc(c: ^Chunk) -> string {
 /*
 Creates a new blank chunk for use when parsing.
 
-*Allocates using `context.allocator`.*
+*Allocates using `L.global_state.backing_allocator`.*
 
 **Assumptions**
 - We are in a protected call, so we are able to catch out-of-memory errors
@@ -76,7 +76,7 @@ chunk_new :: proc(L: ^State, name: ^Ostring) -> ^Chunk {
 we can query the last program counter by just getting the length of the code
 array for example.
 
-*Allocates using `context.allocator`.*
+*Allocates using `L.global_state.backing_allocator`.*
  */
 chunk_fix :: proc(L: ^State, c: ^Chunk, cl: ^Compiler) {
     resize_slice(L, &c.code,      cl.pc)
@@ -88,7 +88,7 @@ chunk_fix :: proc(L: ^State, c: ^Chunk, cl: ^Compiler) {
 /*
 Frees the chunk contents and the chunk pointer itself.
 
-*Deallocates using `context.allocator`.*
+*Deallocates using `L.global_state.backing_allocator`.*
  */
 chunk_free :: proc(L: ^State, c: ^Chunk) {
     delete_slice(L, c.locals)
@@ -101,7 +101,7 @@ chunk_free :: proc(L: ^State, c: ^Chunk) {
 /*
 Adds `i` to the end of the code array.
 
-*Allocates using `context.allocator`.*
+*Allocates using `L.global_state.backing_allocator`.*
 
 **Assumptions**
 - We are in a protected call, so failures to append code can be caught
@@ -117,7 +117,7 @@ chunk_push_code :: proc(L: ^State, c: ^Chunk, pc: ^int, i: Instruction, line, co
 /*
 Adds `v` to the end of the constants array.
 
-*Allocates using `context.allocator`.*
+*Allocates using `L.global_state.backing_allocator`.*
 
 **Assumptions**
 - We are in a protected call, so failures to append values can be caught

@@ -30,7 +30,7 @@ class ExprPrinter:
         if memb:
             s = f"{self.__type}: "
             if memb == "table":
-                s += f"{self.__table('reg')}, {self.__table('key')}"
+                s += f"{self.__table('reg')}, {self.__table('key')}, {self.__table('is_k')}"
             else:
                 s += f"{memb}={self.__data[memb]}"
 
@@ -38,7 +38,7 @@ class ExprPrinter:
         # s += self.__patch("patch_false")
         return s
 
-    def __table(self, key: Literal["reg", "key"]) -> str:
+    def __table(self, key: Literal["reg", "key", "is_k"]) -> str:
         v = self.__data["table"][key]
         return f"{key}={v}"
 

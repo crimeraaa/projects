@@ -13,8 +13,11 @@ Parser :: struct {
     consumed: Token,
 
     // Token stream. Helps determine what the next action should be.
-    // Also helps to "unget" a token.
     lookahead: Token,
+
+    // Token stream. The lookahead(2) token is used only for table constructors
+    // in order to differentiate key-value pairs and identifiers in expressions.
+    lookahead2: Token,
 }
 
 Precedence :: enum u8 {
@@ -64,9 +67,7 @@ program :: proc(L: ^State, builder: ^strings.Builder, name: ^Ostring, input: str
     for !check_token(&p, .EOF) {
         statement(&p, &c)
         // Ensure all temporary registers were popped.
-        fmt.assertf(c.free_reg == c.active_count,
-            "Expected c.free_reg(%i) but got c.free_reg(%i)",
-            c.active_count, c.free_reg)
+        c.free_reg = c.active_count
     }
 
     expect_token(&p, .EOF)
@@ -75,9 +76,9 @@ program :: proc(L: ^State, builder: ^strings.Builder, name: ^Ostring, input: str
 
     // Make the closure BEFORE popping the chunk in order to prevent the chunk
     // from being collected in case GC is run during the closure's creation.
-    closure := lua_closure_new(L, chunk, 0)
+    cl := closure_lua_new(L, chunk, 0)
     vm_pop_value(L)
-    vm_push_value(L, value_make_function(closure))
+    vm_push_value(L, value_make_function(cl))
 }
 
 /*
@@ -86,13 +87,45 @@ Unconditionally consumes a new token.
 **Guarantees**
 - The old consumed token is thrown away.
 - The old lookahead is now the new consumed token.
-- The next scanned token is now the new lookahead token.
+- The next scanned token is now the new lookahead token if there is no
+lookahead(2) token to discharge. Otherwise, the lookahead(2) token is used
+as the new primary lookahead and the lookahead(2) token is thrown away.
  */
 advance_token :: proc(p: ^Parser) {
-    p.consumed, p.lookahead = p.lookahead, lexer_scan_token(&p.lexer)
-    if p.lookahead.type == nil {
+    next := p.lookahead2
+    if next.type == nil {
+        next = lexer_scan_token(&p.lexer)
+    } else {
+        p.lookahead2 = {}
+    }
+
+    if next.type == nil {
         error_lookahead(p, "Unexpected token")
     }
+
+    p.consumed, p.lookahead = p.lookahead, next
+}
+
+/*
+**Returns**
+- type: The token type of the lookahead(2) token.
+ */
+consume_lookahead2 :: proc(p: ^Parser) -> (type: Token_Type) {
+    assert(p.lookahead2.type == nil)
+    next := lexer_scan_token(&p.lexer)
+    if next.type == nil {
+        error_lookahead(p, "Unexpected token")
+    }
+    p.lookahead2 = next
+    return next.type
+}
+
+peek_consumed :: proc(p: ^Parser) -> Token_Type {
+    return p.consumed.type
+}
+
+peek_lookahead :: proc(p: ^Parser) -> Token_Type {
+    return p.lookahead.type
 }
 
 expect_token :: proc(p: ^Parser, want: Token_Type, info := "") {
@@ -154,36 +187,37 @@ error_at :: proc(p: ^Parser, t: Token, msg: string) -> ! {
     debug_syntax_error(&p.lexer, here, msg)
 }
 
+/*
+**Grammar**
+```
+<statement> ::= <block>
+      | <local_statement>
+      | <identifier_statement>
+      | <return_statement>
+```
+ */
 statement :: proc(p: ^Parser, c: ^Compiler)  {
-    #partial switch p.lookahead.type {
-    case .Do:
-        advance_token(p)
-        block(p, c)
-
-    case .Local:
-        advance_token(p)
-        local_statement(p, c)
-
-    case .Identifier:
-        advance_token(p)
-        var := resolve_variable(p, c)
-        if check_either_token(p, .Comma, .Assign) {
-            assignment(p, c, &Assign_List{dst=var, prev=nil}, 1)
-        } else {
-            // If a function call, make it disregard the return values.
-            compiler_set_returns(c, &var, 0)
-        }
-        compiler_pop_expr(c, &var)
-    case .Return:
-        advance_token(p)
-        return_statement(p, c)
-
+    advance_token(p)
+    #partial switch peek_consumed(p) {
+    case .Do:         block(p, c)
+    case .Local:      local_statement(p, c)
+    case .Identifier: identifier_statement(p, c)
+    case .Return:     return_statement(p, c)
     case:
         parser_error(p, "Expected a statement")
     }
     match_token(p, .Semicolon)
 }
 
+/*
+**Grammar**
+```
+<block> ::= 'do' ( <statement> )* 'end'
+```
+
+**Assumptions**
+- We just consumed the `do` token.
+ */
 block :: proc(p: ^Parser, c: ^Compiler) {
     block: Block
     compiler_push_block(c, &block)
@@ -196,31 +230,44 @@ block :: proc(p: ^Parser, c: ^Compiler) {
 
 
 /*
+**Grammar**
+```
+<variable_expression> ::= <lvalue>
+    | <variable_call>
+
+<variable_call> ::= <lvalue> <function_call>
+
+<lvalue> ::= <identifier>
+    | <lvalue> '.' <identifier>
+    | <lvalue> '[' <expression> ']'
+    | <lvalue> ':' <identifier>
+```
+
 **Assumptions**
-- The currently consumed token is an identifier, which is potentially the
-start of an index expression and maybe even a function call.
+- We just consumed the `<identifier>` token.
+- The `<identifier>` tokoen is potentially the start of an index expression or
+a function call expression.
  */
-resolve_variable :: proc(p: ^Parser, c: ^Compiler) -> (var: Expr) {
+variable_expression :: proc(p: ^Parser, c: ^Compiler) -> (var: Expr) {
     assert(p.consumed.type == .Identifier)
 
     name := p.consumed.string
-    if reg, ok := compiler_resolve_local(c, name); ok {
-        var = expr_make_reg(.Local, reg)
+    reg, scope := compiler_resolve_local(c, name)
+    if scope == SCOPE_GLOBAL {
+        var = expr_make_index(.Global, compiler_add_string(c, name))
     } else {
-        index := compiler_add_string(c, name)
-        var = expr_make_index(.Global, index)
+        var = expr_make_reg(.Local, reg)
     }
 
-    field_loop: for {
-        #partial switch p.lookahead.type {
-        // Functions can return tables which can be indexed directly.
-        case .Paren_Open:
+    for {
+        #partial switch peek_lookahead(p) {
+        case .Paren_Open, .String, .Curly_Open:
             function_call(p, c, &var)
 
         case .Period:
             advance_token(p)
             expect_token(p, .Identifier)
-            key := expr_make_index(.Constant, compiler_add_string(c, p.consumed.string))
+            key := string_expression(p, c)
             compiler_get_table(c, &var, &key)
 
         case .Bracket_Open:
@@ -241,6 +288,16 @@ resolve_variable :: proc(p: ^Parser, c: ^Compiler) -> (var: Expr) {
     unreachable()
 }
 
+/*
+**Grammar**
+```
+<local_statement> ::= 'local' <identifier_list> ( '=' <expression_list> )?
+<identifier_list> ::= <identifier> ( ',' <identifier> )*
+```
+
+**Assumptions**
+- We just consumed the `local` token.
+ */
 local_statement :: proc(p: ^Parser, c: ^Compiler) {
     lhs_count: u16
     for {
@@ -257,7 +314,6 @@ local_statement :: proc(p: ^Parser, c: ^Compiler) {
     rhs_count: u16
     if match_token(p, .Assign) {
         rhs_last, rhs_count = expression_list(p, c)
-        compiler_push_expr_next(c, &rhs_last)
     }
 
     adjust_assign(c, lhs_count, &rhs_last, rhs_count)
@@ -265,76 +321,126 @@ local_statement :: proc(p: ^Parser, c: ^Compiler) {
 }
 
 adjust_assign :: proc(c: ^Compiler, lhs_count: u16, rhs_last: ^Expr, rhs_count: u16) {
-    switch {
-    case rhs_last.type == .Call:
-        // Subtract 1 from `rhs_count` first. Concept check:
-        // local x = f()
-        // local x, y = f()
-        // local x, y, z = 1, f()
-        call_ret := int(lhs_count) - (int(rhs_count) - 1)
-        if call_ret > 1 {
+    extra := int(lhs_count) - int(rhs_count)
+    if rhs_last.type == .Call {
+        // Concept check:
+        // local x       = f()              -- #lhs=1, #rhs=1
+        // local x, y    = f()              -- #lhs=2, #rhs=1
+        // local x, y, z = 1, f()           -- #lhs=3, #rhs=2
+        // local x, y, z = 1, 2, 3, f()     -- #lhs=3, #rhs-4
+        extra = max(extra + 1, 0)
+
+        compiler_set_returns(c, rhs_last, u16(extra))
+        if extra > 1 {
             // Subtract one because the function itself already reserved its
             // register, so we only need to push the remaining assignments.
-            compiler_push_reg(c, u16(call_ret) - 1)
+            compiler_push_reg(c, u16(extra - 1))
         }
-        compiler_set_returns(c, rhs_last, u16(call_ret))
+        return
+    }
 
-    case lhs_count < rhs_count:
-        // `local x, y = 1, 2, 3`
-        extra := rhs_count - lhs_count
-        compiler_pop_reg(c, c.free_reg - 1, extra)
+    if rhs_last.type != nil {
+        compiler_push_expr_next(c, rhs_last)
+    }
 
-    case lhs_count > rhs_count:
+    if extra > 0 {
         // `local x, y, z = 1, 2`
-        extra := lhs_count - rhs_count
-        reg   := compiler_push_reg(c, extra)
-        compiler_load_nil(c, reg, extra)
+        reg := compiler_push_reg(c, u16(extra))
+        compiler_load_nil(c, reg, u16(extra))
     }
 }
 
 Assign_List :: struct {
-    dst:   Expr,
-    prev: ^Assign_List,
+    variable: Expr,
+    prev:    ^Assign_List,
 }
 
+/*
+**Grammar**
+```
+<identifier_statement> ::= <assignment>
+    | <variable_call>
+```
+
+**Assumptions**
+- We just consumed an `<identifier>` token.
+ */
+identifier_statement :: proc(p: ^Parser, c: ^Compiler) {
+    var := variable_expression(p, c)
+    if var.type == .Call {
+        compiler_discharge_returns(c, &var, 0)
+        compiler_pop_reg(c, var.reg)
+    } else {
+        assignment(p, c, &Assign_List{variable=var, prev=nil}, 1)
+    }
+}
+
+/*
+**Grammar**
+```
+<assignment> ::= <lvalue> ( ',' <lvalue> )* '=' <expression_list>
+<lvalue>     ::= <identifier>
+    | <lvalue> '.' <identifier>
+    | <lvalue> '[' <expression> ']'
+```
+ */
 assignment :: proc(p: ^Parser, c: ^Compiler, tail: ^Assign_List, lhs_count: u16) {
     VALID_TARGETS :: bit_set[Expr_Type]{.Global, .Local, .Table}
 
-    if tail.dst.type not_in VALID_TARGETS {
+    if tail.variable.type not_in VALID_TARGETS {
         parser_error(p, "Invalid assignment target")
     }
 
+    // Recursive case: <lvalue> ( ',' <lvalue> )*
     if match_token(p, .Comma) {
         // Link a new assignment target using the recursive stack.
         expect_token(p, .Identifier)
-        next := &Assign_List{dst=resolve_variable(p, c), prev=tail}
+        next := &Assign_List{variable=variable_expression(p, c), prev=tail}
         assignment(p, c, next, lhs_count + 1)
         return
     }
-    expect_token(p, .Assign)
-    rhs_last, rhs_count := expression_list(p, c)
-    adjust_assign(c, lhs_count, &rhs_last, rhs_count)
-    compiler_set_variable(c, &tail.dst, &rhs_last)
-    // Needed for below `src_reg` to be correct.
-    compiler_pop_expr(c, &rhs_last)
 
-    src_reg := c.free_reg - 1
-    for node := tail.prev; node != nil; node = node.prev {
-        src := expr_make_reg(.Register, src_reg)
-        compiler_set_variable(c, &node.dst, &src)
-        src_reg -= 1
+    // Base case: <lvalue_list> '=' <expression_list>
+    expect_token(p, .Assign)
+
+    rhs_last, rhs_count := expression_list(p, c)
+    node := tail
+
+    if lhs_count != rhs_count {
+        // For the last function call, don't truncate it and don't use
+        // `compiler_set_variable()`. Since we know how many return values
+        // are to be used we can just use them to assign.
+        adjust_assign(c, lhs_count, &rhs_last, rhs_count)
+        if lhs_count < rhs_count {
+            extra := rhs_count - lhs_count
+            compiler_pop_reg(c, c.free_reg - extra, extra)
+        }
+    } else {
+        // We can afford to truncate the last function call.
+        compiler_discharge_returns(c, &rhs_last, 1)
+        compiler_set_variable(c, &tail.variable, &rhs_last)
+        node = node.prev
     }
 
-    // When all assignments are done, pop all the intermediate registers used.
-    c.free_reg = c.active_count
+    src := expr_make_reg(.Register, c.free_reg - 1)
+    for ; node != nil; node = node.prev {
+        compiler_set_variable(c, &node.variable, &src)
+        src.reg -= 1
+    }
 }
 
+/*
+**Grammar**
+```
+<return_statement> ::= 'return' ( <expression> ( ',' <expression> )* )?
+```
+ */
 return_statement :: proc(p: ^Parser, c: ^Compiler) {
     last, count := expression_list(p, c)
     if count == 1 {
         last_reg := compiler_push_expr_any(c, &last)
         compiler_code_return(c, last_reg, count)
-        compiler_pop_expr(c, &last)
+        compiler_pop_reg(c, last_reg)
     } else {
         if last.type == .Call {
             parser_error(p, "Variadic returns not yet supported")
@@ -346,28 +452,59 @@ return_statement :: proc(p: ^Parser, c: ^Compiler) {
     }
 }
 
+/*
+**Grammar**
+```
+<function_call> ::= '(' <expression_list>? ')'
+    | <string_expression>
+    | <constructor>
+```
+
+**Assumptions**
+- The expression needed to resolve the function itself resides in `func`.
+- The `'('`, `<string>` or `'{'` token is about to be consumed.
+ */
 function_call :: proc(p: ^Parser, c: ^Compiler, func: ^Expr) {
-    arg_count: u16
+    arg_count:   u16
+    is_variadic: bool
+
     ret_count := u16(1)
     call_reg  := compiler_push_expr_next(c, func)
-    expect_token(p, .Paren_Open)
-    if !check_token(p, .Paren_Close) {
-        arg_last: Expr
-        arg_last, arg_count = expression_list(p, c)
-        is_variadic := arg_last.type == .Call
-        if is_variadic {
-            compiler_set_returns(c, &arg_last, u16(VARIADIC))
-        } else {
-            compiler_push_expr_next(c, &arg_last)
+    advance_token(p)
+    #partial switch peek_consumed(p) {
+    case .Paren_Open:
+        if !check_token(p, .Paren_Close) {
+            arg_last: Expr
+            arg_last, arg_count = expression_list(p, c)
+            is_variadic = arg_last.type == .Call
+            if is_variadic {
+                compiler_set_returns(c, &arg_last, u16(VARIADIC))
+            } else {
+                compiler_push_expr_next(c, &arg_last)
+            }
         }
-        // Pop all registers used for the arguments.
-        // Do not, however, pop the function itself yet.
-        compiler_pop_reg(c, call_reg + 1, arg_count)
-        if is_variadic {
-            arg_count = u16(VARIADIC)
-        }
+        expect_token(p, .Paren_Close)
+
+    case .String:
+        arg := string_expression(p, c)
+        compiler_push_expr_next(c, &arg)
+        arg_count = 1
+
+    case .Curly_Open:
+        arg := constructor(p, c)
+        compiler_push_expr_next(c, &arg)
+        arg_count = 1
+
+    case:
+        unreachable()
     }
-    expect_token(p, .Paren_Close)
+
+    // Pop all registers used for the arguments.
+    // Do not, however, pop the function itself yet.
+    compiler_pop_reg(c, call_reg + 1, arg_count)
+    if is_variadic {
+        arg_count = u16(VARIADIC)
+    }
 
     // Default case is 1 return.
     arg_count -= u16(VARIADIC)
@@ -380,6 +517,11 @@ function_call :: proc(p: ^Parser, c: ^Compiler, func: ^Expr) {
 /*
 Parse a comma-separated list of expressions. All expressions, except the
 last (and possible only) are pushed to the next free register.
+
+**Grammar**
+```
+<expression_list> ::= <expression> ( ',' <expression> )*
+```
 
 **Returns**
 - last: The last, unpushed expression.
@@ -397,35 +539,71 @@ expression_list :: proc(p: ^Parser, c: ^Compiler) -> (last: Expr, count: u16) {
     return {}, count
 }
 
-constructor :: proc(p: ^Parser, c: ^Compiler) -> (e: Expr) {
-    // Use a temporary register so set instructions know where to look.
-    table_reg := compiler_push_reg(c)
-    pc := compiler_code_ABx(c, .New_Table, table_reg, 0)
-    e   = expr_make_pc(.Pc_Pending_Register, pc)
+Constructor :: struct {
+    // Counters for the table's hash and array segments, respectively.
+    hash_count, array_count: int,
 
-    hash_count := 0
+    // Index of the `.New_Table` instruction.
+    pc: int,
+
+    // R[A] of the destination table in the `.New_Table` instruction.
+    reg: u16,
+}
+
+/*
+**Grammar**
+```
+<constructor> ::= '{' ( <element> ( ',' <element> )* ) '}'
+
+<element> ::= <key> '=' <expression>
+    | <expression>
+
+<key> ::= <identifier>
+    | '[' <expression> ']'
+```
+ */
+constructor :: proc(p: ^Parser, c: ^Compiler) -> (e: Expr) {
+    ct: Constructor
+    // Use a temporary register so set instructions know where to look.
+    ct.reg  = compiler_push_reg(c)
+    ct.pc   = compiler_code_ABC(c, .New_Table, ct.reg, 0, 0)
+    e       = expr_make_pc(.Pc_Pending_Register, ct.pc)
+
     for !check_token(p, .Curly_Close) {
-        #partial switch p.lookahead.type {
+        // Don't advance immediately because expressions representing array
+        // elements require their first token to be in the lookahead.
+        #partial switch peek_lookahead(p) {
         case .Identifier:
-            advance_token(p)
-            key := expr_make_index(.Constant, compiler_add_string(c, p.consumed.string))
-            // For now, only allow key-value pairs
-            expect_token(p, .Assign)
-            value := expression(p, c)
-            compiler_set_table(c, table_reg, &key, &value)
-            hash_count += 1
+            if consume_lookahead2(p) == .Assign {
+                // skip whatever was before <identifier>.
+                //
+                //  consumed:  <identifier>
+                //  lookahead: '='
+                advance_token(p)
+                key := string_expression(p, c)
+
+                // skip <identifier>. itself.
+                //
+                //  consumed:   '='
+                //  lookahead:  <prefix>
+                advance_token(p)
+                _set_field(p, c, &ct, &key)
+            } else {
+                // consumed:   ?
+                // lookahead:  <identifier>
+                // lookahead2: <infix>
+                _set_array(p, c, &ct)
+            }
 
         case .Bracket_Open:
             advance_token(p)
             key := expression(p, c)
             expect_token(p, .Bracket_Close)
             expect_token(p, .Assign)
-            value := expression(p, c)
-            compiler_set_table(c, table_reg, &key, &value)
-            hash_count += 1
+            _set_field(p, c, &ct, &key)
 
         case:
-            parser_error(p, "Unexpected token in table constructor")
+            _set_array(p, c, &ct)
         }
 
         if !match_token(p, .Comma) {
@@ -434,10 +612,37 @@ constructor :: proc(p: ^Parser, c: ^Compiler) -> (e: Expr) {
     }
     expect_token(p, .Curly_Close)
     // Pop the temporary table register.
-    compiler_pop_reg(c, table_reg)
-    c.chunk.code[pc].u.bx = u32(hash_count)
+    compiler_pop_reg(c, ct.reg)
+
+    ip := &c.chunk.code[ct.pc]
+    if ct.hash_count > 0 {
+        ip.b = u16(table_log2(ct.hash_count) + 1)
+    }
+
+    if ct.array_count > 0 {
+        ip.c = u16(table_log2(ct.array_count) + 1)
+    }
     return e
 }
+
+_set_field :: proc(p: ^Parser, c: ^Compiler, ct: ^Constructor, key: ^Expr) {
+    // Explicit field also works as a continuous array index?
+    if key.type == .Number && key.number == f64(ct.array_count + 1) {
+        _set_array(p, c, ct)
+    } else {
+        value := expression(p, c)
+        compiler_set_table(c, ct.reg, key, &value)
+        ct.hash_count += 1
+    }
+}
+
+_set_array :: proc(p: ^Parser, c: ^Compiler, ct: ^Constructor) {
+    key   := expr_make_number(f64(ct.array_count + 1))
+    value := expression(p, c)
+    compiler_set_table(c, ct.reg, &key, &value)
+    ct.array_count += 1
+}
+
 
 /*
 Parse an expression using a Depth-First-Search (DFS). The 'parse tree' is
@@ -470,7 +675,7 @@ prefix :: proc(p: ^Parser, c: ^Compiler) -> (e: Expr) {
         return e
     }
 
-    #partial switch p.consumed.type {
+    #partial switch peek_consumed(p) {
     // Grouping
     case .Paren_Open:
         e = expression(p, c)
@@ -489,14 +694,20 @@ prefix :: proc(p: ^Parser, c: ^Compiler) -> (e: Expr) {
     case .False:    return expr_make_boolean(false)
     case .True:     return expr_make_boolean(true)
     case .Number:   return expr_make_number(p.consumed.number)
-    case .String:
-        index := compiler_add_string(c, p.consumed.string)
-        return expr_make_index(.Constant, index)
+    case .String:   return string_expression(p, c)
 
-    case .Identifier: return resolve_variable(p, c)
+    case .Identifier: return variable_expression(p, c)
     case:
         parser_error(p, "Expected an expression")
     }
+}
+
+string_expression :: proc(p: ^Parser, c: ^Compiler) -> Expr {
+    VALID_STRINGS :: bit_set[Token_Type]{.String, .Identifier}
+    assert(p.consumed.type in VALID_STRINGS)
+
+    index := compiler_add_string(c, p.consumed.string)
+    return expr_make_index(.Constant, index)
 }
 
 // INFIX EXPRESSIONS

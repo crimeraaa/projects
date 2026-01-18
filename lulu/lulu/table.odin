@@ -6,7 +6,7 @@ package lulu
 // represented by the address of this entry with `log2_cap=0` for an actual
 // capacity of 1.
 @rodata
-EMPTY_TABLE_ENTRY: Entry
+_EMPTY_ENTRY: Entry
 
 @(private="package")
 Table :: struct {
@@ -46,14 +46,15 @@ Key :: struct #raw_union {
 }
 
 @(private="package")
-table_new :: proc(L: ^State, cap: int) -> (t: ^Table) {
+table_new :: proc(L: ^State, hash_count, array_count: int) -> (t: ^Table) {
     t = object_new(Table, L, &L.global_state.objects)
 
     // Required so that `table_resize()` below sees the empty table rather
     // than attempting to dereference a nil entries array with 1 element.
-    t.entries = &EMPTY_TABLE_ENTRY
+    t.entries = &_EMPTY_ENTRY
+    cap := hash_count + array_count
     if cap > 0 {
-        table_resize(L, t, max(cap, 8))
+        _resize(L, t, max(cap, 8))
     }
     return t
 }
@@ -63,21 +64,21 @@ Frees the memory allocated for the table struct itself and its entries array.
 Each occupied entry, however, is not deallocated because they may be
 referenced in other parts of the program.
 
-**Deallocates using `context.allocator`.*
+**Deallocates using `L.global_state.backing_allocator`.*
  */
 @(private="package")
 table_free :: proc(L: ^State, t: ^Table) {
-    if t.entries != &EMPTY_TABLE_ENTRY {
-        delete_slice(L, table_entries(t))
+    if t.entries != &_EMPTY_ENTRY {
+        delete_slice(L, _get_entries(t))
     }
     free_ptr(L, t)
 }
 
-table_entries :: proc(t: ^Table) -> []Entry {
-    return t.entries[:table_cap(t)]
+_get_entries :: proc(t: ^Table) -> []Entry {
+    return t.entries[:_get_cap(t)]
 }
 
-table_cap :: proc(t: ^Table) -> (cap: int) {
+_get_cap :: proc(t: ^Table) -> (cap: int) {
     return 1 << t.log2_cap
 }
 
@@ -104,9 +105,9 @@ beforehand (i.e. it was non-nil) else `false`.
  */
 @(private="package")
 table_get :: proc(t: ^Table, k: Value) -> (v: Value, ok: bool) #optional_ok {
-    hash := hash_value(k)
+    hash := _hash_value(k)
     entry: ^Entry
-    entry, ok = find_entry(table_entries(t), k, hash)
+    entry, ok = _find_entry(_get_entries(t), k, hash)
     return entry.value, ok
 }
 
@@ -125,13 +126,13 @@ that , in case they want to handle things like metamethods, they can check if
 @(private="package")
 table_set :: proc(L: ^State, t: ^Table, k: Value) -> (v: ^Value) {
     // 75% load factor.
-    if cap := table_cap(t); t.count + 1 >= cap * 3 / 2 {
+    if cap := _get_cap(t); t.count + 1 >= cap * 3 / 2 {
         cap = max(cap * 2, 8)
-        table_resize(L, t, cap)
+        _resize(L, t, cap)
     }
 
-    hash := hash_value(k)
-    entry, ok := find_entry(table_entries(t), k, hash)
+    hash := _hash_value(k)
+    entry, ok := _find_entry(_get_entries(t), k, hash)
     if !ok {
         t.count += 1
     }
@@ -141,9 +142,9 @@ table_set :: proc(L: ^State, t: ^Table, k: Value) -> (v: ^Value) {
     return &entry.value
 }
 
-table_resize :: proc(L: ^State, t: ^Table, new_cap: int) {
-    old_entries  := table_entries(t)
-    new_log2_cap := log2(new_cap)
+_resize :: proc(L: ^State, t: ^Table, new_cap: int) {
+    old_entries  := _get_entries(t)
+    new_log2_cap := table_log2(new_cap)
     new_entries  := make_slice(Entry, L, 1 << new_log2_cap)
 
     // We may have nil keys in the old table so we need to ignore them.
@@ -154,13 +155,13 @@ table_resize :: proc(L: ^State, t: ^Table, new_cap: int) {
             continue
         }
         // Non-nil keys must be rehashed in the new table.
-        new_entry := find_entry(new_entries, k, k.h.hash)
+        new_entry := _find_entry(new_entries, k, k.h.hash)
         new_entry^ = old_entry
         new_count += 1
     }
 
     // We actually own our underlying array?
-    if t.entries != &EMPTY_TABLE_ENTRY {
+    if t.entries != &_EMPTY_ENTRY {
         delete_slice(L, old_entries)
     }
 
@@ -169,7 +170,18 @@ table_resize :: proc(L: ^State, t: ^Table, new_cap: int) {
     t.count    = new_count
 }
 
-log2 :: proc(cap: int) -> (exp: u8) {
+
+/*
+Find the nearest power of 2 to `cap` if it is not one already.
+
+**Returns**
+- exp: The exponent of said power of 2.
+
+**Guarantees**
+- The actual capacity can be decoded via bitwise left shift.
+ */
+@(private="package")
+table_log2 :: proc(cap: int) -> (exp: u8) {
     assert(cap > 0)
     for {
         pow := 1 << exp
@@ -190,7 +202,7 @@ log2 :: proc(cap: int) -> (exp: u8) {
 - ok: `true` if `entry` was occupied beforehand (i.e. it had a non-nil key)
 else `false`.
  */
-find_entry :: proc(entries: []Entry, k: Value, hash: u32) -> (entry: ^Entry, ok: bool) #optional_ok {
+_find_entry :: proc(entries: []Entry, k: Value, hash: u32) -> (entry: ^Entry, ok: bool) #optional_ok {
     tomb: ^Entry
     cap := uint(len(entries))
     for i := mod_pow2(uint(hash), cap); /* empty */; i = mod_pow2(i + 1, cap) {
@@ -219,7 +231,7 @@ find_entry :: proc(entries: []Entry, k: Value, hash: u32) -> (entry: ^Entry, ok:
     unreachable("How did you even get here?")
 }
 
-hash_value :: proc(v: Value) -> u32 {
+_hash_value :: proc(v: Value) -> u32 {
     hash_any :: #force_inline proc(v: $T) -> u32 {
         v := v
         return hash_bytes((transmute([^]byte)&v)[:size_of(T)])

@@ -40,7 +40,7 @@ main :: proc() {
     }
 
     ms: lulu.Main_State
-    L, ok := lulu.new_state(&ms)
+    L, ok := lulu.new_state(&ms, context.allocator)
     defer {
         lulu.close(L)
         fmt.println(L.global_state.bytes_allocated, "bytes remaining")
@@ -134,8 +134,8 @@ modf :: proc(L: ^lulu.State) -> (ret_count: int) {
         integer, fraction  := math.modf(number)
         lulu.push_number(L, integer)
         lulu.push_number(L, fraction)
-        lulu.push_boolean(L, true)
-        return 3
+        // lulu.push_boolean(L, true)
+        return 2
 
         // mantissa, exponent := math.frexp(number)
         // lulu.push_number(L, mantissa)

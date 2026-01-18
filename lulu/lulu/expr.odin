@@ -36,6 +36,9 @@ Expr :: struct {
 }
 
 Expr_Type :: enum {
+    // Default value for empty expressions.
+    None,
+
     // Value literals.
     Nil, Boolean, Number,
 

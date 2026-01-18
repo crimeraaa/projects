@@ -17,6 +17,8 @@ Compiler :: struct {
     block: ^Block,
 
     // Not owned by us, but we are the ones filling in the data.
+    // This must exist in the VM's current stack frame in order to avoid
+    // garbage collection midway.
     chunk: ^Chunk,
 
     // Current counter of how many instructions we have actively written so far
@@ -73,6 +75,19 @@ compiler_end :: proc(c: ^Compiler) {
     disassemble(chunk)
 }
 
+@(disabled=ODIN_DISABLE_ASSERT)
+compiler_assert :: proc(c: ^Compiler, cond: bool, msg := #caller_expression(cond), args: ..any, loc := #caller_location) {
+    if !cond {
+        file := chunk_name(c.chunk)
+        line := c.parser.consumed.line
+        col  := c.parser.consumed.col
+
+        here := fmt.tprintf("\n%s:%i:%i", file, line, col)
+        info := fmt.tprintf(msg, ..args)
+        context.assertion_failure_proc(here, info, loc)
+    }
+}
+
 /*
 'Declaring' a local simply means we now know it exists, but we aren't yet able
 to reference it in any way until the entire local assignment is done.
@@ -84,7 +99,7 @@ declare. E.g. on the first local, this should be 0. On the second local, this
 should be 1.
 */
 compiler_declare_local :: proc(c: ^Compiler, name: ^Ostring, count: u16) {
-    if _, ok := compiler_resolve_local(c, name); ok {
+    if _, scope := compiler_resolve_local(c, name); scope == SCOPE_CURRENT {
         // For most cases, the shadowed name already in `c.parser.consumed`.
         // For `for` loop state, this is never reached because they contain
         // invalid identifier characters.
@@ -100,30 +115,49 @@ compiler_declare_local :: proc(c: ^Compiler, name: ^Ostring, count: u16) {
     c.active_locals[reg] = index
 }
 
+SCOPE_CURRENT :: 0
+SCOPE_GLOBAL  :: -1
+
 /*
 **Assumptions**
 - `c.block` is non-`nil`. Even the file scope should have its own block.
  */
-compiler_resolve_local :: proc(c: ^Compiler, name: ^Ostring) -> (reg: u16, ok: bool) {
+compiler_resolve_local :: proc(c: ^Compiler, name: ^Ostring) -> (reg: u16, scope: int) {
+    stop := c.active_count
+
     // Iterate from innermost scope going outwards.
-    #reverse for i, lreg in c.active_locals[c.block.plcount:c.active_count] {
-        if c.chunk.locals[i].name == name {
-            // Slices have their own indices, so re-add the offset.
-            return u16(lreg) + c.block.plcount, true
+    for block := c.block; block != nil; block = block.prev {
+        start := block.plcount
+
+        #reverse for i, lreg in c.active_locals[start:stop] {
+            if c.chunk.locals[i].name == name {
+                // Slices have their own indices, so re-add the offset.
+                return u16(lreg) + start, scope
+            }
         }
+
+        stop  = start
+        scope += 1
     }
-    return 0, false
+    return 0, SCOPE_GLOBAL
 }
 
 compiler_define_locals :: proc(c: ^Compiler, count: u16) {
     birth_pc := c.pc
     start    := c.active_count
     stop     := start + count
-    for i in c.active_locals[start:stop] {
-        local := &c.chunk.locals[i]
-        assert(local.name != nil)
-        assert(local.birth_pc == INVALID_PC)
-        assert(local.death_pc == INVALID_PC)
+    for local_index in c.active_locals[start:stop] {
+        local := &c.chunk.locals[local_index]
+        compiler_assert(c, local.name != nil)
+
+        compiler_assert(c, local.birth_pc == INVALID_PC,
+            "locals[%i]: Expected pc(%i) but got pc(%i)",
+            local_index, INVALID_PC, local.birth_pc)
+
+        compiler_assert(c, local.death_pc == INVALID_PC,
+            "locals[%i]: Expected pc(%i) but got pc(%i)",
+            local_index, INVALID_PC, local.death_pc)
+
         local.birth_pc = birth_pc
     }
     c.active_count = stop
@@ -136,24 +170,29 @@ compiler_push_block :: proc(c: ^Compiler, b: ^Block) {
 }
 
 compiler_pop_block :: proc(c: ^Compiler) {
-    fmt.assertf(c.block != nil, "\nNo block to pop, have c.active_count(%i)", c.active_count)
+    compiler_assert(c, c.block != nil, "\nNo block to pop, have c.active_count(%i)", c.active_count)
 
     death_pc   := c.pc
     prev_count := c.block.plcount
-    curr_count := c.active_count
 
     // Finalize local information for this scope.
-    for i in c.active_locals[prev_count:curr_count] {
-        local := &c.chunk.locals[i]
-        assert(local.name != nil)
-        assert(local.birth_pc != INVALID_PC)
-        assert(local.death_pc == INVALID_PC)
+    for local_index in c.active_locals[prev_count:c.active_count] {
+        local := &c.chunk.locals[local_index]
+        compiler_assert(c, local.name != nil)
+        compiler_assert(c, local.birth_pc != INVALID_PC,
+            "locals[%i]: Expected pc != %i but got pc(%i)",
+            local_index, INVALID_PC, local.birth_pc)
+
+        compiler_assert(c, local.death_pc == INVALID_PC,
+            "locals[%i]: Expected pc(%i) but got pc(%i)",
+            local_index, INVALID_PC, local.death_pc)
+
         local.death_pc = death_pc
     }
 
     // Pop this scope's locals, restoring the previous active count.
-    compiler_pop_reg(c, prev_count, curr_count - prev_count)
     c.block        = c.block.prev
+    c.free_reg     = prev_count
     c.active_count = prev_count
 }
 
@@ -194,16 +233,16 @@ _add_instruction :: proc(c: ^Compiler, i: Instruction) -> (pc: int) {
 }
 
 compiler_code_ABC :: proc(cl: ^Compiler, op: Opcode, a, b, c: u16) -> (pc: int) {
-    assert(OP_INFO[op].mode == .ABC)
+    compiler_assert(cl, OP_INFO[op].mode == .ABC)
 
     i := Instruction{base={op=op, a=a, b=b, c=c}}
     return _add_instruction(cl, i)
 }
 
 compiler_code_ABx :: proc(c: ^Compiler, op: Opcode, a: u16, bx: u32) -> (pc: int) {
-    assert(OP_INFO[op].mode == .ABx)
-    assert(OP_INFO[op].b != nil)
-    assert(OP_INFO[op].c == nil)
+    compiler_assert(c, OP_INFO[op].mode == .ABx)
+    compiler_assert(c, OP_INFO[op].b != nil)
+    compiler_assert(c, OP_INFO[op].c == nil)
 
     i := Instruction{u={op=op, a=a, bx=bx}}
     return _add_instruction(c, i)
@@ -218,6 +257,20 @@ compiler_set_returns :: proc(c: ^Compiler, call: ^Expr, ret_count: u16) {
     if call.type == .Call {
         // VARIADIC is -1, so we encode 0.
         // Likewise, returning 0 values is actually encoded as C=1.
+        ip := &c.chunk.code[call.pc]
+        ip.c  = ret_count - u16(VARIADIC)
+    }
+}
+
+/*
+Sets the return count of the call pc in `call` to `ret_count` and converts
+`call` to a `.Register` expression representing the function register.
+
+**Analogous to**
+- `lcode.c:luaK_setoneret(FuncState *fs, expdesc *e)` Lua 5.1.5.
+ */
+compiler_discharge_returns :: proc(c: ^Compiler, call: ^Expr, ret_count: u16) {
+    if call.type == .Call {
         ip := &c.chunk.code[call.pc]
         ip.c  = ret_count - u16(VARIADIC)
         call^ = expr_make_reg(.Register, ip.a)
@@ -240,37 +293,38 @@ compiler_set_table :: proc(c: ^Compiler, table_reg: u16, #no_alias key, value: ^
     compiler_pop_expr(c, value)
     compiler_pop_expr(c, key)
 
-    op: Opcode
-    if key_is_k {
-        op = .Set_Field_Const if value_is_k else .Set_Field
-    } else {
-        op = .Set_Table_Const if value_is_k else .Set_Table
-    }
+    op := _get_table_op(key_is_k, value_is_k)
     compiler_code_ABC(c, op, table_reg, key_rk, value_rk)
 }
 
-compiler_set_variable :: proc(c: ^Compiler, var, value: ^Expr) {
-    #partial switch var.type {
+compiler_set_variable :: proc(c: ^Compiler, #no_alias variable, value: ^Expr) {
+    #partial switch variable.type {
     case .Global:
         value_reg := compiler_push_expr_any(c, value)
-        compiler_code_ABx(c, .Set_Global, value_reg, var.index)
+        compiler_code_ABx(c, .Set_Global, value_reg, variable.index)
 
     case .Local:
-        value_reg := compiler_push_expr_any(c, value)
-        compiler_code_ABC(c, .Move, var.reg, value_reg, 0)
+        compiler_pop_expr(c, value)
+        _discharge_expr_to_reg(c, value, variable.reg)
+        // Avoid the below pop.
+        return
 
     case .Table:
         value_reg, value_is_k := _push_expr_k(c, value, MAX_C)
+        op := _get_table_op(variable.table.is_k, value_is_k)
+        compiler_code_ABC(c, op, variable.table.reg, variable.table.key, value_reg)
 
-        op: Opcode
-        if var.table.is_k {
-            op = .Set_Field_Const if value_is_k else .Set_Field
-        } else {
-            op = .Set_Table_Const if value_is_k else .Set_Table
-        }
-        compiler_code_ABC(c, op, var.table.reg, var.table.key, value_reg)
     case:
         unreachable()
+    }
+    compiler_pop_expr(c, value)
+}
+
+_get_table_op :: proc(key_is_k, value_is_k: bool) -> (op: Opcode) {
+    if key_is_k {
+        return .Set_Field_Const if value_is_k else .Set_Field
+    } else {
+        return .Set_Table_Const if value_is_k else .Set_Table
     }
 }
 
@@ -288,7 +342,7 @@ compiler_push_reg :: proc(c: ^Compiler, count: u16 = 1) -> (reg: u16) {
     reg = c.free_reg
     c.free_reg += count
     if c.free_reg > MAX_REG {
-        buf: [256]byte
+        buf: [64]byte
         msg := fmt.bprintf(buf[:], "%i registers exceeded", MAX_REG)
         parser_error(c.parser, msg)
     }
@@ -315,9 +369,10 @@ compiler_pop_reg :: proc(c: ^Compiler, reg: u16, count: u16 = 1, loc := #caller_
 
     // Ensure we pop registers in the correct order.
     prev := c.free_reg - count
-    if reg != prev {
-        fmt.panicf("\nBad pop order: expected reg(%i) but got reg(%i)", prev, reg, loc=loc)
-    }
+    compiler_assert(c, reg == prev,
+        "Bad pop order, expected reg(%i) but got reg(%i)",
+        prev, reg, loc=loc)
+
     c.free_reg = prev
 }
 
@@ -399,7 +454,6 @@ compiler_push_expr_next :: proc(c: ^Compiler, e: ^Expr) -> (reg: u16) {
     reg = compiler_push_reg(c)
     _discharge_expr_to_reg(c, e, reg)
     return reg
-
 }
 
 /*
@@ -437,7 +491,7 @@ _discharge_expr_variables :: proc(c: ^Compiler, e: ^Expr) {
         e^  = expr_make_pc(.Pc_Pending_Register, pc)
 
     case .Call:
-        compiler_set_returns(c, e, 1)
+        compiler_discharge_returns(c, e, 1)
     }
 }
 
@@ -456,12 +510,11 @@ the destination, hence it is termed 'discharged' (i.e. finalized).
  */
 @(private="file")
 _discharge_expr_to_reg :: proc(c: ^Compiler, e: ^Expr, reg: u16, loc := #caller_location) {
+    _discharge_expr_variables(c, e)
     switch e.type {
-    case .Nil:
-        compiler_load_nil(c, reg, 1)
-
-    case .Boolean:
-        compiler_code_ABC(c, .Load_Bool, reg, u16(e.boolean), 0)
+    case .None:    unreachable()
+    case .Nil:     compiler_load_nil(c, reg, 1)
+    case .Boolean: compiler_code_ABC(c, .Load_Bool, reg, u16(e.boolean), 0)
 
     case .Number:
         // Can we load it as a positive integer immediately from Bx?
@@ -477,7 +530,6 @@ _discharge_expr_to_reg :: proc(c: ^Compiler, e: ^Expr, reg: u16, loc := #caller_
     case .Constant:
         compiler_code_ABx(c, .Load_Const, reg, e.index)
 
-    // We assume `discharge_expr_variables()` was called beforehand
     case .Global, .Local, .Table, .Call:
         unreachable("Invalid expr to discharge: %v", e.type, loc=loc)
 
@@ -518,6 +570,7 @@ be transformed to a constant or it was a constant not able to fit in `limit`.
 @(private="file")
 _push_expr_k :: proc(c: ^Compiler, e: ^Expr, limit: u16) -> (rk: u16, is_k: bool) {
     switch e.type {
+    case .None:     unreachable()
     case .Nil:      return _push_k(c, e, value_make_nil(), limit)
     case .Boolean:  return _push_k(c, e, value_make_boolean(e.boolean), limit)
     case .Number:   return _push_k(c, e, value_make_number(e.number), limit)
@@ -573,9 +626,9 @@ compiler_code_unary :: proc(c: ^Compiler, op: Opcode, e: ^Expr) {
         return
     }
 
-    r0 := compiler_push_expr_any(c, e)
-    pc := compiler_code_ABC(c, op, 0, r0, 0)
-    compiler_pop_expr(c, e)
+    rb := compiler_push_expr_any(c, e)
+    pc := compiler_code_ABC(c, op, 0, rb, 0)
+    compiler_pop_reg(c, rb)
     e^ = expr_make_pc(.Pc_Pending_Register, pc)
 }
 
@@ -590,7 +643,7 @@ allocation for its result by the caller.
  */
 compiler_code_arith :: proc(c: ^Compiler, op: Opcode, #no_alias left, right: ^Expr) {
     // Helper to avoid division or modulo by zero.
-    check_nonzero :: #force_inline proc(a: f64) -> (val: f64, ok: bool) {
+    check_nonzero :: proc(a: f64) -> (val: f64, ok: bool) {
         if ok = a == 0; ok {
             val = a
         }
@@ -643,7 +696,7 @@ _arith :: proc(c: ^Compiler, op: Opcode, #no_alias left, right: ^Expr) -> (act_o
             unreachable()
         }
 
-        compiler_pop_expr(c, left)
+        compiler_pop_reg(c, rb)
         return act_op, rb, imm
     } else if expr_is_literal(right) {
         // Wasn't register-immediate, try register-constant next.
@@ -661,7 +714,7 @@ _arith :: proc(c: ^Compiler, op: Opcode, #no_alias left, right: ^Expr) -> (act_o
         // If it doesn't fit in K[C], then we already emitted the instructions
         // needed to load a constant values from the constants table.
         kc := _push_expr_k(c, right, limit=MAX_C) or_break try
-        compiler_pop_expr(c, left)
+        compiler_pop_reg(c, rb)
         return act_op, rb, u16(kc)
     }
 
@@ -672,17 +725,17 @@ _arith :: proc(c: ^Compiler, op: Opcode, #no_alias left, right: ^Expr) -> (act_o
     // Don't pop the registers directly, because `rb` and/or `rc` may
     // not be poppable!
     if rb > rc {
-        compiler_pop_expr(c, left)
-        compiler_pop_expr(c, right)
+        compiler_pop_reg(c, rb)
+        compiler_pop_reg(c, rc)
     } else {
-        compiler_pop_expr(c, right)
-        compiler_pop_expr(c, left)
+        compiler_pop_reg(c, rc)
+        compiler_pop_reg(c, rb)
     }
     return op, rb, rc
 }
 
 @(private="file")
-_check_imm :: #force_inline proc(e: ^Expr) -> (imm: u16, neg, ok: bool) {
+_check_imm :: proc(e: ^Expr) -> (imm: u16, neg, ok: bool) {
     if e.type == .Number {
         n  := e.number
         neg = n < 0.0
@@ -696,7 +749,7 @@ _check_imm :: #force_inline proc(e: ^Expr) -> (imm: u16, neg, ok: bool) {
 
 
 compiler_code_concat :: proc(c: ^Compiler, #no_alias left, right: ^Expr) {
-    assert(left.type == .Register)
+    compiler_assert(c, left.type == .Register)
     rb := left.reg
 
     if right.type == .Pc_Pending_Register {
