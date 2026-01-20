@@ -45,8 +45,47 @@ main :: proc() {
         lulu.close(L)
         fmt.println(L.global_state.bytes_allocated, "bytes remaining")
     }
-    data := Pmain_Data{os.args, nil}
-    err  := lulu.api_pcall(L, pmain, &data)
+
+    Data :: struct {
+        args: []string,
+        err: os.Error,
+    }
+
+    data := Data{os.args, nil}
+    err  := lulu.api_pcall(L, proc(L: ^lulu.State) -> (ret_count: int) {
+        data := cast(^Data)lulu.to_userdata(L, 1)
+        lulu.pop(L, 1)
+
+        lulu.push_value(L, lulu.GLOBALS_INDEX)
+        lulu.set_global(L, "_G")
+
+
+        lulu.push_api_proc(L, print)
+        lulu.set_global(L, "print")
+
+        lulu.push_api_proc(L, tostring)
+        lulu.set_global(L, "tostring")
+
+        lulu.push_api_proc(L, modf)
+        lulu.set_global(L, "modf")
+
+        switch len(data.args) {
+        case 1:
+            data.err = run_repl(L)
+
+        case 2:
+            data.err = run_file(L, data.args[1])
+        }
+
+        if data.err != nil {
+            if data.err == .EOF {
+                data.err = nil
+            } else {
+                fmt.eprintln("[ERROR]:", os.error_string(data.err))
+            }
+        }
+        return 0
+    }, &data)
 
     if err != nil {
         os.exit(int(err))
@@ -55,44 +94,6 @@ main :: proc() {
     if data.err != nil {
         os.exit(1)
     }
-}
-
-Pmain_Data :: struct {
-    args: []string,
-    err: os.Error,
-}
-
-pmain :: proc(L: ^lulu.State) -> (ret_count: int) {
-    data := cast(^Pmain_Data)lulu.to_userdata(L, 1)
-    lulu.push_value(L, lulu.GLOBALS_INDEX)
-    lulu.set_global(L, "_G")
-
-
-    lulu.push_api_proc(L, print)
-    lulu.set_global(L, "print")
-
-    lulu.push_api_proc(L, tostring)
-    lulu.set_global(L, "tostring")
-
-    lulu.push_api_proc(L, modf)
-    lulu.set_global(L, "modf")
-
-    switch len(data.args) {
-    case 1:
-        data.err = run_repl(L)
-
-    case 2:
-        data.err = run_file(L, data.args[1])
-    }
-
-    if data.err != nil {
-        if data.err == .EOF {
-            data.err = nil
-        } else {
-            fmt.eprintln("[ERROR]:", os.error_string(data.err))
-        }
-    }
-    return 0
 }
 
 print :: proc(L: ^lulu.State) -> (ret_count: int) {
@@ -166,11 +167,19 @@ run_file :: proc(L: ^lulu.State, name: string) -> (err: os.Error) {
 run_input :: proc(L: ^lulu.State, name, input: string) {
     err := lulu.load(L, name, input)
     if err == nil {
-        err = lulu.pcall(L, arg_count=0, ret_count=0)
+        err = lulu.pcall(L, arg_count=0, ret_count=lulu.VARIADIC)
     }
 
     if err != nil {
         fmt.println(lulu.to_string(L, -1))
         lulu.pop(L, 1)
+    } else {
+        if n := lulu.get_top(L); n > 0 {
+            fmt.printf("'%s' returned: ", name, flush=false)
+            lulu.get_global(L, "print")
+            lulu.insert(L, 1)
+            lulu.call(L, arg_count=n, ret_count=0)
+        }
     }
+    assert(lulu.get_top(L) == 0)
 }

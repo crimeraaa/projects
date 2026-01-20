@@ -96,7 +96,7 @@ debug_memory_error :: proc(L: ^State, format: string, args: ..any, loc := #calle
     throw_error(L, .Memory)
 }
 
-@(disabled=!ODIN_DEBUG)
+@(disabled=!LULU_DISASSEMBLE)
 disassemble :: proc(chunk: ^Chunk) {
     fmt.printfln("[DIASSEMBLY]\n.name: %q", chunk_name(chunk))
     fmt.printfln(".stack_used: %i", chunk.stack_used)
@@ -131,7 +131,7 @@ disassemble :: proc(chunk: ^Chunk) {
     fmt.println()
 }
 
-@(disabled=!ODIN_DEBUG)
+@(disabled=!LULU_DISASSEMBLE)
 disassemble_at :: proc(chunk: ^Chunk, i: Instruction, pc: int, pad := 0) {
     _get_reg :: proc(chunk: ^Chunk, reg: u16, pc: int, buf: []byte) -> string {
         if name, ok := find_local(chunk, reg, pc); ok {
@@ -178,11 +178,6 @@ disassemble_at :: proc(chunk: ^Chunk, i: Instruction, pc: int, pad := 0) {
     case .ABC:
         arg = BC{i.b, i.c}
         fmt.printf("% -4i % -4i ; ", i.b, i.c)
-        // if info.b != nil && info.c == nil {
-        //     fmt.printf("% -4i      ; ", i.b)
-        // } else {
-        //     fmt.printf("% -4i % -4i ; ", i.b, i.c)
-        // }
 
     case .ABx:
         arg = i.u.bx

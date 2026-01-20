@@ -58,7 +58,13 @@ Global_State :: struct {
 
 @(private="package")
 vm_init :: proc(L: ^State, g: ^Global_State, allocator: mem.Allocator) -> (ok: bool) {
-    init :: proc(L: ^State, _: rawptr) {
+    L.global_state      = g
+    g.main_state        = L
+    g.backing_allocator = allocator
+
+    // Don't use `run_raw_pcall()`, because we won't be able to push an
+    // error object in case of memory errors.
+    err := run_raw_call(L, proc(L: ^State, _: rawptr) {
         g := L.global_state
 
         // Ensure that, when we start interning strings, we already have
@@ -78,19 +84,12 @@ vm_init :: proc(L: ^State, g: ^Global_State, allocator: mem.Allocator) -> (ok: b
         L.globals_table = value_make_table(t)
 
         // Initialize concat string builder with some reasonable default size.
-        L.builder = strings.builder_make(32, g.backing_allocator)
+        L.builder = strings.builder_make(32, allocator=g.backing_allocator)
 
         // Ensure the pointed-to data is non-nil.
         L.registers = L.stack[:0]
-    }
+    }, nil)
 
-    L.global_state      = g
-    g.main_state        = L
-    g.backing_allocator = allocator
-
-    // Don't use `vm_raw_pcall()`, because we won't be able to push an error
-    // object in case of memory errors.
-    err := raw_run_unrestoring(L, init, nil)
     return err == nil
 }
 
@@ -268,7 +267,7 @@ _protect :: proc(L: ^State, pc: int) {
     L.frame.saved_pc = pc
 }
 
-@(private="file", disabled=!ODIN_DEBUG)
+@(private="file", disabled=!LULU_DISASSEMBLE_INLINE)
 _print_stack :: proc(chunk: ^Chunk, i: Instruction, pc: int, R: []Value) {
     buf: [VALUE_TO_STRING_BUFFER_SIZE]byte
     for value, reg in R {
@@ -314,7 +313,7 @@ _set_table :: proc(L: ^State, pc: int, t: ^Value, k, v: Value) {
 
 
 @(private="package")
-vm_execute :: proc(L: ^State) -> (ret_count: int) {
+vm_execute :: proc(L: ^State, ret_expect: int) {
     frame := L.frame
     chunk := value_get_function(frame.callee^).lua.chunk
 
@@ -330,7 +329,7 @@ vm_execute :: proc(L: ^State) -> (ret_count: int) {
     // Table of defined global variables.
     _G := &L.globals_table
 
-    when ODIN_DEBUG do fmt.println("[EXECUTION]")
+    when LULU_DISASSEMBLE_INLINE do fmt.println("[EXECUTION]")
     for {
         i  := ip[0] // *ip
         pc := intrinsics.ptr_sub(ip, code)
@@ -423,7 +422,9 @@ vm_execute :: proc(L: ^State) -> (ret_count: int) {
         // case .Eq..=.Geq:
         //     unreachable("Unimplemented: %v", i.op)
 
-        case .Concat: vm_concat(L, ra, R[i.b:i.c])
+        case .Concat:
+            _protect(L, pc)
+            vm_concat(L, ra, R[i.b:i.c])
 
         // Control flow
         case .Call:
@@ -462,14 +463,11 @@ vm_execute :: proc(L: ^State) -> (ret_count: int) {
             R = L.registers
 
         case .Return:
-            ret_count = int(i.b) + VARIADIC
-            if ret_count == VARIADIC {
-                _protect(L, pc)
-                debug_runtime_error(L, "Variadic returns not yet implemented")
-            }
-            ret_values := R[a:a + u16(ret_count)]
-            L.registers = ret_values
-            return ret_count
+            ret_count := int(i.b) + VARIADIC
+            assert(ret_count != VARIADIC, "Lua Variadic returns not yet implemented")
+            ret_src := R[i.a:int(i.a) + ret_count]
+            run_call_return(L, ret_expect, ret_src)
+            return
 
         case:
             unreachable("Invalid opcode %v", op)

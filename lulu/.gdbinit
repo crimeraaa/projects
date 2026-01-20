@@ -34,13 +34,13 @@ end
 file ./bin/lulu
 
 # break lulu::[compiler.odin]::compiler_compile
-break lulu::[parser.odin]::program
-break lulu::[parser.odin]::advance_token
+# break lulu::[parser.odin]::program
+# break lulu::[parser.odin]::advance_token
 # break lulu::[value.odin]::number_to_string
 
 layout src
 
-run
+# run
 
 # layout src by default focuses on the source code window; this makes arrow keys
 # navigate that rather than the command-line.

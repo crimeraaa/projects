@@ -1,7 +1,6 @@
 package lulu
 
 import "core:mem"
-import "core:slice"
 import "core:strings"
 
 Type :: enum {
@@ -198,6 +197,21 @@ type_name_at :: proc(L: ^State, index: int) -> string {
     return type_name(L, t)
 }
 
+is_boolean :: proc(L: ^State, index: int) -> bool {
+    v := _get_any_index(L, index)^
+    return value_is_boolean(v)
+}
+
+is_number :: proc(L: ^State, index: int) -> bool {
+    v := _get_any_index(L, index)^
+    return value_is_number(v)
+}
+
+is_string :: proc(L: ^State, index: int) -> bool {
+    v := _get_any_index(L, index)^
+    return value_is_string(v)
+}
+
 to_boolean :: proc(L: ^State, index: int) -> (b: bool) {
     v := _get_any_index(L, index)^
     return !value_is_falsy(v)
@@ -262,6 +276,24 @@ Push `R[index]` to the top of the stack.
 push_value :: proc(L: ^State, index: int) {
     v := _get_any_index(L, index)^
     vm_push_value(L, v)
+}
+
+
+/*
+Moves `R[-1]` to `R[index]`, also moving `R[index:]` to `R[index + 1:]` to
+account for this change.
+ */
+insert :: proc(L: ^State, index: int) {
+    index := index - 1 if index > 0 else get_top(L) + index
+
+    // Copy by value as its stack slot is about to replaced.
+    value := L.registers[get_top(L) - 1]
+
+    // `len(src)` != `dst(src)` is acceptable.
+    src   := L.registers[index:]
+    dst   := L.registers[index + 1:]
+    copy(dst, src)
+    L.registers[index] = value
 }
 
 push_nil :: proc(L: ^State, count := 1) {
@@ -351,12 +383,14 @@ load :: proc(L: ^State, name, input: string) -> Error {
         name, input: string,
     }
 
-    parse :: proc(L: ^State, user_data: rawptr) {
+    data := Data{&b, name, input}
+
+    // Try to push the main function as a closure on the caller's VM stack.
+    return run_raw_pcall(L, proc(L: ^State, user_data: rawptr) {
         data  := (cast(^Data)user_data)^
         name  := ostring_new(L, data.name)
         program(L, data.builder, name, data.input)
-    }
-    return raw_run_restoring(L, parse, &Data{&b, name, input})
+    }, &data)
 }
 
 call :: proc(L: ^State, arg_count, ret_count: int) {
@@ -366,17 +400,22 @@ call :: proc(L: ^State, arg_count, ret_count: int) {
 
 pcall :: proc(L: ^State, arg_count, ret_count: int) -> Error {
     Data :: struct {
-        callee: ^Value,
-        arg_count, ret_count: int,
+        // How many arguments the caller told us they passed.
+        // This is assuming the API rules for calling functions were followed.
+        arg_count: int,
+
+        // How many return values the caller told us they are expecting.
+        // This is used to determine how to restore the caller's VM stack.
+        ret_count: int,
     }
 
-    protect :: proc(L: ^State, user_data: rawptr) {
-        data := (cast(^Data)user_data)^
-        run_call(L, data.callee, data.arg_count, data.ret_count)
-    }
+    data := Data{arg_count, ret_count}
 
-    callee := _get_stack_index(L, -(arg_count + 1))
-    return raw_run_restoring(L, protect, &Data{callee, arg_count, ret_count})
+    return run_raw_pcall(L, proc(L: ^State, user_data: rawptr) {
+        data   := (cast(^Data)user_data)^
+        callee := _get_stack_index(L, -(data.arg_count + 1))
+        run_call(L, callee, data.arg_count, data.ret_count)
+    }, &data)
 }
 
 /*
@@ -384,7 +423,7 @@ Pushes the API procedure `p` and raw pointer `user_data` to the stack
 and calls `p` with `user_data` as its sole argument.
 
 **Returns**
-- err: An API error code, if any, were caught.
+- err: An API error code, if any, that was caught. May be `.Ok` (a.k.a. `nil`).
  */
 api_pcall :: proc(L: ^State, p: Api_Proc, user_data: rawptr) -> (err: Error) {
     cl := closure_api_new(L, p, 0)

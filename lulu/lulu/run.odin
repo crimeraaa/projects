@@ -17,6 +17,11 @@ Frame :: struct {
     // The value which represents the function being called. It must be a pointer
     // so that we can try to report the variable name which points to the
     // function.
+    //
+    // **Note(2026-01-20)**
+    //
+    // If the stack is being reallocated, make sure to revalidate this!
+    //
     callee: ^Value,
 
     // Index of instruction where we left off (e.g. if we dispatch a Lua
@@ -53,7 +58,7 @@ Run the procedure `p` in "unrestoring protected mode".
 - The caller's stack frame is not restored. This is important to help handle
 out-of-memory errors on main state startup.
  */
-raw_run_unrestoring :: proc(L: ^State, p: proc(^State, rawptr), user_data: rawptr) -> (err: Error) {
+run_raw_call :: proc(L: ^State, p: proc(^State, rawptr), user_data: rawptr) -> (err: Error) {
     // Push new error handler.
     h: Error_Handler
     h.prev    = L.handler
@@ -81,6 +86,11 @@ throw_error :: proc(L: ^State, code: Error) -> ! {
     }
 }
 
+Call_Type :: enum {
+    Odin,
+    Lua,
+}
+
 /*
 Runs the procedure `p` in "restoring protected mode".
 
@@ -97,13 +107,14 @@ Runs the procedure `p` in "restoring protected mode".
 protected call is restored, plus an error message (error "object") pushed
 on top.
  */
-raw_run_restoring :: proc(L: ^State, p: proc(^State, rawptr), user_data: rawptr) -> (err: Error) {
+run_raw_pcall :: proc(L: ^State, p: proc(^State, rawptr), user_data: rawptr) -> (err: Error) {
     old_base := vm_save_base(L)
     old_top  := vm_save_top(L)
 
-    err = raw_run_unrestoring(L, p, user_data)
+    err = run_raw_call(L, p, user_data)
     switch err {
     case .Ok:
+        // Don't change the stack because everything is (assumed to be) fine.
         return nil
 
     case .Syntax, .Runtime:
@@ -125,17 +136,16 @@ raw_run_restoring :: proc(L: ^State, p: proc(^State, rawptr), user_data: rawptr)
 }
 
 run_call :: proc(L: ^State, func: ^Value, arg_count, ret_expect: int) {
+    call_type := run_call_prologue(L, func, arg_count, ret_expect)
+    if call_type == .Lua {
+        vm_execute(L, ret_expect)
+    }
+}
+
+run_call_prologue :: proc(L: ^State, func: ^Value, arg_count, ret_expect: int) -> Call_Type {
     if !value_is_function(func^) {
         debug_type_error(L, "call", func)
     }
-
-    // Index of the very first argument for the current stack frame.
-    // Majority of the following instructions operate on indices to the full
-    // stack, not just the registers window.
-    old_base := vm_save_base(L)
-
-    // Index of 1 past the last valid stack index for the current stack frame.
-    old_top  := vm_save_top(L)
 
     // Index of `callee` in the current stack frame. Upon return, this is
     // the first index to be overwritten (if there are nonzero return values).
@@ -176,25 +186,28 @@ run_call :: proc(L: ^State, func: ^Value, arg_count, ret_expect: int) {
     // Initialize the newly pushed stack frame.
     registers      := L.stack[new_base:new_top]
     L.registers     = registers
+    next.saved_pc   = -1
     next.callee     = func
     next.registers  = registers
-    next.saved_pc   = -1
 
     ret_actual: int
     if !closure.is_lua {
         // Can call the Odin procedure directly?
         ret_actual = closure.api.procedure(L)
+
         // API procedure may have pushed an arbitrary amount of values.
         new_top = vm_save_top(L)
+        ret_values := L.stack[new_top - ret_actual:new_top]
+        run_call_return(L, ret_expect, ret_values)
+        return .Odin
     } else {
-        ret_actual = vm_execute(L)
+        return .Lua
     }
+}
 
-    // Move return values from the now-finished callee to the top of our
-    // previous stack frame.
-    ret_from := L.stack[new_top - ret_actual:new_top]
-    ret_to   := L.stack[call_index:call_index + ret_actual]
-    copy(ret_to, ret_from)
+run_call_return :: proc(L: ^State, ret_expect: int, ret_src: []Value) {
+    ret_actual := len(ret_src)
+    call_index := vm_save_stack(L, L.frame.callee)
 
     // If we have less return values than expected, set the unassigned
     // registers to `nil`.
@@ -206,20 +219,27 @@ run_call :: proc(L: ^State, func: ^Value, arg_count, ret_expect: int) {
         ret_actual += extra
     }
 
+    ret_top := call_index + ret_actual
+    ret_dst := L.stack[call_index:ret_top]
+    copy(ret_dst, ret_src)
+
     // Restore previous stack frame, if one exists.
     if n := L.frame_count - 2; n >= 0 {
         prev := &L.frames[n]
+
         // Parent caller needs to see the now-returned values because
         // they have no other way of knowing.
         if !value_get_function(prev.callee^).is_lua || ret_expect == VARIADIC {
-            new_top = call_index + ret_actual
-            prev.registers = L.stack[old_base:new_top]
+            old_base := vm_save_stack(L, raw_data(prev.registers))
+            prev.registers = L.stack[old_base:ret_top]
         }
         L.frame_count -= 1
         L.frame        = prev
         L.registers    = prev.registers
     } else {
+        old_base := vm_save_base(L)
         L.frame_count = 0
         L.frame       = nil
+        L.registers   = ret_dst
     }
 }

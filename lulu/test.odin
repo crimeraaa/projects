@@ -1,0 +1,76 @@
+package lulu_repl
+
+// standard
+import "core:fmt"
+import "core:testing"
+
+// local
+import "lulu"
+
+Value :: union {
+    bool,
+    f64,
+    string,
+    lulu.Error,
+}
+
+Test :: struct {
+    name, input: string,
+    expected:    Value,
+}
+
+TESTS := [?]Test{
+    {"hello.lua",   #load("hello.lua"),     nil},
+    {"literal.lua", #load("literal.lua"),   7.8},
+    {"arith.lua",   #load("arith.lua") ,    7.8},
+    {"error.lua",   #load("error.lua"),     lulu.Error.Runtime},
+    {"fun.lua",     #load("fun.lua"),       nil},
+    {"table.lua",   #load("table.lua"),     nil},
+}
+
+try_test :: proc(t: ^testing.T, L: ^lulu.State, test: Test) -> Value {
+    fmt.printfln("[LULU ] --- Running '%s'...", test.name, flush=false)
+    lulu.load(L, test.name, test.input) or_return
+    lulu.pcall(L, arg_count=0, ret_count=1) or_return
+
+    #partial switch type := lulu.type(L, -1); type {
+    case .None, .Nil:   return nil
+    case .Boolean:      return lulu.to_boolean(L, -1)
+    case .Number:       return lulu.to_number(L, -1)
+    case .String:       return lulu.to_string(L, -1)
+    case:
+        testing.expectf(t, false, "Invalid test type: %v", type)
+    }
+    return nil
+}
+
+@test
+run_tests :: proc(t: ^testing.T) {
+    ms: lulu.Main_State
+    L, ok := lulu.new_state(&ms, context.allocator)
+    testing.expect(t, ok && L != nil)
+
+    // NOTE: Failures can prevent us from cleaning up properly.
+    defer lulu.close(L)
+
+    lulu.push_api_proc(L, modf)
+    lulu.set_global(L, "modf")
+
+    lulu.push_api_proc(L, tostring)
+    lulu.set_global(L, "tostring")
+
+    lulu.push_api_proc(L, proc(L: ^lulu.State) -> int {
+        fmt.print("[LULU ] --- ", flush=false)
+        return print(L)
+    })
+    lulu.set_global(L, "print")
+
+    // TODO: restore call frame stack properly on errors
+    for test, index in TESTS[3:] {
+        lulu.set_top(L, 0)
+        res := try_test(t, L, test)
+        buf: [256]byte
+
+        testing.expect_value(t, res, test.expected)
+    }
+}

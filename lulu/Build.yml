@@ -9,6 +9,8 @@ vars:
     -debug
     -sanitize=address
     -out:"{{.OUT}}"
+    -define:LULU_DISASSEMBLE_CHUNK=true
+    -define:LULU_DISASSEMBLE_INLINE=true
 
 tasks:
   run:
