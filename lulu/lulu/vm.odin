@@ -423,8 +423,9 @@ vm_execute :: proc(L: ^State, ret_expect: int) {
         //     unreachable("Unimplemented: %v", i.op)
 
         case .Concat:
+            args := R[i.b:i.c]
             _protect(L, pc)
-            vm_concat(L, ra, R[i.b:i.c])
+            vm_concat(L, ra, args)
 
         // Control flow
         case .Call:
@@ -463,9 +464,13 @@ vm_execute :: proc(L: ^State, ret_expect: int) {
             R = L.registers
 
         case .Return:
+            ret_first := int(a)
             ret_count := int(i.b) + VARIADIC
-            assert(ret_count != VARIADIC, "Lua Variadic returns not yet implemented")
-            ret_src := R[i.a:int(i.a) + ret_count]
+            if ret_count == VARIADIC {
+                ret_count = get_top(L) - ret_first
+            }
+
+            ret_src := R[ret_first:ret_first + ret_count]
             run_call_return(L, ret_expect, ret_src)
             return
 

@@ -17,3 +17,5 @@ do
     print(x)
 end
 print(x)
+
+return x

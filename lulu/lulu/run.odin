@@ -108,8 +108,9 @@ protected call is restored, plus an error message (error "object") pushed
 on top.
  */
 run_raw_pcall :: proc(L: ^State, p: proc(^State, rawptr), user_data: rawptr) -> (err: Error) {
-    old_base := vm_save_base(L)
-    old_top  := vm_save_top(L)
+    old_base  := vm_save_base(L)
+    old_top   := vm_save_top(L)
+    old_frame := L.frame_count - 1
 
     err = run_raw_call(L, p, user_data)
     switch err {
@@ -131,13 +132,27 @@ run_raw_pcall :: proc(L: ^State, p: proc(^State, rawptr), user_data: rawptr) -> 
     }
 
     // Had an error, so restore the previous stack view plus the error object.
-    L.registers = L.stack[old_base:old_top + 1]
+    registers := L.stack[old_base:old_top + 1]
+    L.registers = registers
+
+    if old_frame != -1 {
+        frame := &L.frames[old_frame]
+        frame.registers = registers
+
+        // In normal execution, the pushed frames are popped. However we
+        // have to do so explicitly when errors are thrown.
+        L.frame       = frame
+        L.frame_count = old_frame + 1
+    } else {
+        L.frame       = nil
+        L.frame_count = 0
+    }
     return err
 }
 
 run_call :: proc(L: ^State, func: ^Value, arg_count, ret_expect: int) {
-    call_type := run_call_prologue(L, func, arg_count, ret_expect)
-    if call_type == .Lua {
+    type := run_call_prologue(L, func, arg_count, ret_expect)
+    if type == .Lua {
         vm_execute(L, ret_expect)
     }
 }
@@ -178,17 +193,9 @@ run_call_prologue :: proc(L: ^State, func: ^Value, arg_count, ret_expect: int) -
         mem.zero_slice(empty)
     }
 
-    // Push new stack frame.
-    next           := &L.frames[L.frame_count]
-    L.frame_count  += 1
-    L.frame         = next
-
     // Initialize the newly pushed stack frame.
-    registers      := L.stack[new_base:new_top]
-    L.registers     = registers
-    next.saved_pc   = -1
-    next.callee     = func
-    next.registers  = registers
+    registers := L.stack[new_base:new_top]
+    _push_frame(L, func, registers)
 
     ret_actual: int
     if !closure.is_lua {
@@ -205,27 +212,52 @@ run_call_prologue :: proc(L: ^State, func: ^Value, arg_count, ret_expect: int) -
     }
 }
 
+@(private="file")
+_push_frame :: proc(L: ^State, func: ^Value, registers: []Value) {
+    // Push new stack frame.
+    next := &L.frames[L.frame_count]
+    next.saved_pc   = -1
+    next.callee     = func
+    next.registers  = registers
+
+    // prev_callee := L.frame.callee if L.frame != nil else nil
+    // fmt.printfln("[PUSH ] --- prev=%p, next=%p", prev_callee, next.callee)
+
+    L.frame_count  += 1
+    L.frame         = next
+    L.registers     = registers
+
+}
+
 run_call_return :: proc(L: ^State, ret_expect: int, ret_src: []Value) {
     ret_actual := len(ret_src)
+
+    // Index in the stack of the function being called.
     call_index := vm_save_stack(L, L.frame.callee)
+
+    ret_top := call_index + ret_actual
 
     // If we have less return values than expected, set the unassigned
     // registers to `nil`.
     if extra := ret_expect - ret_actual; extra > 0 {
-        // Index of 1 past the last returned value.
-        last  := call_index + ret_actual
-        empty := L.stack[last:last + extra]
+        empty := L.stack[ret_top:ret_top + extra]
         mem.zero_slice(empty)
-        ret_actual += extra
+        ret_top += extra
     }
 
-    ret_top := call_index + ret_actual
     ret_dst := L.stack[call_index:ret_top]
     copy(ret_dst, ret_src)
+    _pop_frame(L, ret_expect, ret_top)
+}
+
+@(private="file")
+_pop_frame :: proc(L: ^State, ret_expect, ret_top: int) {
+    prev := &L.frames[L.frame_count - 2] if L.frame_count - 2 >= 0 else nil
+    // fmt.printfln("[POP  ] --- pop %p, restore %p", L.frame.callee, prev.callee if prev != nil else nil)
 
     // Restore previous stack frame, if one exists.
-    if n := L.frame_count - 2; n >= 0 {
-        prev := &L.frames[n]
+    if prev != nil {
+        assert(prev.callee != L.frame.callee, "Overwriting callee will fuck us over")
 
         // Parent caller needs to see the now-returned values because
         // they have no other way of knowing.
@@ -237,9 +269,8 @@ run_call_return :: proc(L: ^State, ret_expect: int, ret_src: []Value) {
         L.frame        = prev
         L.registers    = prev.registers
     } else {
-        old_base := vm_save_base(L)
-        L.frame_count = 0
         L.frame       = nil
-        L.registers   = ret_dst
+        L.frame_count = 0
+        L.registers   = L.stack[:ret_top]
     }
 }

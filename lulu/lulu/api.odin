@@ -97,10 +97,10 @@ set_top :: proc(L: ^State, index: int) {
     if index >= 0 {
         old_base := vm_save_base(L)
         old_top  := vm_save_top(L)
-        new_top  := old_top + index
-        values   := L.stack[old_top:new_top]
+        new_top  := old_base + index
+        values   := L.stack[old_base:new_top]
         if new_top > old_top {
-            mem.zero_slice(values)
+            mem.zero_slice(L.stack[old_top:new_top])
         }
         L.registers = values
     } else {

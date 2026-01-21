@@ -24,6 +24,7 @@ TESTS := [?]Test{
     {"literal.lua", #load("literal.lua"),   7.8},
     {"arith.lua",   #load("arith.lua") ,    7.8},
     {"error.lua",   #load("error.lua"),     lulu.Error.Runtime},
+    {"blocks.lua",  #load("blocks.lua"),    "file"},
     {"fun.lua",     #load("fun.lua"),       nil},
     {"table.lua",   #load("table.lua"),     nil},
 }
@@ -62,11 +63,12 @@ run_tests :: proc(t: ^testing.T) {
     lulu.push_api_proc(L, proc(L: ^lulu.State) -> int {
         fmt.print("[LULU ] --- ", flush=false)
         return print(L)
+        // return 0
     })
     lulu.set_global(L, "print")
 
     // TODO: restore call frame stack properly on errors
-    for test, index in TESTS[3:] {
+    for test, index in TESTS {
         lulu.set_top(L, 0)
         res := try_test(t, L, test)
         buf: [256]byte
