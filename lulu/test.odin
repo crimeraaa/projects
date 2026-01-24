@@ -53,19 +53,8 @@ run_tests :: proc(t: ^testing.T) {
 
     // NOTE: Failures can prevent us from cleaning up properly.
     defer lulu.close(L)
-
-    lulu.push_api_proc(L, modf)
-    lulu.set_global(L, "modf")
-
-    lulu.push_api_proc(L, tostring)
-    lulu.set_global(L, "tostring")
-
-    lulu.push_api_proc(L, proc(L: ^lulu.State) -> int {
-        fmt.print("[LULU ] --- ", flush=false)
-        return print(L)
-        // return 0
-    })
-    lulu.set_global(L, "print")
+    
+    open_base(L)
 
     // TODO: restore call frame stack properly on errors
     for test, index in TESTS {

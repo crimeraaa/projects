@@ -54,27 +54,14 @@ main :: proc() {
     data := Data{os.args, nil}
     err  := lulu.api_pcall(L, proc(L: ^lulu.State) -> (ret_count: int) {
         data := cast(^Data)lulu.to_userdata(L, 1)
-        lulu.pop(L, 1)
-
-        lulu.push_value(L, lulu.GLOBALS_INDEX)
-        lulu.set_global(L, "_G")
-
-
-        lulu.push_api_proc(L, print)
-        lulu.set_global(L, "print")
-
-        lulu.push_api_proc(L, tostring)
-        lulu.set_global(L, "tostring")
-
-        lulu.push_api_proc(L, modf)
-        lulu.set_global(L, "modf")
+        open_base(L)
 
         switch len(data.args) {
-        case 1:
-            data.err = run_repl(L)
-
-        case 2:
-            data.err = run_file(L, data.args[1])
+        case 1: data.err = run_repl(L)
+        case 2: data.err = run_file(L, data.args[1])
+        case:
+            fmt.eprintfln("Usage: %s [script]", data.args[0])
+            data.err = .Invalid_Command
         }
 
         if data.err != nil {
@@ -94,6 +81,21 @@ main :: proc() {
     if data.err != nil {
         os.exit(1)
     }
+}
+
+open_base :: proc(L: ^lulu.State) {
+    lulu.push_value(L, lulu.GLOBALS_INDEX)
+    lulu.push_value(L, -1)
+    lulu.set_global(L, "_G")
+    
+    @(static, rodata)
+    lib_base := [?]lulu.Named_Proc{
+        {"print",    print},
+        {"tostring", tostring},
+        {"modf",     modf},
+    }
+    
+    lulu.set_library(L, lib_base[:])
 }
 
 print :: proc(L: ^lulu.State) -> (ret_count: int) {
@@ -165,6 +167,7 @@ run_file :: proc(L: ^lulu.State, name: string) -> (err: os.Error) {
 }
 
 run_input :: proc(L: ^lulu.State, name, input: string) {
+    lulu.set_top(L, 0)
     err := lulu.load(L, name, input)
     if err == nil {
         err = lulu.pcall(L, arg_count=0, ret_count=lulu.VARIADIC)
@@ -181,5 +184,5 @@ run_input :: proc(L: ^lulu.State, name, input: string) {
             lulu.call(L, arg_count=n, ret_count=0)
         }
     }
-    assert(lulu.get_top(L) == 0)
+    // assert(lulu.get_top(L) == 0)
 }

@@ -24,7 +24,7 @@ Compiler :: struct {
     // Current counter of how many instructions we have actively written so far
     // to `chunk.code`. Also acts as the index of the next instruction to be
     // written in the current chunk's code array.
-    pc: int,
+    pc: i32,
 
     // Number of all the values we have actively written in `chunk.constants`.
     // Also acts as the index of the next constant to be written.
@@ -223,7 +223,7 @@ Appends `i` to the current chunk's code array.
 - pc: The index of the instruction we just emitted.
  */
 @(private="file")
-_add_instruction :: proc(c: ^Compiler, i: Instruction) -> (pc: int) {
+_add_instruction :: proc(c: ^Compiler, i: Instruction) -> (pc: i32) {
     L := c.L
     p := c.parser
 
@@ -232,14 +232,14 @@ _add_instruction :: proc(c: ^Compiler, i: Instruction) -> (pc: int) {
     return chunk_push_code(L, c.chunk, &c.pc, i, line, col)
 }
 
-compiler_code_ABC :: proc(cl: ^Compiler, op: Opcode, a, b, c: u16) -> (pc: int) {
+compiler_code_ABC :: proc(cl: ^Compiler, op: Opcode, a, b, c: u16) -> (pc: i32) {
     compiler_assert(cl, OP_INFO[op].mode == .ABC)
 
     i := Instruction{base={op=op, a=a, b=b, c=c}}
     return _add_instruction(cl, i)
 }
 
-compiler_code_ABx :: proc(c: ^Compiler, op: Opcode, a: u16, bx: u32) -> (pc: int) {
+compiler_code_ABx :: proc(c: ^Compiler, op: Opcode, a: u16, bx: u32) -> (pc: i32) {
     compiler_assert(c, OP_INFO[op].mode == .ABx)
     compiler_assert(c, OP_INFO[op].b != nil)
     compiler_assert(c, OP_INFO[op].c == nil)
@@ -347,8 +347,8 @@ compiler_push_reg :: proc(c: ^Compiler, count: u16 = 1) -> (reg: u16) {
         parser_error(c.parser, msg)
     }
 
-    if int(c.free_reg) > c.chunk.stack_used {
-        c.chunk.stack_used = int(c.free_reg)
+    if c.free_reg > u16(c.chunk.stack_used) {
+        c.chunk.stack_used = u8(c.free_reg)
     }
     return reg
 }
@@ -721,9 +721,7 @@ _arith :: proc(c: ^Compiler, op: Opcode, #no_alias left, right: ^Expr) -> (act_o
     // Neither register-immediate nor register-constant, do register-register.
     rc := compiler_push_expr_any(c, right)
 
-    // Deallocate temporary registers in the correct order.
-    // Don't pop the registers directly, because `rb` and/or `rc` may
-    // not be poppable!
+    // Deallocate potenatially temporary registers in the correct order.
     if rb > rc {
         compiler_pop_reg(c, rb)
         compiler_pop_reg(c, rc)

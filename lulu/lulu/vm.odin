@@ -182,6 +182,7 @@ vm_push_string :: proc(L: ^State, s: string) {
 vm_push_value :: proc(L: ^State, v: Value) {
     base := vm_save_base(L)
     top  := vm_save_top(L) + 1
+    assert(top <= len(L.stack), "Lulu value stack overflow")
     L.registers = L.stack[base:top]
     L.stack[top - 1] = v
 }
@@ -238,7 +239,7 @@ Op :: #type proc "contextless" (a, b: f64) -> f64
 Works only for register-immediate encodings.
  */
 @(private="file")
-_arith_imm :: proc(L: ^State, pc: int, ra: ^Value, op: Op, rb: ^Value, imm: u16) {
+_arith_imm :: proc(L: ^State, pc: i32, ra: ^Value, op: Op, rb: ^Value, imm: u16) {
     if left, ok := value_to_number(rb^); ok {
         ra^ = value_make_number(op(left, f64(imm)))
     } else {
@@ -251,7 +252,7 @@ _arith_imm :: proc(L: ^State, pc: int, ra: ^Value, op: Op, rb: ^Value, imm: u16)
 Works for both register-register and register-constant encodings.
 */
 @(private="file")
-_arith :: proc(L: ^State, pc: int, ra: ^Value, op: Op, rb, rc: ^Value) {
+_arith :: proc(L: ^State, pc: i32, ra: ^Value, op: Op, rb, rc: ^Value) {
     try: {
         left   := value_to_number(rb^) or_break try
         right  := value_to_number(rc^) or_break try
@@ -263,12 +264,12 @@ _arith :: proc(L: ^State, pc: int, ra: ^Value, op: Op, rb, rc: ^Value) {
 }
 
 @(private="file")
-_protect :: proc(L: ^State, pc: int) {
+_protect :: proc(L: ^State, pc: i32) {
     L.frame.saved_pc = pc
 }
 
 @(private="file", disabled=!LULU_DISASSEMBLE_INLINE)
-_print_stack :: proc(chunk: ^Chunk, i: Instruction, pc: int, R: []Value) {
+_print_stack :: proc(chunk: ^Chunk, i: Instruction, pc: i32, R: []Value) {
     buf: [VALUE_TO_STRING_BUFFER_SIZE]byte
     for value, reg in R {
         repr := value_to_string(value, buf[:])
@@ -299,14 +300,14 @@ vm_set_table :: proc(L: ^State, t: ^Value, k, v: Value) {
 }
 
 @(private="file")
-_get_table :: proc(L: ^State, pc: int, ra, t: ^Value, k: Value) {
+_get_table :: proc(L: ^State, pc: i32, ra, t: ^Value, k: Value) {
     _protect(L, pc)
     v, _ := vm_get_table(L, t, k)
     ra^  = v
 }
 
 @(private="file")
-_set_table :: proc(L: ^State, pc: int, t: ^Value, k, v: Value) {
+_set_table :: proc(L: ^State, pc: i32, t: ^Value, k, v: Value) {
     _protect(L, pc)
     vm_set_table(L, t, k, v)
 }
@@ -332,7 +333,7 @@ vm_execute :: proc(L: ^State, ret_expect: int) {
     when LULU_DISASSEMBLE_INLINE do fmt.println("[EXECUTION]")
     for {
         i  := ip[0] // *ip
-        pc := intrinsics.ptr_sub(ip, code)
+        pc := i32(intrinsics.ptr_sub(ip, code))
         ip = &ip[1] // ip++
         _print_stack(chunk, i, pc, R)
 

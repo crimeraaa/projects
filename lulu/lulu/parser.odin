@@ -92,10 +92,11 @@ lookahead(2) token to discharge. Otherwise, the lookahead(2) token is used
 as the new primary lookahead and the lookahead(2) token is thrown away.
  */
 advance_token :: proc(p: ^Parser) {
-    next := p.lookahead2
-    if next.type == nil {
+    next: Token
+    if p.lookahead2.type == nil {
         next = lexer_scan_token(&p.lexer)
     } else {
+        next = p.lookahead2
         p.lookahead2 = {}
     }
 
@@ -103,7 +104,8 @@ advance_token :: proc(p: ^Parser) {
         error_lookahead(p, "Unexpected token")
     }
 
-    p.consumed, p.lookahead = p.lookahead, next
+    p.consumed  = p.lookahead
+    p.lookahead = next
 }
 
 /*
@@ -371,7 +373,8 @@ identifier_statement :: proc(p: ^Parser, c: ^Compiler) {
         compiler_discharge_returns(c, &var, 0)
         compiler_pop_reg(c, var.reg)
     } else {
-        assignment(p, c, &Assign_List{variable=var, prev=nil}, 1)
+        head := Assign_List{variable=var, prev=nil}
+        assignment(p, c, &head, 1)
     }
 }
 
@@ -395,8 +398,8 @@ assignment :: proc(p: ^Parser, c: ^Compiler, tail: ^Assign_List, lhs_count: u16)
     if match_token(p, .Comma) {
         // Link a new assignment target using the recursive stack.
         expect_token(p, .Identifier)
-        next := &Assign_List{variable=variable_expression(p, c), prev=tail}
-        assignment(p, c, next, lhs_count + 1)
+        next := Assign_List{variable=variable_expression(p, c), prev=tail}
+        assignment(p, c, &next, lhs_count + 1)
         return
     }
 
@@ -544,7 +547,7 @@ Constructor :: struct {
     hash_count, array_count: int,
 
     // Index of the `.New_Table` instruction.
-    pc: int,
+    pc: i32,
 
     // R[A] of the destination table in the `.New_Table` instruction.
     reg: u16,

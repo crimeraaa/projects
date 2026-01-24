@@ -26,10 +26,15 @@ Frame :: struct {
 
     // Index of instruction where we left off (e.g. if we dispatch a Lua
     // function call).
-    saved_pc: int,
+    saved_pc: i32,
 
     // Window into VM's primary stack.
     registers: []Value,
+}
+
+Call_Type :: enum {
+    Odin,
+    Lua,
 }
 
 unreachable :: proc(msg := "", args: ..any, loc := #caller_location) -> ! {
@@ -43,6 +48,20 @@ unreachable :: proc(msg := "", args: ..any, loc := #caller_location) -> ! {
         builtin.unreachable()
     }
 }
+
+/*
+Propagates the error code `code` to the first protected caller, if one exists.
+ */
+throw_error :: proc(L: ^State, code: Error) -> ! {
+    // Unprotected call?
+    if h := L.handler; h == nil {
+        panic("[PANIC] Unprotected call to Lulu API")
+    } else {
+        intrinsics.volatile_store(&h.code, code)
+        libc.longjmp(&h.buf, 1)
+    }
+}
+
 /*
 Run the procedure `p` in "unrestoring protected mode".
 
@@ -71,24 +90,6 @@ run_raw_call :: proc(L: ^State, p: proc(^State, rawptr), user_data: rawptr) -> (
     // Restore old error handler.
     L.handler = h.prev
     return intrinsics.volatile_load(&h.code)
-}
-
-/*
-Propagates the error code `code` to the first protected caller, if one exists.
- */
-throw_error :: proc(L: ^State, code: Error) -> ! {
-    // Unprotected call?
-    if h := L.handler; h == nil {
-        panic("[PANIC] Unprotected call to Lulu API")
-    } else {
-        intrinsics.volatile_store(&h.code, code)
-        libc.longjmp(&h.buf, 1)
-    }
-}
-
-Call_Type :: enum {
-    Odin,
-    Lua,
 }
 
 /*
@@ -184,7 +185,7 @@ run_call_prologue :: proc(L: ^State, func: ^Value, arg_count, ret_expect: int) -
     // along with stack space needed for temporaries. Use whichever
     // one is larger to determine the actual top of the new stack frame.
     if closure.is_lua {
-        if extra := closure.lua.chunk.stack_used - arg_count; extra > 0 {
+        if extra := int(closure.lua.chunk.stack_used) - arg_count; extra > 0 {
             new_top += extra
         }
 
@@ -232,9 +233,10 @@ _push_frame :: proc(L: ^State, func: ^Value, registers: []Value) {
 run_call_return :: proc(L: ^State, ret_expect: int, ret_src: []Value) {
     ret_actual := len(ret_src)
 
-    // Index in the stack of the function being called.
+    // Index of the function being called in the stack.
     call_index := vm_save_stack(L, L.frame.callee)
 
+    // Index of the last actual returned value in the stack.
     ret_top := call_index + ret_actual
 
     // If we have less return values than expected, set the unassigned
@@ -269,6 +271,7 @@ _pop_frame :: proc(L: ^State, ret_expect, ret_top: int) {
         L.frame        = prev
         L.registers    = prev.registers
     } else {
+        assert(L.frame_count == 1)
         L.frame       = nil
         L.frame_count = 0
         L.registers   = L.stack[:ret_top]

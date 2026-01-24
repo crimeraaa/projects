@@ -102,22 +102,24 @@ disassemble :: proc(chunk: ^Chunk) {
     fmt.printfln(".stack_used: %i", chunk.stack_used)
 
     fmt.println(".locals:")
-    if len(chunk.locals) > 0 {
+    if n := len(chunk.locals); n > 0 {
+        pad := math.count_digits_of_base(n - 1, base=10)
         for local, i in chunk.locals {
             name := local_name(local)
             born := local.birth_pc
             died := local.death_pc
-            fmt.printfln("[%i] .local '%s' ; .code[%i:%i]", i, name, born, died)
+            fmt.printfln("[%0*i] .local '%s' ; .code[%i:%i]", pad, i, name, born, died)
         }
         fmt.println()
     }
 
     fmt.println(".constants:")
-    if len(chunk.constants) > 0 {
+    if n := len(chunk.constants); n > 0 {
         buf: [VALUE_TO_STRING_BUFFER_SIZE]byte
+        pad := math.count_digits_of_base(n - 1, base=10)
         for v, i in chunk.constants {
             repr := value_to_string(v, buf[:])
-            fmt.printf("[%i] .%-8s ", i, value_type_name(v))
+            fmt.printf("[%0*i] .%-8s ", pad, i, value_type_name(v))
             fmt.printfln("%q" if value_is_string(v) else "%s", repr)
         }
         fmt.println()
@@ -126,14 +128,14 @@ disassemble :: proc(chunk: ^Chunk) {
     fmt.println(".code:")
     pad := math.count_digits_of_base(len(chunk.code) - 1, base=10)
     for i, pc in chunk.code {
-        disassemble_at(chunk, i, pc, pad)
+        disassemble_at(chunk, i, i32(pc), pad)
     }
     fmt.println()
 }
 
 @(disabled=!LULU_DISASSEMBLE)
-disassemble_at :: proc(chunk: ^Chunk, i: Instruction, pc: int, pad := 0) {
-    _get_reg :: proc(chunk: ^Chunk, reg: u16, pc: int, buf: []byte) -> string {
+disassemble_at :: proc(chunk: ^Chunk, i: Instruction, pc: i32, pad := 0) {
+    _get_reg :: proc(chunk: ^Chunk, reg: u16, pc: i32, buf: []byte) -> string {
         if name, ok := find_local(chunk, reg, pc); ok {
             return name
         } else {
@@ -300,12 +302,13 @@ disassemble_at :: proc(chunk: ^Chunk, i: Instruction, pc: int, pad := 0) {
         start := int(i.a)
         count := int(arg.(BC).b) + VARIADIC
         stop  := start + count
+        fmt.print("return")
         if count == VARIADIC {
-            fmt.printf("return $r[%i:]", start)
+            fmt.printf(" $r[%i:]", start)
         } else if start == stop - 1 {
-            fmt.printf("return %s", _get_reg(chunk, u16(start), pc, buf1[:]))
-        } else {
-            fmt.printf("return $r[%i:%i]", start, stop)
+            fmt.printf(" %s", _get_reg(chunk, u16(start), pc, buf1[:]))
+        } else if start != stop {
+            fmt.printf(" $r[%i:%i]", start, stop)
         }
     }
     fmt.println()

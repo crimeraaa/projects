@@ -4,11 +4,12 @@ package lulu
 Chunk :: struct {
     using base: Object_Header,
 
+    // Up to how many stack slots are actively used at most.
+    // Must be able to hold the range `[0, MAX_REG]`.
+    stack_used: u8,
+
     // File name or stream name.
     name: ^Ostring,
-
-    // Up to how many stack slots are actively used at most.
-    stack_used: int,
 
     // List of all possible locals for this chunk.
     locals: []Local_Info,
@@ -38,11 +39,11 @@ Local_Info :: struct {
 
     // Inclusive start index of the instruction in the parent chunk where this
     // local is first valid (i.e. it first comes into scope).
-    birth_pc: int,
+    birth_pc: i32,
 
     // Exclusive stop index of the instruction in the parent chunk where this
     // local is last valid (i.e. it finally goes out of scope).
-    death_pc: int,
+    death_pc: i32,
 }
 
 local_name :: proc(var: Local_Info) -> string {
@@ -79,8 +80,8 @@ array for example.
 *Allocates using `L.global_state.backing_allocator`.*
  */
 chunk_fix :: proc(L: ^State, c: ^Chunk, cl: ^Compiler) {
-    resize_slice(L, &c.code,      cl.pc)
-    resize_slice(L, &c.loc,       cl.pc)
+    resize_slice(L, &c.code,      int(cl.pc))
+    resize_slice(L, &c.loc,       int(cl.pc))
     resize_slice(L, &c.constants, int(cl.constants_count))
     resize_slice(L, &c.locals,    int(cl.locals_count))
 }
@@ -107,7 +108,7 @@ Adds `i` to the end of the code array.
 - We are in a protected call, so failures to append code can be caught
 and handled.
  */
-chunk_push_code :: proc(L: ^State, c: ^Chunk, pc: ^int, i: Instruction, line, col: i32) -> int {
+chunk_push_code :: proc(L: ^State, c: ^Chunk, pc: ^i32, i: Instruction, line, col: i32) -> i32 {
     insert_slice(L, &c.code, pc^, i)
     insert_slice(L, &c.loc, pc^, Location{line=line, col=col})
     pc^ += 1
@@ -149,7 +150,7 @@ somewhere along `pc`.
 **Analogous to**
 - `luaF_getlocalname(const Proto *f, int local_number, int pc)` in Lua 5.1.5.
  */
-find_local :: proc(chunk: ^Chunk, #any_int reg, pc: int) -> (name: string, ok: bool) {
+find_local :: proc(chunk: ^Chunk, #any_int reg, pc: i32) -> (name: string, ok: bool) {
     // Convert to 1-based index for quick comparison to zero.
     counter := reg + 1
     for local in chunk.locals {

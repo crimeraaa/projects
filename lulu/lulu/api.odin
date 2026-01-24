@@ -178,7 +178,6 @@ _get_stack_index :: proc(L: ^State, index: int) -> ^Value {
     return &L.registers[i]
 }
 
-
 type :: proc(L: ^State, index: int) -> Type {
     v := _get_any_index(L, index)
     if v == &_VALUE_NONE {
@@ -192,25 +191,17 @@ type_name :: proc(L: ^State, type: Type) -> string {
     return value_type_string(cast(Value_Type)type)
 }
 
-type_name_at :: proc(L: ^State, index: int) -> string {
-    t := type(L, index)
-    return type_name(L, t)
+@(private="file")
+_is :: proc(L: ^State, index: int, $procedure: proc(Value) -> bool) -> bool {
+    v := _get_any_index(L, index)^
+    return procedure(v)
 }
 
-is_boolean :: proc(L: ^State, index: int) -> bool {
-    v := _get_any_index(L, index)^
-    return value_is_boolean(v)
-}
-
-is_number :: proc(L: ^State, index: int) -> bool {
-    v := _get_any_index(L, index)^
-    return value_is_number(v)
-}
-
-is_string :: proc(L: ^State, index: int) -> bool {
-    v := _get_any_index(L, index)^
-    return value_is_string(v)
-}
+is_boolean  :: proc(L: ^State, index: int) -> bool { return _is(L, index, value_is_boolean)  }
+is_number   :: proc(L: ^State, index: int) -> bool { return _is(L, index, value_is_number)   }
+is_string   :: proc(L: ^State, index: int) -> bool { return _is(L, index, value_is_string)   }
+is_table    :: proc(L: ^State, index: int) -> bool { return _is(L, index, value_is_table)    }
+is_function :: proc(L: ^State, index: int) -> bool { return _is(L, index, value_is_function) }
 
 to_boolean :: proc(L: ^State, index: int) -> (b: bool) {
     v := _get_any_index(L, index)^
@@ -344,6 +335,11 @@ push_fstring :: proc(L: ^State, format: string, args: ..any) -> string {
     return vm_push_fstring(L, format, ..args)
 }
 
+push_table :: proc(L: ^State, hash_count, array_count: int) {
+    t := table_new(L, hash_count, array_count)
+    vm_push_value(L, value_make_table(t))
+}
+
 /*
 Push `_G[key]` to the top of the stack.
 
@@ -352,9 +348,23 @@ Push `_G[key]` to the top of the stack.
 - pop:  0
  */
 get_global :: proc(L: ^State, name: string) {
-    t := value_get_table(L.globals_table)
+    t := &L.globals_table
     k := value_make_ostring(ostring_new(L, name))
-    v := table_get(t, k)
+    v := vm_get_table(L, t, k)
+    vm_push_value(L, v)
+}
+
+/* 
+Push `R[table][R[key]]` to the top of the stack.
+
+**Side-effects**
+- push: 1
+- pop:  0
+ */
+get_table :: proc(L: ^State, table, key: int) {
+    t := _get_any_index(L, table)
+    k := _get_stack_index(L, key)^
+    v := vm_get_table(L, t, k)
     vm_push_value(L, v)
 }
 
@@ -366,11 +376,54 @@ get_global :: proc(L: ^State, name: string) {
 - pop:  1
  */
 set_global :: proc(L: ^State, name: string) {
-    t := value_get_table(L.globals_table)
+    t := &L.globals_table
     k := value_make_ostring(ostring_new(L, name))
-    v := table_set(L, t, k)
-    v^ = _get_stack_index(L, -1)^
+    v := _get_stack_index(L, -1)^
+    
+    // Prevent key from being collected.
+    vm_push_value(L, k)
+    vm_set_table(L, t, k, v)
+    
+    // Pop both key and value.
+    vm_pop_value(L, 2)
+}
+
+/* 
+`R[table][R[key]] := R[-1]` where `R[-1]` is the most recently pushed value.
+
+**Side-effects**
+- push: 0
+- pop:  1
+ */
+set_table :: proc(L: ^State, table, key: int) {
+    t := _get_any_index(L, table)
+    k := _get_stack_index(L, key)^
+    v := _get_stack_index(L, -1)^
+
+    vm_set_table(L, t, k, v)
+
+    // Pop only the value.
     vm_pop_value(L, 1)
+}
+
+/* 
+`R[table][field] := R[-1]` where `R[-1]` is the most recently pushed value.
+
+**Side-effects**
+- push: 0
+- pop:  1
+ */
+set_field :: proc(L: ^State, table: int, field: string) {
+    t := _get_any_index(L, table)
+    k := value_make_ostring(ostring_new(L, field))
+    v := _get_stack_index(L, -1)^
+
+    // Prevent key from being collected.
+    vm_push_value(L, k)
+    vm_set_table(L, t, k, v)
+
+    // Pop both key and value.
+    vm_pop_value(L, 2)
 }
 
 load :: proc(L: ^State, name, input: string) -> Error {
@@ -431,3 +484,8 @@ api_pcall :: proc(L: ^State, p: Api_Proc, user_data: rawptr) -> (err: Error) {
     vm_push_value(L, value_make_lightuserdata(user_data))
     return pcall(L, arg_count=1, ret_count=0)
 }
+
+error :: proc(L: ^State) -> ! {
+    throw_error(L, .Runtime)
+}
+

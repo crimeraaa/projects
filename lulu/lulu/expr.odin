@@ -18,7 +18,7 @@ Expr :: struct {
         reg: u16,
 
         // Index of instruction in the current chunk's code array.
-        pc: int,
+        pc: i32,
 
         table: struct {
             // Register of the table itself.
@@ -77,7 +77,7 @@ expr_make_reg :: #force_inline proc(t: Expr_Type, reg: u16) -> (e: Expr) {
     return e
 }
 
-expr_make_pc :: #force_inline proc(t: Expr_Type, pc: int) -> (e: Expr) {
+expr_make_pc :: #force_inline proc(t: Expr_Type, pc: i32) -> (e: Expr) {
     e.type = t
     e.pc   = pc
     return e
