@@ -28,4 +28,4 @@ tasks:
       - odin build {{.TASKFILE_DIR}}/ {{.FLAGS}}
     sources:
       - '{{.TASKFILE_DIR}}/*.odin'
-      - '{{.TASKFILE_DIR}}/lulu/*.odin'
+      - '{{.TASKFILE_DIR}}/lulu/**/*.odin'

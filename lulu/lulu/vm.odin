@@ -216,15 +216,13 @@ vm_pop_value :: proc(L: ^State, count := 1) {
 @(private="package")
 vm_save_base :: proc(L: ^State) -> (index: int) #no_bounds_check {
     callee_base := &L.registers[0]
-    stack_base  := &L.stack[0]
-    return intrinsics.ptr_sub(callee_base, stack_base)
+    return find_ptr_index_unsafe(L.stack[:], callee_base)
 }
 
 @(private="package")
 vm_save_top :: proc(L: ^State) -> (index: int) #no_bounds_check {
     callee_top := &L.registers[get_top(L)]
-    stack_base := &L.stack[0]
-    return intrinsics.ptr_sub(callee_top, stack_base)
+    return find_ptr_index_unsafe(L.stack[:], callee_top)
 }
 
 @(private="package")
@@ -324,8 +322,8 @@ vm_execute :: proc(L: ^State, ret_expect: int) {
     // Constants array.
     K := chunk.constants[:]
 
-    code: [^]Instruction = &chunk.code[0]
-    ip:   [^]Instruction = code
+    code := chunk.code
+    ip   := raw_data(code)
 
     // Table of defined global variables.
     _G := &L.globals_table
@@ -333,7 +331,7 @@ vm_execute :: proc(L: ^State, ret_expect: int) {
     when LULU_DISASSEMBLE_INLINE do fmt.println("[EXECUTION]")
     for {
         i  := ip[0] // *ip
-        pc := i32(intrinsics.ptr_sub(ip, code))
+        pc := i32(find_ptr_index_unsafe(code, ip))
         ip = &ip[1] // ip++
         _print_stack(chunk, i, pc, R)
 

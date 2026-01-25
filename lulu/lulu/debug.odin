@@ -292,11 +292,13 @@ disassemble_at :: proc(chunk: ^Chunk, i: Instruction, pc: i32, pad := 0) {
             fmt.printf("$r[%i:%i] := ", base_reg, base_reg + ret_count)
         }
 
+        fmt.printf("%s(", ra)
         if arg_count == VARIADIC {
-            fmt.printf("%s($r[%i:])", ra, arg_first)
-        } else {
-            fmt.printf("%s($r[%i:%i])", ra, arg_first, arg_first + arg_count)
+            fmt.printf("$r[%i:]", arg_first)
+        } else if arg_count > 0 {
+            fmt.printf("$r[%i:%i]", arg_first, arg_first + arg_count)
         }
+        fmt.print(")")
 
     case .Return:
         start := int(i.a)
@@ -367,11 +369,14 @@ find_variable :: proc(chunk: ^Chunk, #any_int reg, pc: int, buf: []byte) -> (sco
     i := _symbolic_execute(chunk, reg, pc)
     #partial switch i.op {
     case .Move:
-        // R[A] wasn't the culprit, so maybe R[B] was?
-        unreachable("How did you even get here?")
-        // if i.a > i.b {
-        //     return find_variable(chunk, i.b, pc, buf)
-        // }
+        // R[A] wasn't a local, so maybe R[B] was? e.g `local x = nil; x()`:
+        //
+        //  Move 1 0 0 ; $r1 = x
+        //  Call 1 1 1 ; $r1()
+        //
+        if i.a > i.b {
+            return find_variable(chunk, i.b, pc, buf)
+        }
 
     case .Get_Global:
         scope = "global"
@@ -395,11 +400,11 @@ find_variable :: proc(chunk: ^Chunk, #any_int reg, pc: int, buf: []byte) -> (sco
 
 /*
 'Symbolic execution' allows us to find the last time `reg` was modified before
-the error at `pc` was thrown. This, in turn, allows us to determine if the
+the error at `error_pc` was thrown. This, in turn, allows us to determine if the
 error occured on a global variable, table field, upvalue, or not a variable.
  */
 @(private="file")
-_symbolic_execute :: proc(chunk: ^Chunk, reg, last_pc: int) -> (i: Instruction) {
+_symbolic_execute :: proc(chunk: ^Chunk, reg, error_pc: int) -> (i: Instruction) {
     // Stores index of the last instruction that changed `reg`, initially
     // pointing to the final, neutral return.
     prev_pc := len(chunk.code) - 1
@@ -410,7 +415,7 @@ _symbolic_execute :: proc(chunk: ^Chunk, reg, last_pc: int) -> (i: Instruction) 
         NEUTRAL_RETURN.base, chunk.code[prev_pc].base)
 
     // TODO(2026-01-03): Verify bytecode correctness? Execute jumps?
-    for pc in 0..<last_pc {
+    for pc in 0..<error_pc {
         i = chunk.code[pc]
         op := i.op
 

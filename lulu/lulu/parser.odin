@@ -439,19 +439,29 @@ assignment :: proc(p: ^Parser, c: ^Compiler, tail: ^Assign_List, lhs_count: u16)
 ```
  */
 return_statement :: proc(p: ^Parser, c: ^Compiler) {
-    last, count := expression_list(p, c)
-    if count == 1 {
+    if match_token(p, .EOF) {
+        compiler_code_return(c, 0, 0)
+        return
+    }
+
+    first_reg := c.free_reg
+    last, arg_count := expression_list(p, c)
+    if last.type != .Call && arg_count == 1 {
         last_reg := compiler_push_expr_any(c, &last)
-        compiler_code_return(c, last_reg, count)
+        compiler_code_return(c, last_reg, arg_count)
         compiler_pop_reg(c, last_reg)
     } else {
-        if last.type == .Call {
-            parser_error(p, "Variadic returns not yet supported")
+        ret_count := arg_count
+        if last.type != .Call {
+            last_reg := compiler_push_expr_next(c, &last)
+            assert(first_reg == last_reg - arg_count + 1)
+        } else {
+            ret_count = u16(VARIADIC)
+            compiler_discharge_returns(c, &last, ret_count)
+            assert(first_reg == last.reg - arg_count + 1)
         }
-        last_reg  := compiler_push_expr_next(c, &last)
-        first_reg := last_reg - count + 1
-        compiler_code_return(c, first_reg, count)
-        compiler_pop_reg(c, first_reg, count)
+        compiler_pop_reg(c, first_reg, arg_count)
+        compiler_code_return(c, first_reg, ret_count)
     }
 }
 
@@ -729,7 +739,7 @@ infix :: proc(p: ^Parser, c: ^Compiler, left: ^Expr, prec: Precedence = nil) {
         case .Add..=.Pow:
             arith(p, c, rule.op, left, rule.right)
         case .Concat:
-            concat(p, c, left, rule.right)
+            _concat(p, c, left, rule.right)
         case:
             unreachable()
         }
@@ -770,7 +780,7 @@ arith :: proc(p: ^Parser, c: ^Compiler, op: Opcode, left: ^Expr, prec: Precedenc
     compiler_code_arith(c, op, left, &right)
 }
 
-concat :: proc(p: ^Parser, c: ^Compiler, left: ^Expr, prec: Precedence) {
+_concat :: proc(p: ^Parser, c: ^Compiler, left: ^Expr, prec: Precedence) {
     compiler_push_expr_next(c, left)
 
     // Advance only now so that the above push has the correct line/col info.

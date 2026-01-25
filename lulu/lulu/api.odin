@@ -197,6 +197,17 @@ _is :: proc(L: ^State, index: int, $procedure: proc(Value) -> bool) -> bool {
     return procedure(v)
 }
 
+is_none :: proc(L: ^State, index: int) -> bool {
+    v := _get_any_index(L, index)
+    return v == &_VALUE_NONE
+}
+
+is_none_or_nil :: proc(L: ^State, index: int) -> bool {
+    v := _get_any_index(L, index)
+    return v == &_VALUE_NONE || value_is_nil(v^)
+}
+
+is_nil      :: proc(L: ^State, index: int) -> bool { return _is(L, index, value_is_nil)      }
 is_boolean  :: proc(L: ^State, index: int) -> bool { return _is(L, index, value_is_boolean)  }
 is_number   :: proc(L: ^State, index: int) -> bool { return _is(L, index, value_is_number)   }
 is_string   :: proc(L: ^State, index: int) -> bool { return _is(L, index, value_is_string)   }
@@ -219,9 +230,9 @@ to_pointer :: proc(L: ^State, index: int) -> (p: rawptr, ok: bool) #optional_ok 
     v := _get_any_index(L, index)^
     t := value_type(v)
     switch t {
-    case .Light_Userdata: return value_get_pointer(v), true
-    case .Table:    return value_get_table(v), true
-    case .Function: return value_get_function(v), true
+    case .Light_Userdata: return value_get_pointer(v),  true
+    case .Table:          return value_get_table(v),    true
+    case .Function:       return value_get_function(v), true
     case .Nil, .Boolean, .Number, .String, .Chunk:
         break
     }
@@ -248,7 +259,10 @@ to_string :: proc(L: ^State, index: int) -> (s: string, ok: bool) #optional_ok {
         buf: [VALUE_TO_STRING_BUFFER_SIZE]byte
         repr := number_to_string(value_to_number(v^), buf[:])
         obj := ostring_new(L, repr)
-        v^   = value_make_ostring(obj)
+
+        // Restore the pointer in case we reallocated the stack.
+        // v = _get_any_index(L, index)
+        v^ = value_make_ostring(obj)
         return ostring_to_string(obj), true
     }
     return "", false
@@ -335,7 +349,31 @@ push_fstring :: proc(L: ^State, format: string, args: ..any) -> string {
     return vm_push_fstring(L, format, ..args)
 }
 
-push_table :: proc(L: ^State, hash_count, array_count: int) {
+/*
+Concatenates the top `count` values.
+
+**Side-effects**
+- push: 1 if `count >= 1` else 0
+- pop: `count - 1` if `count >= 2` else 0
+*/
+concat :: proc(L: ^State, count: int) {
+    switch count {
+    case 0: return
+    case 1: push_string(L, ""); return
+    case:
+        break
+    }
+    assert(count >= 2)
+    args := L.registers[get_top(L) - count:]
+    vm_concat(L, &args[0], args)
+    pop(L, count - 1)
+}
+
+/*
+Pushes a new table onto the stack with `hash_count` and `array_count` elements
+reserved.
+ */
+new_table :: proc(L: ^State, hash_count := 0, array_count := 0) {
     t := table_new(L, hash_count, array_count)
     vm_push_value(L, value_make_table(t))
 }
@@ -354,7 +392,7 @@ get_global :: proc(L: ^State, name: string) {
     vm_push_value(L, v)
 }
 
-/* 
+/*
 Push `R[table][R[key]]` to the top of the stack.
 
 **Side-effects**
@@ -379,16 +417,16 @@ set_global :: proc(L: ^State, name: string) {
     t := &L.globals_table
     k := value_make_ostring(ostring_new(L, name))
     v := _get_stack_index(L, -1)^
-    
+
     // Prevent key from being collected.
     vm_push_value(L, k)
     vm_set_table(L, t, k, v)
-    
+
     // Pop both key and value.
     vm_pop_value(L, 2)
 }
 
-/* 
+/*
 `R[table][R[key]] := R[-1]` where `R[-1]` is the most recently pushed value.
 
 **Side-effects**
@@ -406,7 +444,7 @@ set_table :: proc(L: ^State, table, key: int) {
     vm_pop_value(L, 1)
 }
 
-/* 
+/*
 `R[table][field] := R[-1]` where `R[-1]` is the most recently pushed value.
 
 **Side-effects**
@@ -485,6 +523,36 @@ api_pcall :: proc(L: ^State, p: Api_Proc, user_data: rawptr) -> (err: Error) {
     return pcall(L, arg_count=1, ret_count=0)
 }
 
+/*
+Pushes a string identifying file name and current line/column pair of the
+`level`th calling function, starting from the top.
+
+**Parameters**
+- level: `0` indicates the current calling function, `1` indicates the function
+that called it, etc.
+ */
+location :: proc(L: ^State, level: int) {
+    index := (L.frame_count - 1) - level
+    if index >= 0 {
+        frame := L.frames[index]
+        cl := value_get_function(frame.callee^)
+        if cl.is_lua {
+            file := chunk_name(cl.lua.chunk)
+            loc  := cl.lua.chunk.loc[frame.saved_pc]
+            line := int(loc.line)
+            col  := int(loc.col)
+            push_fstring(L, "%s:%i:%i: ", file, line, col)
+        } else {
+            push_string(L, "[Odin]: ")
+        }
+    } else {
+        push_string(L, "[?]: ")
+    }
+}
+
+/*
+Throws a runtime error, returning immediately to the first protected caller.
+ */
 error :: proc(L: ^State) -> ! {
     throw_error(L, .Runtime)
 }

@@ -1,11 +1,13 @@
 package lulu_repl
 
+// standard
 import "core:fmt"
 import os "core:os/os2"
-import "core:math"
 import "core:mem"
 
+// local
 import "lulu"
+import lulu_lib "lulu/lib"
 
 _ :: mem
 
@@ -54,7 +56,7 @@ main :: proc() {
     data := Data{os.args, nil}
     err  := lulu.api_pcall(L, proc(L: ^lulu.State) -> (ret_count: int) {
         data := cast(^Data)lulu.to_userdata(L, 1)
-        open_base(L)
+        lulu_lib.open(L)
 
         switch len(data.args) {
         case 1: data.err = run_repl(L)
@@ -81,71 +83,6 @@ main :: proc() {
     if data.err != nil {
         os.exit(1)
     }
-}
-
-open_base :: proc(L: ^lulu.State) {
-    lulu.push_value(L, lulu.GLOBALS_INDEX)
-    lulu.push_value(L, -1)
-    lulu.set_global(L, "_G")
-    
-    @(static, rodata)
-    lib_base := [?]lulu.Named_Proc{
-        {"print",    print},
-        {"tostring", tostring},
-        {"modf",     modf},
-    }
-    
-    lulu.set_library(L, lib_base[:])
-}
-
-print :: proc(L: ^lulu.State) -> (ret_count: int) {
-    arg_count := lulu.get_top(L)
-    lulu.get_global(L, "tostring")
-    for i in 1..=arg_count {
-        if i > 1 {
-            fmt.print("\t", flush=false)
-        }
-        lulu.push_value(L, -1)
-        lulu.push_value(L, i)
-        lulu.call(L, 1, 1)
-        fmt.print(lulu.to_string(L, -1), flush=false)
-        lulu.pop(L, 1)
-    }
-    fmt.println()
-    return 0
-}
-
-tostring :: proc(L: ^lulu.State) -> (ret_count: int) {
-    i := 1
-    t := lulu.type(L, i)
-    #partial switch t {
-    case .Nil:     lulu.push_string(L, "nil")
-    case .Boolean: lulu.push_string(L, "true" if lulu.to_boolean(L, i) else "false")
-    case .Number, .String:
-        // Convert stack slot in-place
-        lulu.to_string(L, i)
-    case:
-        ts := lulu.type_name_at(L, i)
-        p  := lulu.to_pointer(L, i)
-        lulu.push_fstring(L, "%s: %p", ts, p)
-    }
-    return 1
-}
-
-modf :: proc(L: ^lulu.State) -> (ret_count: int) {
-    if number, ok := lulu.to_number(L, 1); ok {
-        integer, fraction  := math.modf(number)
-        lulu.push_number(L, integer)
-        lulu.push_number(L, fraction)
-        // lulu.push_boolean(L, true)
-        return 2
-
-        // mantissa, exponent := math.frexp(number)
-        // lulu.push_number(L, mantissa)
-        // lulu.push_number(L, f64(exponent))
-        // return 4
-    }
-    return 0
 }
 
 run_repl :: proc(L: ^lulu.State) -> (err: os.Error) {
@@ -184,5 +121,4 @@ run_input :: proc(L: ^lulu.State, name, input: string) {
             lulu.call(L, arg_count=n, ret_count=0)
         }
     }
-    // assert(lulu.get_top(L) == 0)
 }

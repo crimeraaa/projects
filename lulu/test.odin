@@ -6,6 +6,7 @@ import "core:testing"
 
 // local
 import "lulu"
+import lulu_lib "lulu/lib"
 
 Value :: union {
     bool,
@@ -53,15 +54,11 @@ run_tests :: proc(t: ^testing.T) {
 
     // NOTE: Failures can prevent us from cleaning up properly.
     defer lulu.close(L)
-    
-    open_base(L)
 
-    // TODO: restore call frame stack properly on errors
+    lulu_lib.open(L)
     for test, index in TESTS {
         lulu.set_top(L, 0)
         res := try_test(t, L, test)
-        buf: [256]byte
-
         testing.expect_value(t, res, test.expected)
     }
 }
