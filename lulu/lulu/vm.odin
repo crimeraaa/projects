@@ -1,6 +1,6 @@
+#+private package
 package lulu
 
-import "base:intrinsics"
 import "base:runtime"
 import "core:fmt"
 import "core:mem"
@@ -8,55 +8,6 @@ import "core:strings"
 import "core:strconv"
 import "core:unicode/utf8"
 
-
-// **Note(2025-01-05)**
-//
-// Although the fields are public, do not directly access nor modify them.
-// Use only the public API to do so.
-//
-State :: struct {
-    // Shared state across all VM instances.
-    global_state: ^Global_State,
-
-    // Hash table of all defined global variables.
-    globals_table: Value,
-
-    // Used for string concatenation and internal string formatting.
-    builder: strings.Builder,
-
-    // Stack-allocated linked list of error handlers.
-    handler: ^Error_Handler,
-
-    // Stack window of current function, a 'window' into `stack`.
-    registers: []Value,
-
-    // Current frame information.
-    frame:      ^Frame,
-    frame_count: int,
-    frames:      [16]Frame,
-
-    // Stack used across all active call frames.
-    stack: [64]Value,
-}
-
-Global_State :: struct {
-    // Pointer to the main state we were allocated alongside.
-    main_state: ^State,
-
-    // Allocator passed whenever memory is allocated.
-    backing_allocator: mem.Allocator,
-
-    // Hash table of all interned strings.
-    intern: Intern,
-
-    // Singly linked list of all possibly-collectable objects across all
-    // VM states.
-    objects: ^Object,
-
-    bytes_allocated: int,
-}
-
-@(private="package")
 vm_init :: proc(L: ^State, g: ^Global_State, allocator: mem.Allocator) -> (ok: bool) {
     L.global_state      = g
     g.main_state        = L
@@ -81,7 +32,7 @@ vm_init :: proc(L: ^State, g: ^Global_State, allocator: mem.Allocator) -> (ok: b
 
         // Ensure that the globals table is of some non-zero minimum size.
         t := table_new(L, hash_count=17, array_count=0)
-        L.globals_table = value_make_table(t)
+        L.globals_table = value_make(t)
 
         // Initialize concat string builder with some reasonable default size.
         L.builder = strings.builder_make(32, allocator=g.backing_allocator)
@@ -93,7 +44,6 @@ vm_init :: proc(L: ^State, g: ^Global_State, allocator: mem.Allocator) -> (ok: b
     return err == nil
 }
 
-@(private="package")
 vm_destroy :: proc(L: ^State) {
     g := L.global_state
     strings.builder_destroy(&L.builder)
@@ -101,7 +51,6 @@ vm_destroy :: proc(L: ^State) {
     object_free_all(L, g.objects)
 }
 
-@(private="package")
 vm_push_fstring :: proc(L: ^State, format: string, args: ..any) -> string {
     format  := format
     pushed  := 0
@@ -112,7 +61,7 @@ vm_push_fstring :: proc(L: ^State, format: string, args: ..any) -> string {
         if fmt_i == -1 {
             // Write whatever remains unformatted as-is.
             if len(format) > 0 {
-                vm_push_string(L, format)
+                vm_push(L, format)
                 pushed += 1
             }
             break
@@ -120,7 +69,7 @@ vm_push_fstring :: proc(L: ^State, format: string, args: ..any) -> string {
 
         // Write any bits of the string before the format specifier.
         if len(format[:fmt_i]) > 0 {
-            vm_push_string(L, format[:fmt_i])
+            vm_push(L, format[:fmt_i])
             pushed += 1
         }
 
@@ -134,22 +83,22 @@ vm_push_fstring :: proc(L: ^State, format: string, args: ..any) -> string {
         case 'c':
             r_buf, size := utf8.encode_rune(arg.(rune))
             copy(buf[:size], r_buf[:size])
-            vm_push_string(L, string(buf[:size]))
+            vm_push(L, string(buf[:size]))
 
         case 'd', 'i':
             i := i64(arg.(int))
-            vm_push_string(L, strconv.write_int(buf[:], i, base=10))
+            vm_push(L, strconv.write_int(buf[:], i, base=10))
 
         case 'f':
             repr := number_to_string(arg.(f64), buf[:])
-            vm_push_string(L, repr)
+            vm_push(L, repr)
 
         case 's':
-            vm_push_string(L, arg.(string))
+            vm_push(L, arg.(string))
 
         case 'p':
             repr := pointer_to_string(arg.(rawptr), buf[:])
-            vm_push_string(L, repr)
+            vm_push(L, repr)
 
         case:
             unreachable("Unsupported format specifier '%c'", spec)
@@ -168,17 +117,25 @@ vm_push_fstring :: proc(L: ^State, format: string, args: ..any) -> string {
     start := stop - pushed
     args  := L.registers[start:stop]
     s := vm_concat(L, &args[0], args)
-    vm_pop_value(L, pushed - 1)
+    vm_pop(L, pushed - 1)
     return ostring_to_string(s)
 }
 
-@(private="package")
-vm_push_string :: proc(L: ^State, s: string) {
-    interned := ostring_new(L, s)
-    vm_push_value(L, value_make_ostring(interned))
+vm_push :: proc {
+    vm_push_string,
+    vm_push_closure,
+    vm_push_value,
 }
 
-@(private="package")
+vm_push_string :: proc(L: ^State, s: string) {
+    interned := ostring_new(L, s)
+    vm_push(L, value_make(interned))
+}
+
+vm_push_closure :: proc(L: ^State, cl: ^Closure) {
+    vm_push(L, value_make(cl))
+}
+
 vm_push_value :: proc(L: ^State, v: Value) {
     base := vm_save_base(L)
     top  := vm_save_top(L) + 1
@@ -187,7 +144,6 @@ vm_push_value :: proc(L: ^State, v: Value) {
     L.stack[top - 1] = v
 }
 
-@(private="package")
 vm_concat :: proc(L: ^State, dst: ^Value, args: []Value) -> ^Ostring {
     b := &L.builder
     strings.builder_reset(b)
@@ -204,28 +160,24 @@ vm_concat :: proc(L: ^State, dst: ^Value, args: []Value) -> ^Ostring {
     }
     text := strings.to_string(b^)
     s    := ostring_new(L, text)
-    dst^  = value_make_ostring(s)
+    dst^  = value_make(s)
     return s
 }
 
-@(private="package")
-vm_pop_value :: proc(L: ^State, count := 1) {
+vm_pop :: proc(L: ^State, count := 1) {
     L.registers = L.registers[:get_top(L) - count]
 }
 
-@(private="package")
 vm_save_base :: proc(L: ^State) -> (index: int) #no_bounds_check {
     callee_base := &L.registers[0]
     return find_ptr_index_unsafe(L.stack[:], callee_base)
 }
 
-@(private="package")
 vm_save_top :: proc(L: ^State) -> (index: int) #no_bounds_check {
     callee_top := &L.registers[get_top(L)]
     return find_ptr_index_unsafe(L.stack[:], callee_top)
 }
 
-@(private="package")
 vm_save_stack :: proc(L: ^State, value: ^Value) -> (index: int) {
     return find_ptr_index_unsafe(L.stack[:], value)
 }
@@ -239,7 +191,7 @@ Works only for register-immediate encodings.
 @(private="file")
 _arith_imm :: proc(L: ^State, pc: i32, ra: ^Value, op: Op, rb: ^Value, imm: u16) {
     if left, ok := value_to_number(rb^); ok {
-        ra^ = value_make_number(op(left, f64(imm)))
+        ra^ = value_make(op(left, f64(imm)))
     } else {
         _protect(L, pc)
         debug_arith_error(L, rb, rb)
@@ -254,7 +206,7 @@ _arith :: proc(L: ^State, pc: i32, ra: ^Value, op: Op, rb, rc: ^Value) {
     try: {
         left   := value_to_number(rb^) or_break try
         right  := value_to_number(rc^) or_break try
-        ra^     = value_make_number(op(left, right))
+        ra^     = value_make(op(left, right))
         return
     }
     _protect(L, pc)
@@ -266,7 +218,7 @@ _protect :: proc(L: ^State, pc: i32) {
     L.frame.saved_pc = pc
 }
 
-@(private="file", disabled=!LULU_DISASSEMBLE_INLINE)
+@(private="file", disabled=!DISASSEMBLE_INLINE)
 _print_stack :: proc(chunk: ^Chunk, i: Instruction, pc: i32, R: []Value) {
     buf: [VALUE_TO_STRING_BUFFER_SIZE]byte
     for value, reg in R {
@@ -311,7 +263,6 @@ _set_table :: proc(L: ^State, pc: i32, t: ^Value, k, v: Value) {
 }
 
 
-@(private="package")
 vm_execute :: proc(L: ^State, ret_expect: int) {
     frame := L.frame
     chunk := value_get_function(frame.callee^).lua.chunk
@@ -328,7 +279,7 @@ vm_execute :: proc(L: ^State, ret_expect: int) {
     // Table of defined global variables.
     _G := &L.globals_table
 
-    when LULU_DISASSEMBLE_INLINE do fmt.println("[EXECUTION]")
+    when DISASSEMBLE_INLINE do fmt.println("[EXECUTION]")
     for {
         i  := ip[0] // *ip
         pc := i32(find_ptr_index_unsafe(code, ip))
@@ -341,8 +292,8 @@ vm_execute :: proc(L: ^State, ret_expect: int) {
         switch op {
         case .Move:       ra^ = R[i.b]
         case .Load_Nil:   mem.zero_slice(R[a:i.b])
-        case .Load_Bool:  ra^ = value_make_boolean(bool(i.b))
-        case .Load_Imm:   ra^ = value_make_number(f64(i.u.bx))
+        case .Load_Bool:  ra^ = value_make(bool(i.b))
+        case .Load_Imm:   ra^ = value_make(f64(i.u.bx))
         case .Load_Const: ra^ = K[i.u.bx]
 
         case .Get_Global:
@@ -363,7 +314,7 @@ vm_execute :: proc(L: ^State, ret_expect: int) {
             hash_count  := 1 << (i.b - 1) if i.b != 0 else 0
             array_count := 1 << (i.c - 1) if i.c != 0 else 0
             t := table_new(L, hash_count=hash_count, array_count=array_count)
-            ra^ = value_make_table(t)
+            ra^ = value_make(t)
 
         case .Get_Table:        _get_table(L, pc, ra, &R[i.b], R[i.c])
         case .Get_Field:        _get_table(L, pc, ra, &R[i.b], K[i.c])
@@ -377,21 +328,21 @@ vm_execute :: proc(L: ^State, ret_expect: int) {
             #partial switch rb := &R[i.b]; value_type(rb^) {
             case .String:
                 n  := value_get_ostring(rb^).len
-                ra^ = value_make_number(f64(n))
+                ra^ = value_make(f64(n))
 
             case .Table:
                 n  := table_len(value_get_table(rb^))
-                ra^ = value_make_number(f64(n))
+                ra^ = value_make(f64(n))
             case:
                 _protect(L, pc)
                 debug_type_error(L, "get length of", rb)
             }
 
-        case .Not: ra^ = value_make_boolean(value_is_falsy(R[i.b]))
+        case .Not: ra^ = value_make(value_is_falsy(R[i.b]))
         case .Unm:
             rb := &R[i.b]
             if n, ok := value_to_number(rb^); ok {
-                ra^ = value_make_number(number_unm(n))
+                ra^ = value_make(number_unm(n))
             } else {
                 _protect(L, pc)
                 debug_arith_error(L, rb, rb)
@@ -446,21 +397,6 @@ vm_execute :: proc(L: ^State, ret_expect: int) {
             }
             _protect(L, pc)
             run_call(L, ra, arg_count, ret_count)
-
-            /*
-            Restore the chunk's stack frame after a variadic return-call pair.
-
-            **Assumptions**
-            - For a variadic function return, the next instruction is going to
-            be a variadic function call using the returned variadics.
-            - Said call must be able to call `get_top()` to get the 1-based
-            index of the last variadic argument.
-            - This is why `run_call()` will change the length of `L.registers`
-            (and `L.frame.registers`) to fit.
-            - Once the next call is done, this line restores the registers
-            array to the one before the variadic return (`L.frame.registers`).
-            */
-            R = L.registers
 
         case .Return:
             ret_first := int(a)

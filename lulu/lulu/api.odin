@@ -104,7 +104,7 @@ set_top :: proc(L: ^State, index: int) {
         }
         L.registers = values
     } else {
-        vm_pop_value(L, -index)
+        vm_pop(L, -index)
     }
 }
 
@@ -221,9 +221,7 @@ to_boolean :: proc(L: ^State, index: int) -> (b: bool) {
 
 to_number :: proc(L: ^State, index: int) -> (n: f64, ok: bool) #optional_ok {
     v := _get_any_index(L, index)^
-    ok = value_is_number(v)
-    n  = value_get_number(v) if ok else 0.0
-    return n, ok
+    return value_to_number(v)
 }
 
 to_pointer :: proc(L: ^State, index: int) -> (p: rawptr, ok: bool) #optional_ok {
@@ -252,18 +250,21 @@ to_userdata :: proc(L: ^State, index: int) -> (p: rawptr, ok: bool) #optional_ok
 
 to_string :: proc(L: ^State, index: int) -> (s: string, ok: bool) #optional_ok {
     v := _get_any_index(L, index)
-    if value_is_string(v^) {
+    #partial switch value_type(v^) {
+    case .String:
         s = value_get_string(v^)
         return s, true
-    } else if value_is_number(v^) {
+    case .Number:
         buf: [VALUE_TO_STRING_BUFFER_SIZE]byte
         repr := number_to_string(value_to_number(v^), buf[:])
         obj := ostring_new(L, repr)
 
         // Restore the pointer in case we reallocated the stack.
         // v = _get_any_index(L, index)
-        v^ = value_make_ostring(obj)
+        v^ = value_make(obj)
         return ostring_to_string(obj), true
+    case:
+        break
     }
     return "", false
 }
@@ -280,7 +281,7 @@ Push `R[index]` to the top of the stack.
  */
 push_value :: proc(L: ^State, index: int) {
     v := _get_any_index(L, index)^
-    vm_push_value(L, v)
+    vm_push(L, v)
 }
 
 
@@ -303,23 +304,31 @@ insert :: proc(L: ^State, index: int) {
 
 push_nil :: proc(L: ^State, count := 1) {
     for i in 1..=count {
-        vm_push_value(L, value_make_nil())
+        vm_push(L, value_make())
     }
 }
 
+push :: proc {
+    push_boolean,
+    push_number,
+    push_lightuserdata,
+    push_string,
+    push_api_proc,
+}
+
 push_boolean :: proc(L: ^State, b: bool) {
-    v := value_make_boolean(b)
-    vm_push_value(L, v)
+    v := value_make(b)
+    vm_push(L, v)
 }
 
 push_number :: proc(L: ^State, n: f64) {
-    v := value_make_number(n)
-    vm_push_value(L, v)
+    v := value_make(n)
+    vm_push(L, v)
 }
 
 push_lightuserdata :: proc(L: ^State, p: rawptr) {
-    v := value_make_lightuserdata(p)
-    vm_push_value(L, v)
+    v := value_make(p)
+    vm_push(L, v)
 }
 
 /*
@@ -327,8 +336,8 @@ push_lightuserdata :: proc(L: ^State, p: rawptr) {
 - push: 1
 - pop: `upvalue_count`
  */
-push_api_proc :: proc(L: ^State, p: Api_Proc, upvalue_count: u8 = 0) {
-    cl   := closure_api_new(L, p, upvalue_count)
+push_api_proc :: proc(L: ^State, procedure: Api_Proc, upvalue_count: u8 = 0) {
+    cl   := closure_api_new(L, procedure, upvalue_count)
     top  := get_top(L)
     base := top - int(upvalue_count)
     #no_bounds_check {
@@ -336,13 +345,13 @@ push_api_proc :: proc(L: ^State, p: Api_Proc, upvalue_count: u8 = 0) {
         dst := cl.api.upvalues[:upvalue_count]
         copy(dst, src)
     }
-    vm_pop_value(L,  int(upvalue_count))
-    vm_push_value(L, value_make_function(cl))
+    vm_pop(L,  int(upvalue_count))
+    vm_push(L, cl)
 }
 
 push_string :: proc(L: ^State, s: string) {
-    v := value_make_ostring(ostring_new(L, s))
-    vm_push_value(L, v)
+    v := value_make(ostring_new(L, s))
+    vm_push(L, v)
 }
 
 push_fstring :: proc(L: ^State, format: string, args: ..any) -> string {
@@ -359,7 +368,7 @@ Concatenates the top `count` values.
 concat :: proc(L: ^State, count: int) {
     switch count {
     case 0: return
-    case 1: push_string(L, ""); return
+    case 1: push(L, ""); return
     case:
         break
     }
@@ -375,7 +384,7 @@ reserved.
  */
 new_table :: proc(L: ^State, hash_count := 0, array_count := 0) {
     t := table_new(L, hash_count, array_count)
-    vm_push_value(L, value_make_table(t))
+    vm_push(L, value_make(t))
 }
 
 /*
@@ -387,9 +396,9 @@ Push `_G[key]` to the top of the stack.
  */
 get_global :: proc(L: ^State, name: string) {
     t := &L.globals_table
-    k := value_make_ostring(ostring_new(L, name))
+    k := value_make(ostring_new(L, name))
     v := vm_get_table(L, t, k)
-    vm_push_value(L, v)
+    vm_push(L, v)
 }
 
 /*
@@ -403,7 +412,7 @@ get_table :: proc(L: ^State, table, key: int) {
     t := _get_any_index(L, table)
     k := _get_stack_index(L, key)^
     v := vm_get_table(L, t, k)
-    vm_push_value(L, v)
+    vm_push(L, v)
 }
 
 /*
@@ -415,15 +424,15 @@ get_table :: proc(L: ^State, table, key: int) {
  */
 set_global :: proc(L: ^State, name: string) {
     t := &L.globals_table
-    k := value_make_ostring(ostring_new(L, name))
+    k := value_make(ostring_new(L, name))
     v := _get_stack_index(L, -1)^
 
     // Prevent key from being collected.
-    vm_push_value(L, k)
+    vm_push(L, k)
     vm_set_table(L, t, k, v)
 
     // Pop both key and value.
-    vm_pop_value(L, 2)
+    vm_pop(L, 2)
 }
 
 /*
@@ -441,7 +450,7 @@ set_table :: proc(L: ^State, table, key: int) {
     vm_set_table(L, t, k, v)
 
     // Pop only the value.
-    vm_pop_value(L, 1)
+    vm_pop(L, 1)
 }
 
 /*
@@ -453,15 +462,15 @@ set_table :: proc(L: ^State, table, key: int) {
  */
 set_field :: proc(L: ^State, table: int, field: string) {
     t := _get_any_index(L, table)
-    k := value_make_ostring(ostring_new(L, field))
+    k := value_make(ostring_new(L, field))
     v := _get_stack_index(L, -1)^
 
     // Prevent key from being collected.
-    vm_push_value(L, k)
+    vm_push(L, k)
     vm_set_table(L, t, k, v)
 
     // Pop both key and value.
-    vm_pop_value(L, 2)
+    vm_pop(L, 2)
 }
 
 load :: proc(L: ^State, name, input: string) -> Error {
@@ -518,8 +527,8 @@ and calls `p` with `user_data` as its sole argument.
  */
 api_pcall :: proc(L: ^State, p: Api_Proc, user_data: rawptr) -> (err: Error) {
     cl := closure_api_new(L, p, 0)
-    vm_push_value(L, value_make_function(cl))
-    vm_push_value(L, value_make_lightuserdata(user_data))
+    vm_push(L, cl)
+    vm_push(L, value_make(user_data))
     return pcall(L, arg_count=1, ret_count=0)
 }
 
@@ -543,10 +552,10 @@ location :: proc(L: ^State, level: int) {
             col  := int(loc.col)
             push_fstring(L, "%s:%i:%i: ", file, line, col)
         } else {
-            push_string(L, "[Odin]: ")
+            push(L, "[Odin]: ")
         }
     } else {
-        push_string(L, "[?]: ")
+        push(L, "[?]: ")
     }
 }
 

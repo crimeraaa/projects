@@ -1,5 +1,5 @@
 #+private file
-package lulu_lib
+package lulu_libs
 
 // standard
 import "core:math"
@@ -20,24 +20,24 @@ math_procs := [?]lulu_aux.Library_Entry{
     {"sqrt",    _sqrt},
 }
 
-_arg1_ret1 :: proc(L: ^lulu.State, p: $T) -> int {
+_arg1_ret1 :: #force_inline proc(L: ^lulu.State, $procedure: $T) -> int {
     n := lulu_aux.check_number(L, 1)
-    lulu.push_number(L, p(n))
+    lulu.push(L, procedure(n))
     return 1
 }
 
-_arg1_ret2 :: proc(L: ^lulu.State, p: $T) -> int {
+_arg1_ret2 :: #force_inline proc(L: ^lulu.State, $procedure: $T) -> int {
     n := lulu_aux.check_number(L, 1)
-    a, b := p(n)
-    lulu.push_number(L, a)
-    lulu.push_number(L, b)
+    a, b := procedure(n)
+    lulu.push(L, a)
+    lulu.push(L, b)
     return 2
 }
 
-_arg2_ret1 :: proc(L: ^lulu.State, p: $T) -> int {
+_arg2_ret1 :: #force_inline proc(L: ^lulu.State, $procedure: $T) -> int {
     a := lulu_aux.check_number(L, 1)
     b := lulu_aux.check_number(L, 2)
-    lulu.push_number(L, p(a, b))
+    lulu.push(L, procedure(a, b))
     return 1
 }
 

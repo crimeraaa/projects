@@ -197,7 +197,7 @@ compiler_pop_block :: proc(c: ^Compiler) {
 }
 
 compiler_add_string :: proc(c: ^Compiler, s: ^Ostring) -> (index: u32) {
-    index = _add_constant(c, value_make_ostring(s))
+    index = _add_constant(c, value_make(s))
     return index
 }
 
@@ -523,7 +523,7 @@ _discharge_expr_to_reg :: proc(c: ^Compiler, e: ^Expr, reg: u16, loc := #caller_
             compiler_code_ABx(c, .Load_Imm, reg, imm)
         } // Otherwise, we need to load this number in a dedicated instruction.
         else {
-            i := _add_constant(c, value_make_number(n))
+            i := _add_constant(c, value_make(n))
             compiler_code_ABx(c, .Load_Const, reg, i)
         }
 
@@ -571,9 +571,9 @@ be transformed to a constant or it was a constant not able to fit in `limit`.
 _push_expr_k :: proc(c: ^Compiler, e: ^Expr, limit: u16) -> (rk: u16, is_k: bool) {
     switch e.type {
     case .None:     unreachable()
-    case .Nil:      return _push_k(c, e, value_make_nil(), limit)
-    case .Boolean:  return _push_k(c, e, value_make_boolean(e.boolean), limit)
-    case .Number:   return _push_k(c, e, value_make_number(e.number), limit)
+    case .Nil:      return _push_k(c, e, value_make(), limit)
+    case .Boolean:  return _push_k(c, e, value_make(e.boolean), limit)
+    case .Number:   return _push_k(c, e, value_make(e.number), limit)
     case .Constant: return _check_k(c, e, e.index, limit)
 
     // Nothing we can do.

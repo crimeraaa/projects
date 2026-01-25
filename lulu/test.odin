@@ -6,7 +6,7 @@ import "core:testing"
 
 // local
 import "lulu"
-import lulu_lib "lulu/lib"
+import lulu_lib "lulu/libs"
 
 Value :: union {
     bool,

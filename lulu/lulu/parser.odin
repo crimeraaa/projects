@@ -55,7 +55,7 @@ parser_make :: proc(L: ^State, builder: ^strings.Builder, name: ^Ostring, input:
 program :: proc(L: ^State, builder: ^strings.Builder, name: ^Ostring, input: string) {
     chunk := chunk_new(L, name)
     // Ensure `chunk` cannot be collected.
-    vm_push_value(L, value_make_object(cast(^Object)chunk, .Chunk))
+    vm_push(L, value_make(cast(^Object)chunk, .Chunk))
 
     p := parser_make(L, builder, name, input)
     c := compiler_make(L, &p, chunk)
@@ -77,8 +77,8 @@ program :: proc(L: ^State, builder: ^strings.Builder, name: ^Ostring, input: str
     // Make the closure BEFORE popping the chunk in order to prevent the chunk
     // from being collected in case GC is run during the closure's creation.
     cl := closure_lua_new(L, chunk, 0)
-    vm_pop_value(L)
-    vm_push_value(L, value_make_function(cl))
+    vm_pop(L)
+    vm_push(L, cl)
 }
 
 /*

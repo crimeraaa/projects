@@ -7,7 +7,7 @@ import "core:mem"
 
 // local
 import "lulu"
-import lulu_lib "lulu/lib"
+import lulu_lib "lulu/libs"
 
 _ :: mem
 

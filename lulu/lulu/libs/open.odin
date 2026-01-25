@@ -1,4 +1,4 @@
-package lulu_lib
+package lulu_libs
 
 // local
 import lulu ".."

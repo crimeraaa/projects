@@ -54,7 +54,8 @@ Propagates the error code `code` to the first protected caller, if one exists.
  */
 throw_error :: proc(L: ^State, code: Error) -> ! {
     // Unprotected call?
-    if h := L.handler; h == nil {
+    h := L.handler
+    if h == nil {
         panic("[PANIC] Unprotected call to Lulu API")
     } else {
         intrinsics.volatile_store(&h.code, code)
@@ -128,7 +129,7 @@ run_raw_pcall :: proc(L: ^State, p: proc(^State, rawptr), user_data: rawptr) -> 
     case .Memory:
         // We failed to (re)allocate some memory but we were able to get past VM
         // startup, so the memory error message is definitely interned.
-        err_obj := value_make_ostring(ostring_new(L, MEMORY_ERROR_MESSAGE))
+        err_obj := value_make(ostring_new(L, MEMORY_ERROR_MESSAGE))
         L.stack[old_top] = err_obj
     }
 

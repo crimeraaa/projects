@@ -85,7 +85,7 @@ _get_cap :: proc(t: ^Table) -> (cap: int) {
 @(private="package")
 table_len :: proc(t: ^Table) -> (len: int) {
     for {
-        i := value_make_number(f64(len + 1))
+        i := value_make(f64(len + 1))
         if v, ok := table_get(t, i); !ok || value_is_nil(v) {
             break
         }

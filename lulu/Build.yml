@@ -9,12 +9,14 @@ vars:
     -debug
     -sanitize=address
     -out:"{{.OUT}}"
+
+  REPL_EXTRA_FLAGS: >-
     -define:LULU_DISASSEMBLE_CHUNK=true
     -define:LULU_DISASSEMBLE_INLINE=true
 
 tasks:
   run:
-    desc: Build the `lulu` executable unconditionally and run it.
+    desc: Build the `lulu` executable and run it.
     deps:
       - task: build
     cmds:
@@ -22,10 +24,15 @@ tasks:
     interactive: true
 
   build:
-    desc: Build the `lulu` executable unconditionally.
+    desc: Build the `lulu` executable.
     cmds:
       - mkdir -p bin
-      - odin build {{.TASKFILE_DIR}}/ {{.FLAGS}}
+      - odin build {{.TASKFILE_DIR}}/ {{.FLAGS}} {{.REPL_EXTRA_FLAGS}}
     sources:
       - '{{.TASKFILE_DIR}}/*.odin'
       - '{{.TASKFILE_DIR}}/lulu/**/*.odin'
+
+  test:
+    desc: Run `test.odin` unconditionally.
+    cmds:
+      - odin test {{.TASKFILE_DIR}}/ {{.FLAGS}}

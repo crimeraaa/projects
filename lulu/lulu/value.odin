@@ -37,6 +37,17 @@ Value_Data :: struct #raw_union {
 // and/or fat pointers instead.
 
 
+value_make :: proc {
+    value_make_nil,
+    value_make_boolean,
+    value_make_number,
+    value_make_lightuserdata,
+    value_make_object,
+    value_make_ostring,
+    value_make_table,
+    value_make_function,
+}
+
 value_make_nil :: #force_inline proc "contextless" () -> Value {
     v: Value
     v.pointer = nil
@@ -124,7 +135,7 @@ Parses the string `s` into a number.
 - ok: `true` if parsing was succesful else `false`.
  */
 number_from_string :: proc(s: string) -> (n: f64, ok: bool) {
-    // Maybe an integer?
+    // String might have an integer prefix of some kind?
     try: if len(s) > 2 && s[0] == '0' {
         base := 0
         switch s[1] {
@@ -136,13 +147,8 @@ number_from_string :: proc(s: string) -> (n: f64, ok: bool) {
         case:
             break try
         }
-
-        i: uint
-        i, ok = strconv.parse_uint(s[2:], base)
-        if ok {
-            n = f64(i)
-        }
-        return n, ok
+        i := strconv.parse_uint(s[2:], base) or_break try
+        return f64(i), true
     }
     return strconv.parse_f64(s)
 }
@@ -162,15 +168,15 @@ pointer_to_string :: proc(p: rawptr, buf: []byte) -> (s: string) {
 }
 
 value_make_ostring :: proc(s: ^Ostring) -> Value {
-    return value_make_object(cast(^Object)s, .String)
+    return value_make(cast(^Object)s, .String)
 }
 
 value_make_table :: proc(t: ^Table) -> Value {
-    return value_make_object(cast(^Object)t, .Table)
+    return value_make(cast(^Object)t, .Table)
 }
 
 value_make_function :: proc(cl: ^Closure) -> Value {
-    return value_make_object(cast(^Object)cl, .Function)
+    return value_make(cast(^Object)cl, .Function)
 }
 
 value_type_name :: #force_inline proc(v: Value) -> string {

@@ -4,6 +4,3 @@
 
 **/__pycache__/*
 *.pyc
-
-# Lulu Libraries
-!lulu/lulu/lib
