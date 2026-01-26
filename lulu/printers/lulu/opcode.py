@@ -4,45 +4,46 @@ from enum import Enum
 
 class OpCode_Format(Enum):
     ABC  = 0
-    ABX  = 1
-    ASBX = 2
+    ABx  = 1
+    AsBx = 2
 
 
 opmodes: Final = {
-    "Load_Const": OpCode_Format.ABX,
-    "Get_Global": OpCode_Format.ABX,
-    "Set_Global": OpCode_Format.ABX,
-    "Jump":       OpCode_Format.ASBX,
-    "For_Prep":   OpCode_Format.ASBX,
-    "For_Loop":   OpCode_Format.ASBX,
-    "Closure":    OpCode_Format.ABX,
+    "Load_Const":    OpCode_Format.ABx,
+    "Get_Global":    OpCode_Format.ABx,
+    "Set_Global":    OpCode_Format.ABx,
+    "Jump":          OpCode_Format.AsBx,
+    "Jump_If_False": OpCode_Format.AsBx,
+    "For_Prep":      OpCode_Format.AsBx,
+    "For_Loop":      OpCode_Format.AsBx,
+    "Closure":       OpCode_Format.ABx,
 }
 
 class InstructionPrinter:
     __op:  str
-    __a:   int
-    __b:   int
-    __c:   int
-    __bx:  int
-    __sbx: int
+    __A:   int
+    __B:   int
+    __C:   int
+    __Bx:  int
+    __sBx: int
 
     def __init__(self, ip: gdb.Value):
         self.__op  = str(ip["base"]["op"])
-        self.__a   = int(ip["base"]["a"])
-        self.__b   = int(ip["base"]["b"])
-        self.__c   = int(ip["base"]["c"])
-        self.__bx  = int(ip["u"]["bx"])
-        self.__sbx = int(ip["s"]["bx"])
+        self.__A   = int(ip["base"]["A"])
+        self.__B   = int(ip["base"]["B"])
+        self.__C   = int(ip["base"]["C"])
+        self.__Bx  = int(ip["u"]["Bx"])
+        self.__sBx = int(ip["s"]["Bx"])
 
     def to_string(self) -> str:
-        out: list[str] = [f"{self.__op}: A={self.__a}"]
+        out: list[str] = [f"{self.__op}: A={self.__A}"]
         if self.__op in opmodes:
-            if opmodes[self.__op] == OpCode_Format.ASBX:
-                out.append(f", sBx={self.__sbx}")
+            if opmodes[self.__op] == OpCode_Format.AsBx:
+                out.append(f", sBx={self.__sBx}")
             else:
-                out.append(f", Bx={self.__bx}")
+                out.append(f", Bx={self.__Bx}")
         else:
-            out.append(f", B={self.__b}, C={self.__c}")
+            out.append(f", B={self.__B}, C={self.__C}")
 
         return ''.join(out)
 

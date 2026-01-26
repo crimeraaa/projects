@@ -572,7 +572,7 @@ make_string_token :: proc(x: ^Lexer, q: rune) -> Token {
         n, err := strings.write_rune(b, r)
 
         /*
-        **Note** (2025-12-25)
+        **Note(2025-12-25)**
 
         See the following functions:
             - core/strings/builder.odin:write_rune()
@@ -602,7 +602,7 @@ make_string_token :: proc(x: ^Lexer, q: rune) -> Token {
         advance_rune(x)
         switch r {
         case q: break consume_loop
-        case '\'':
+        case '\\':
             esc, esc_size := peek_rune(x), peek_size(x)
             advance_rune(x)
             // We assume the escaped part of escape sequences are all ASCII.
@@ -619,7 +619,7 @@ make_string_token :: proc(x: ^Lexer, q: rune) -> Token {
             case '\n', '\\', '\"', '\'', '[', ']':
                 break
             case:
-                buf: [64]byte
+                buf: [size_of(rune)]byte
                 msg := fmt.bprintf(buf[:], "Unsupported escape sequence '%c'", esc)
                 error(x, msg)
             }

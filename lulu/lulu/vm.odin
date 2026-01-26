@@ -81,16 +81,18 @@ vm_push_fstring :: proc(L: ^State, format: string, args: ..any) -> string {
         b := strings.builder_from_bytes(buf[:])
         switch spec := format[spec_i]; spec {
         case 'c':
-            r_buf, size := utf8.encode_rune(arg.(rune))
+            r := arg.(rune) or_else rune(arg.(byte))
+            r_buf, size := utf8.encode_rune(r)
             copy(buf[:size], r_buf[:size])
             vm_push(L, string(buf[:size]))
 
         case 'd', 'i':
-            i := i64(arg.(int))
-            vm_push(L, strconv.write_int(buf[:], i, base=10))
+            i := arg.(int) or_else int(arg.(i32))
+            vm_push(L, strconv.write_int(buf[:], i64(i), base=10))
 
         case 'f':
-            repr := number_to_string(arg.(f64), buf[:])
+            f := arg.(f64) or_else f64(arg.(f32))
+            repr := number_to_string(f, buf[:])
             vm_push(L, repr)
 
         case 's':
@@ -273,8 +275,8 @@ vm_execute :: proc(L: ^State, ret_expect: int) {
     // Constants array.
     K := chunk.constants[:]
 
-    code := chunk.code
-    ip   := raw_data(code)
+    code := raw_data(chunk.code)
+    ip   := code
 
     // Table of defined global variables.
     _G := &L.globals_table
@@ -282,22 +284,22 @@ vm_execute :: proc(L: ^State, ret_expect: int) {
     when DISASSEMBLE_INLINE do fmt.println("[EXECUTION]")
     for {
         i  := ip[0] // *ip
-        pc := i32(find_ptr_index_unsafe(code, ip))
+        pc := i32(mem.ptr_sub(ip, code))
         ip = &ip[1] // ip++
         _print_stack(chunk, i, pc, R)
 
-        a  := i.a
+        a  := i.A
         ra := &R[a]
         op := i.op
         switch op {
-        case .Move:       ra^ = R[i.b]
-        case .Load_Nil:   mem.zero_slice(R[a:i.b])
-        case .Load_Bool:  ra^ = value_make(bool(i.b))
-        case .Load_Imm:   ra^ = value_make(f64(i.u.bx))
-        case .Load_Const: ra^ = K[i.u.bx]
+        case .Move:       ra^ = R[i.B]
+        case .Load_Nil:   mem.zero_slice(R[a:i.B])
+        case .Load_Bool:  ra^ = value_make(bool(i.B))
+        case .Load_Imm:   ra^ = value_make(f64(i.u.Bx))
+        case .Load_Const: ra^ = K[i.u.Bx]
 
         case .Get_Global:
-            k := K[i.u.bx]
+            k := K[i.u.Bx]
             _protect(L, pc)
             if v, ok := vm_get_table(L, _G, k); !ok {
                 what := value_get_string(k)
@@ -308,24 +310,24 @@ vm_execute :: proc(L: ^State, ret_expect: int) {
 
         case .Set_Global:
             _protect(L, pc)
-            vm_set_table(L, _G, K[i.u.bx], ra^)
+            vm_set_table(L, _G, K[i.u.Bx], ra^)
 
         case .New_Table:
-            hash_count  := 1 << (i.b - 1) if i.b != 0 else 0
-            array_count := 1 << (i.c - 1) if i.c != 0 else 0
+            hash_count  := 1 << (i.B - 1) if i.B != 0 else 0
+            array_count := 1 << (i.C - 1) if i.C != 0 else 0
             t := table_new(L, hash_count=hash_count, array_count=array_count)
             ra^ = value_make(t)
 
-        case .Get_Table:        _get_table(L, pc, ra, &R[i.b], R[i.c])
-        case .Get_Field:        _get_table(L, pc, ra, &R[i.b], K[i.c])
-        case .Set_Table:        _set_table(L, pc, ra, R[i.b], R[i.c])
-        case .Set_Table_Const:  _set_table(L, pc, ra, R[i.b], K[i.c])
-        case .Set_Field:        _set_table(L, pc, ra, K[i.b], R[i.c])
-        case .Set_Field_Const:  _set_table(L, pc, ra, K[i.b], K[i.c])
+        case .Get_Table:        _get_table(L, pc, ra, &R[i.B], R[i.C])
+        case .Get_Field:        _get_table(L, pc, ra, &R[i.B], K[i.C])
+        case .Set_Table:        _set_table(L, pc, ra, R[i.B], R[i.C])
+        case .Set_Table_Const:  _set_table(L, pc, ra, R[i.B], K[i.C])
+        case .Set_Field:        _set_table(L, pc, ra, K[i.B], R[i.C])
+        case .Set_Field_Const:  _set_table(L, pc, ra, K[i.B], K[i.C])
 
         // Unary
         case .Len:
-            #partial switch rb := &R[i.b]; value_type(rb^) {
+            #partial switch rb := &R[i.B]; value_type(rb^) {
             case .String:
                 n  := value_get_ostring(rb^).len
                 ra^ = value_make(f64(n))
@@ -338,9 +340,9 @@ vm_execute :: proc(L: ^State, ret_expect: int) {
                 debug_type_error(L, "get length of", rb)
             }
 
-        case .Not: ra^ = value_make(value_is_falsy(R[i.b]))
+        case .Not: ra^ = value_make(value_is_falsy(R[i.B]))
         case .Unm:
-            rb := &R[i.b]
+            rb := &R[i.B]
             if n, ok := value_to_number(rb^); ok {
                 ra^ = value_make(number_unm(n))
             } else {
@@ -349,39 +351,39 @@ vm_execute :: proc(L: ^State, ret_expect: int) {
             }
 
         // Arithmetic (register-immediate)
-        case .Add_Imm: _arith_imm(L, pc, ra, number_add, &R[i.b], i.c)
-        case .Sub_Imm: _arith_imm(L, pc, ra, number_sub, &R[i.b], i.c)
+        case .Add_Imm: _arith_imm(L, pc, ra, number_add, &R[i.B], i.C)
+        case .Sub_Imm: _arith_imm(L, pc, ra, number_sub, &R[i.B], i.C)
 
         // Arithmetic (register-constant)
-        case .Add_Const: _arith(L, pc, ra, number_add, &R[i.b], &K[i.c])
-        case .Sub_Const: _arith(L, pc, ra, number_sub, &R[i.b], &K[i.c])
-        case .Mul_Const: _arith(L, pc, ra, number_mul, &R[i.b], &K[i.c])
-        case .Div_Const: _arith(L, pc, ra, number_div, &R[i.b], &K[i.c])
-        case .Mod_Const: _arith(L, pc, ra, number_mod, &R[i.b], &K[i.c])
-        case .Pow_Const: _arith(L, pc, ra, number_pow, &R[i.b], &K[i.c])
+        case .Add_Const: _arith(L, pc, ra, number_add, &R[i.B], &K[i.C])
+        case .Sub_Const: _arith(L, pc, ra, number_sub, &R[i.B], &K[i.C])
+        case .Mul_Const: _arith(L, pc, ra, number_mul, &R[i.B], &K[i.C])
+        case .Div_Const: _arith(L, pc, ra, number_div, &R[i.B], &K[i.C])
+        case .Mod_Const: _arith(L, pc, ra, number_mod, &R[i.B], &K[i.C])
+        case .Pow_Const: _arith(L, pc, ra, number_pow, &R[i.B], &K[i.C])
 
         // Arithmetic (register-register)
-        case .Add: _arith(L, pc, ra, number_add, &R[i.b], &R[i.c])
-        case .Sub: _arith(L, pc, ra, number_sub, &R[i.b], &R[i.c])
-        case .Mul: _arith(L, pc, ra, number_mul, &R[i.b], &R[i.c])
-        case .Div: _arith(L, pc, ra, number_div, &R[i.b], &R[i.c])
-        case .Mod: _arith(L, pc, ra, number_mod, &R[i.b], &R[i.c])
-        case .Pow: _arith(L, pc, ra, number_pow, &R[i.b], &R[i.c])
+        case .Add: _arith(L, pc, ra, number_add, &R[i.B], &R[i.C])
+        case .Sub: _arith(L, pc, ra, number_sub, &R[i.B], &R[i.C])
+        case .Mul: _arith(L, pc, ra, number_mul, &R[i.B], &R[i.C])
+        case .Div: _arith(L, pc, ra, number_div, &R[i.B], &R[i.C])
+        case .Mod: _arith(L, pc, ra, number_mod, &R[i.B], &R[i.C])
+        case .Pow: _arith(L, pc, ra, number_pow, &R[i.B], &R[i.C])
 
         // Comparison
         // case .Eq..=.Geq:
         //     unreachable("Unimplemented: %v", i.op)
 
         case .Concat:
-            args := R[i.b:i.c]
+            args := R[i.B:i.C]
             _protect(L, pc)
             vm_concat(L, ra, args)
 
         // Control flow
         case .Call:
             arg_first := int(a)   + 1
-            arg_count := int(i.b) + VARIADIC
-            ret_count := int(i.c) + VARIADIC
+            arg_count := int(i.B) + VARIADIC
+            ret_count := int(i.C) + VARIADIC
 
             /*
             Resolve the actual number of variadic arguments pushed to the stack.
@@ -398,9 +400,19 @@ vm_execute :: proc(L: ^State, ret_expect: int) {
             _protect(L, pc)
             run_call(L, ra, arg_count, ret_count)
 
+        case .Jump:
+            offset := int(i.s.Bx)
+            ip = mem.ptr_offset(ip, offset)
+
+        case .Jump_If_False:
+            if value_is_falsy(ra^) {
+                offset := int(i.s.Bx)
+                ip = mem.ptr_offset(ip, offset)
+            }
+
         case .Return:
             ret_first := int(a)
-            ret_count := int(i.b) + VARIADIC
+            ret_count := int(i.B) + VARIADIC
             if ret_count == VARIADIC {
                 ret_count = get_top(L) - ret_first
             }

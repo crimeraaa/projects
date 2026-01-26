@@ -65,6 +65,12 @@ arg_error :: proc(L: ^lulu.State, index: int, message: string) -> ! {
     errorf(L, "bad argument #%i (%s)", index, message)
 }
 
+arg_check :: proc(L: ^lulu.State, cond: bool, index: int, message := #caller_expression(cond)) {
+    if !cond {
+        arg_error(L, index, message)
+    }
+}
+
 check_any :: proc(L: ^lulu.State, index: int) {
     if lulu.is_none(L, index) {
         arg_error(L, index, "value expected")

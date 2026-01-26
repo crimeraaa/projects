@@ -162,8 +162,19 @@ match_token :: proc(p: ^Parser, want: Token_Type) -> (found: bool) {
     return found
 }
 
-check_either_token :: proc(p: ^Parser, want1, want2: Token_Type) -> bool {
-    return check_token(p, want1) || check_token(p, want2)
+
+/*
+**Note(2026-01-26)**
+- This function does not verify correctness, it is up to the caller to
+expect a proper ending token.
+ */
+block_end :: proc(p: ^Parser) -> bool {
+    #partial switch p.lookahead.type {
+    case .Else, .Elseif, .End, .EOF: return true
+    case:
+        break
+    }
+    return false
 }
 
 /*
@@ -192,7 +203,7 @@ error_at :: proc(p: ^Parser, t: Token, msg: string) -> ! {
 /*
 **Grammar**
 ```
-<statement> ::= <block>
+<statement> ::= 'do' <block> 'end'
       | <local_statement>
       | <identifier_statement>
       | <return_statement>
@@ -201,10 +212,13 @@ error_at :: proc(p: ^Parser, t: Token, msg: string) -> ! {
 statement :: proc(p: ^Parser, c: ^Compiler)  {
     advance_token(p)
     #partial switch peek_consumed(p) {
-    case .Do:         block(p, c)
+    case .Do:
+        block(p, c)
+        expect_token(p, .End)
+    case .If:         if_statement(p, c)
     case .Local:      local_statement(p, c)
-    case .Identifier: identifier_statement(p, c)
     case .Return:     return_statement(p, c)
+    case .Identifier: identifier_statement(p, c)
     case:
         parser_error(p, "Expected a statement")
     }
@@ -214,19 +228,18 @@ statement :: proc(p: ^Parser, c: ^Compiler)  {
 /*
 **Grammar**
 ```
-<block> ::= 'do' ( <statement> )* 'end'
+<block> ::= ( <statement> )*
 ```
 
 **Assumptions**
 - We just consumed the `do` token.
  */
 block :: proc(p: ^Parser, c: ^Compiler) {
-    block: Block
-    compiler_push_block(c, &block)
-    for !check_token(p, .End) {
+    curr_block: Block
+    compiler_push_block(c, &curr_block)
+    for !block_end(p) {
         statement(p, c)
     }
-    expect_token(p, .End)
     compiler_pop_block(c)
 }
 
@@ -439,7 +452,7 @@ assignment :: proc(p: ^Parser, c: ^Compiler, tail: ^Assign_List, lhs_count: u16)
 ```
  */
 return_statement :: proc(p: ^Parser, c: ^Compiler) {
-    if match_token(p, .EOF) {
+    if block_end(p) {
         compiler_code_return(c, 0, 0)
         return
     }
@@ -463,6 +476,74 @@ return_statement :: proc(p: ^Parser, c: ^Compiler) {
         compiler_pop_reg(c, first_reg, arg_count)
         compiler_code_return(c, first_reg, ret_count)
     }
+}
+
+/*
+**Grammar**
+```
+<if_statement> ::= 'if' <then_block> ( 'elseif' <then_block> )* ( 'else' <block> )? 'end'
+<then_block> ::= <expression> 'then' <block>
+```
+ */
+if_statement :: proc(p: ^Parser, c: ^Compiler) {
+    // Absolute pc of `.Jump_If_False`.
+    then_pc := then_block(p, c)
+
+    // Absolute target pc for `.Jump_If_False` when 'if' fails.
+    then_target := c.pc - 1
+
+    // Absolute pc of `.Jump`, if any 'else' block (even implicit) exists.
+    else_list := i32(INVALID_PC)
+
+    elseif_count := 0
+    for match_token(p, .Elseif) {
+        // All 'elseif' blocks share the same 'else' jump (even implicit).
+        else_list = compiler_append_jump(c, else_list)
+
+        // Absolute target pc for `.Jump_If_False` when 'elseif' fails.
+        elseif_pc := then_block(p, c)
+
+        // Current 'then' jump will go to the new 'else' jump upon
+        // failure. This ensures that we try 'elseif' blocks sequentially.
+        compiler_patch_jump(c, then_pc, else_list)
+
+        // Next jump to be discharged.
+        then_pc       = elseif_pc
+        then_target   = c.pc - 1
+        elseif_count += 1
+    }
+
+    // We require an explicit/implicit 'else' jump?
+    if check_token(p, .Else) || elseif_count > 0 {
+        else_list   = compiler_append_jump(c, else_list)
+        then_target = else_list
+    }
+
+    if match_token(p, .Else) {
+        block(p, c)
+    }
+
+    expect_token(p, .End)
+    compiler_patch_jump(c, then_pc, then_target)
+    compiler_patch_jump_list(c, else_list, c.pc - 1)
+}
+
+/*
+**Grammar**
+```
+<then_block> ::= ( 'if' | 'elseif' ) <expression> 'then' <block>
+```
+ */
+then_block :: proc(p: ^Parser, c: ^Compiler) -> (then_pc: i32) {
+    cond := expression(p, c)
+    expect_token(p, .Then, "after <condition>")
+
+    reg := compiler_push_expr_any(c, &cond)
+    compiler_pop_reg(c, reg)
+
+    then_pc = compiler_code_jump(c, .Jump_If_False, reg)
+    block(p, c)
+    return then_pc
 }
 
 /*
@@ -629,11 +710,11 @@ constructor :: proc(p: ^Parser, c: ^Compiler) -> (e: Expr) {
 
     ip := &c.chunk.code[ct.pc]
     if ct.hash_count > 0 {
-        ip.b = u16(table_log2(ct.hash_count) + 1)
+        ip.B = u16(table_log2(ct.hash_count) + 1)
     }
 
     if ct.array_count > 0 {
-        ip.c = u16(table_log2(ct.array_count) + 1)
+        ip.C = u16(table_log2(ct.array_count) + 1)
     }
     return e
 }

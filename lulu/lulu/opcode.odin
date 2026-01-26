@@ -54,8 +54,10 @@ Pow,        //  A B C   | R[A] := R[B] ^ R[C]
 Concat,     //  A B C   | R[A] := concat R[i] for B <= i < C
 
 // Control Flow
-Call,       //  A B C   | R[A : A+C-1]:= R[A]( R[A+1 : A+B-1] ) ; (*) See note.
-Return,     //  A B     | return R[A:A+B-1] ; (*) See note.
+Call,           //  A B C   | R[A : A+C-1]:= R[A]( R[A+1 : A+B-1] ) ; (*) See note.
+Jump,           //    sBx   | ip += sBx
+Jump_If_False,  //  A sBx   | ip += sBx if not R[A] else 1 ; (*) See note.
+Return,         //  A B     | return R[A:A+B-1] ; (*) See note.
 }
 
 /*
@@ -78,12 +80,16 @@ Operand B will never function as an RK.
 Operand C will only function as RK in table manipulation instructions.
 
 **Notes**
-(*) OP_CALL, OP_RETURN:
+(*) .Call, .Return:
     - Arguments B and C are encoded in terms of `VARIADIC` (a.k.a. `-1`).
     - When encoding we add 1 (or subtract `VARIADIC`), i.e. `B - 1` and `C - 1`,
     in order to reliably represent `-1` in the unsigned operand.
     - When decoding, we first treat the operand as a signed integer and then
     subtract 1 (or add `VARIADIC`) to get the intended count.
+
+(*) .Jump:
+    - the `ip += 1` business is assuming that the next instruction is an
+    unconditional jump or part of an 'else' block , so we want to skip it.
  */
 Instruction :: struct #raw_union {
     using base: Instruction_ABC,
@@ -97,21 +103,21 @@ Instruction :: struct #raw_union {
 
 Instruction_ABC :: bit_field u32 {
     op: Opcode | SIZE_OP,
-    a:  u16    | SIZE_A,
-    c:  u16    | SIZE_C,
-    b:  u16    | SIZE_B,
+    A:  u16    | SIZE_A,
+    C:  u16    | SIZE_C,
+    B:  u16    | SIZE_B,
 }
 
 Instruction_ABx :: bit_field u32 {
     op: Opcode | SIZE_OP,
-    a:  u16    | SIZE_A,
-    bx: u32    | SIZE_Bx,
+    A:  u16    | SIZE_A,
+    Bx: u32    | SIZE_Bx,
 }
 
 Instruction_AsBx :: bit_field u32 {
     op: Opcode | SIZE_OP,
-    a:  u16    | SIZE_A,
-    bx: i32    | SIZE_Bx,
+    A:  u16    | SIZE_A,
+    Bx: i32    | SIZE_Bx,
 }
 
 SIZE_OP  :: 6
@@ -119,6 +125,7 @@ SIZE_A   :: 8
 SIZE_C   :: 10
 SIZE_B   :: 8
 SIZE_Bx  :: SIZE_B + SIZE_C
+SIZE_J   :: SIZE_A + SIZE_B + SIZE_C
 
 MAX_A   :: (1 << SIZE_A)  - 1
 MAX_B   :: (1 << SIZE_B)  - 1
@@ -138,8 +145,8 @@ Op_Info :: bit_field u8 {
     b:    Op_Mode   | 2,
 }
 
-Op_Format :: enum {
-    ABC, ABx, AsBx
+Op_Format :: enum u8 {
+    ABC, ABx, AsBx,
 }
 
 Op_Mode :: enum {
@@ -180,8 +187,10 @@ OP_INFO := [Opcode]Op_Info{
     .Concat     = {mode=.ABC, a=true, b=.Reg, c=.Reg},
 
     // Control flow
-    .Call       = {mode=.ABC, a=true,  b=.Imm, c=.Imm},
-    .Return     = {mode=.ABC, a=false, b=.Imm},
+    .Call           = {mode=.ABC,   a=true,  b=.Imm, c=.Imm},
+    .Jump           = {mode=.AsBx,  a=false, b=.Imm},
+    .Jump_If_False  = {mode=.AsBx,  a=false, b=.Imm},
+    .Return         = {mode=.ABC,   a=false, b=.Imm},
 }
 
 instruction_eq :: proc(i1, i2: Instruction) -> bool {

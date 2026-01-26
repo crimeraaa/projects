@@ -232,19 +232,28 @@ _add_instruction :: proc(c: ^Compiler, i: Instruction) -> (pc: i32) {
     return chunk_push_code(L, c.chunk, &c.pc, i, line, col)
 }
 
-compiler_code_ABC :: proc(cl: ^Compiler, op: Opcode, a, b, c: u16) -> (pc: i32) {
+compiler_code_ABC :: proc(cl: ^Compiler, op: Opcode, A, B, C: u16) -> (pc: i32) {
     compiler_assert(cl, OP_INFO[op].mode == .ABC)
 
-    i := Instruction{base={op=op, a=a, b=b, c=c}}
+    i := Instruction{base={op=op, A=A, B=B, C=C}}
     return _add_instruction(cl, i)
 }
 
-compiler_code_ABx :: proc(c: ^Compiler, op: Opcode, a: u16, bx: u32) -> (pc: i32) {
+compiler_code_ABx :: proc(c: ^Compiler, op: Opcode, A: u16, Bx: u32) -> (pc: i32) {
     compiler_assert(c, OP_INFO[op].mode == .ABx)
     compiler_assert(c, OP_INFO[op].b != nil)
     compiler_assert(c, OP_INFO[op].c == nil)
 
-    i := Instruction{u={op=op, a=a, bx=bx}}
+    i := Instruction{u={op=op, A=A, Bx=Bx}}
+    return _add_instruction(c, i)
+}
+
+compiler_code_AsBx :: proc(c: ^Compiler, op: Opcode, A: u16, sBx: i32) -> (pc: i32) {
+    compiler_assert(c, OP_INFO[op].mode == .AsBx, "expected AsBx, got %v", OP_INFO[op].mode)
+    compiler_assert(c, OP_INFO[op].b != nil)
+    compiler_assert(c, OP_INFO[op].c == nil)
+
+    i := Instruction{s={op=op, A=A, Bx=sBx}}
     return _add_instruction(c, i)
 }
 
@@ -258,8 +267,46 @@ compiler_set_returns :: proc(c: ^Compiler, call: ^Expr, ret_count: u16) {
         // VARIADIC is -1, so we encode 0.
         // Likewise, returning 0 values is actually encoded as C=1.
         ip := &c.chunk.code[call.pc]
-        ip.c  = ret_count - u16(VARIADIC)
+        ip.C  = ret_count - u16(VARIADIC)
     }
+}
+
+compiler_code_jump :: proc(c: ^Compiler, op: Opcode, A: u16) -> (jump_pc: i32) {
+    compiler_assert(c, op == .Jump || op == .Jump_If_False)
+    return compiler_code_AsBx(c, op, A, -1)
+}
+
+compiler_append_jump :: proc(c: ^Compiler, list_pc: i32) -> (next_pc: i32) {
+    compiler_assert(c, list_pc == INVALID_PC || c.chunk.code[list_pc].op == .Jump)
+    return compiler_code_AsBx(c, .Jump, 0, list_pc)
+}
+
+compiler_patch_jump :: proc(c: ^Compiler, jump_pc, target_pc: i32) {
+    prev_pc := _patch_jump(c, jump_pc, target_pc)
+    // `.Jump_If_False` can never be a jump list.
+    compiler_assert(c, prev_pc == INVALID_PC)
+}
+
+compiler_patch_jump_list :: proc(c: ^Compiler, list_pc, target_pc: i32) {
+    jump_pc := list_pc
+    for jump_pc != INVALID_PC {
+        prev_pc := _patch_jump(c, jump_pc, target_pc)
+        jump_pc = prev_pc
+    }
+}
+
+@(private="file")
+_patch_jump :: proc(c: ^Compiler, jump_pc, target_pc: i32) -> (prev_pc: i32) {
+    offset := target_pc - jump_pc
+    if offset > MAX_sBx {
+        parser_error(c.parser, "jump too large")
+    }
+    ip := &c.chunk.code[jump_pc]
+    assert(ip.op == .Jump || ip.op == .Jump_If_False)
+
+    prev_pc = ip.s.Bx
+    ip.s.Bx = offset
+    return prev_pc
 }
 
 /*
@@ -272,8 +319,8 @@ Sets the return count of the call pc in `call` to `ret_count` and converts
 compiler_discharge_returns :: proc(c: ^Compiler, call: ^Expr, ret_count: u16) {
     if call.type == .Call {
         ip := &c.chunk.code[call.pc]
-        ip.c  = ret_count - u16(VARIADIC)
-        call^ = expr_make_reg(.Register, ip.a)
+        ip.C  = ret_count - u16(VARIADIC)
+        call^ = expr_make_reg(.Register, ip.A)
     }
 }
 
@@ -389,8 +436,8 @@ compiler_load_nil :: proc(c: ^Compiler, reg, count: u16) {
             break fold
         }
 
-        prev_from := ip.a
-        prev_to   := ip.b
+        prev_from := ip.A
+        prev_to   := ip.B
         // `reg` (our start register for this hypothetical load nil) is not in
         // range of this load nil, so connecting them would be erroneous?
         if !(prev_from <= reg && reg <= prev_to + 1) {
@@ -399,7 +446,7 @@ compiler_load_nil :: proc(c: ^Compiler, reg, count: u16) {
 
         next_to := reg + count
         if next_to > prev_to {
-            ip.b = next_to
+            ip.B = next_to
         }
         return
     }
@@ -534,7 +581,7 @@ _discharge_expr_to_reg :: proc(c: ^Compiler, e: ^Expr, reg: u16, loc := #caller_
         unreachable("Invalid expr to discharge: %v", e.type, loc=loc)
 
     case .Pc_Pending_Register:
-        c.chunk.code[e.pc].a = reg
+        c.chunk.code[e.pc].A = reg
 
     case .Register:
         dst := reg
@@ -754,13 +801,13 @@ compiler_code_concat :: proc(c: ^Compiler, #no_alias left, right: ^Expr) {
         ip := &c.chunk.code[right.pc]
         // Recursive case.
         if ip.op == .Concat {
-            assert(rb == ip.b - 1)
+            assert(rb == ip.B - 1)
 
             // Recursive calls see only 1 temporary register, as our `right`
             // originally held a register but got overwritten in the child
             // recursive call that finished right before us.
             compiler_pop_reg(c, rb)
-            ip.b -= 1
+            ip.B -= 1
 
             // Ensure parent recursive caller sees the foldable instruction.
             left^ = right^

@@ -74,25 +74,28 @@ _to_number :: proc(L: ^lulu.State) -> (ret_count: int) {
     lulu_aux.check_any(L, 1)
 
     base := int(lulu_aux.opt_number(L, 2, default=10))
+    lulu_aux.arg_check(L, 2 <= base && base <= 36, index=2)
+
     parse_number: if base == 10 {
-        n := lulu.to_number(L, 1) or_break parse_number
-        lulu.push(L, n)
+        lulu.push(L, lulu.to_number(L, 1) or_break parse_number)
         return 1
     } else {
         type := lulu.type(L, 1)
         #partial switch type {
         case .Number, .String:
             // Re-parse as an unsigned integer in given base.
-            s := lulu.to_string(L, 1)
+            s    := lulu.to_string(L, 1)
             sign := f64(1)
 
             // Have a sign with at least 1 digit?
             if len(s) > 1 {
                 switch s[0] {
-                case '+': sign =  1
-                case '-': sign = -1
+                case '+':
+                    s = s[1:]
+                case '-':
+                    sign = -1
+                    s = s[1:]
                 }
-                s = s[1:]
             }
 
             // Have an integer prefix with at least 1 digit?
@@ -114,11 +117,11 @@ _to_number :: proc(L: ^lulu.State) -> (ret_count: int) {
                 }
                 s = s[2:]
             }
-            n := strconv.parse_int(s, base=base) or_break parse_number
+            n := strconv.parse_uint(s, base=base) or_break parse_number
             lulu.push(L, f64(n) * sign)
             return 1
         case:
-            break parse_number
+            break
         }
     }
     lulu.push_nil(L)

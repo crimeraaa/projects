@@ -28,6 +28,7 @@ TESTS := [?]Test{
     {"blocks.lua",  #load("blocks.lua"),    "file"},
     {"fun.lua",     #load("fun.lua"),       nil},
     {"table.lua",   #load("table.lua"),     nil},
+    {"if-else.lua", #load("if-else.lua"),   nil},
 }
 
 try_test :: proc(t: ^testing.T, L: ^lulu.State, test: Test) -> Value {
