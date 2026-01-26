@@ -9,14 +9,14 @@ class OpCode_Format(Enum):
 
 
 opmodes: Final = {
-    "Load_Const":    OpCode_Format.ABx,
-    "Get_Global":    OpCode_Format.ABx,
-    "Set_Global":    OpCode_Format.ABx,
-    "Jump":          OpCode_Format.AsBx,
-    "Jump_If_False": OpCode_Format.AsBx,
-    "For_Prep":      OpCode_Format.AsBx,
-    "For_Loop":      OpCode_Format.AsBx,
-    "Closure":       OpCode_Format.ABx,
+    "Load_Const":   OpCode_Format.ABx,
+    "Get_Global":   OpCode_Format.ABx,
+    "Set_Global":   OpCode_Format.ABx,
+    "Jump":         OpCode_Format.AsBx,
+    "Jump_If":      OpCode_Format.AsBx,
+    "For_Prep":     OpCode_Format.AsBx,
+    "For_Loop":     OpCode_Format.AsBx,
+    "Closure":      OpCode_Format.ABx,
 }
 
 class InstructionPrinter:

@@ -16,6 +16,9 @@ base_procs := [?]lulu_aux.Library_Entry{
     {"print",       _print},
     {"tostring",    _to_string},
     {"tonumber",    _to_number},
+    {"sequence",    _sequence},
+    {"tuple",       _tuple},
+    {"type",        _type},
 }
 
 _assert :: proc(L: ^lulu.State) -> (ret_count: int) {
@@ -125,5 +128,28 @@ _to_number :: proc(L: ^lulu.State) -> (ret_count: int) {
         }
     }
     lulu.push_nil(L)
+    return 1
+}
+
+_sequence :: proc(L: ^lulu.State) -> (ret_count: int) {
+    start := int(lulu_aux.check_number(L, 1))
+    stop  := int(lulu_aux.check_number(L, 2))
+    step  := int(lulu_aux.opt_number(L, index=3, default=1))
+
+    for i := start; i < stop; i += step {
+        lulu.push(L, f64(i))
+        ret_count += 1
+    }
+    return ret_count
+}
+
+_tuple :: proc(L: ^lulu.State) -> (ret_count: int) {
+    return lulu.get_top(L)
+}
+
+_type :: proc(L: ^lulu.State) -> (ret_count: int) {
+    lulu_aux.check_any(L, 1)
+    type_name := lulu_aux.type_name_at(L, 1)
+    lulu.push(L, type_name)
     return 1
 }

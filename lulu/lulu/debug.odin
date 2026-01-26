@@ -186,7 +186,7 @@ disassemble_at :: proc(chunk: ^Chunk, i: Instruction, pc: i32, pad := 0) {
         fmt.printf("% -9i ; ", arg)
 
     case .AsBx:
-        arg = i.u.Bx
+        arg = i.s.Bx
         fmt.printf("% -9i ; ", arg)
     }
 

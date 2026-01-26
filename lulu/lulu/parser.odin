@@ -51,6 +51,19 @@ parser_make :: proc(L: ^State, builder: ^strings.Builder, name: ^Ostring, input:
     return p
 }
 
+@(private="package", disabled=ODIN_DISABLE_ASSERT)
+parser_assert :: proc(p: ^Parser, cond: bool, msg := #caller_expression(cond), args: ..any, loc := #caller_location) {
+    if !cond {
+        file := ostring_to_string(p.lexer.name)
+        line := p.consumed.line
+        col  := p.consumed.col
+
+        here := fmt.tprintf("\n%s:%i:%i", file, line, col)
+        info := fmt.tprintf(msg, ..args)
+        context.assertion_failure_proc(here, info, loc)
+    }
+}
+
 @(private="package")
 program :: proc(L: ^State, builder: ^strings.Builder, name: ^Ostring, input: string) {
     chunk := chunk_new(L, name)
@@ -113,7 +126,7 @@ advance_token :: proc(p: ^Parser) {
 - type: The token type of the lookahead(2) token.
  */
 consume_lookahead2 :: proc(p: ^Parser) -> (type: Token_Type) {
-    assert(p.lookahead2.type == nil)
+    parser_assert(p, p.lookahead2.type == nil)
     next := lexer_scan_token(&p.lexer)
     if next.type == nil {
         error_lookahead(p, "Unexpected token")
@@ -168,13 +181,13 @@ match_token :: proc(p: ^Parser, want: Token_Type) -> (found: bool) {
 - This function does not verify correctness, it is up to the caller to
 expect a proper ending token.
  */
-block_end :: proc(p: ^Parser) -> bool {
+block_continue :: proc(p: ^Parser) -> bool {
     #partial switch p.lookahead.type {
-    case .Else, .Elseif, .End, .EOF: return true
+    case .Else, .Elseif, .End, .EOF: return false
     case:
         break
     }
-    return false
+    return true
 }
 
 /*
@@ -218,6 +231,7 @@ statement :: proc(p: ^Parser, c: ^Compiler)  {
     case .If:         if_statement(p, c)
     case .Local:      local_statement(p, c)
     case .Return:     return_statement(p, c)
+    case .While:      while_loop(p, c)
     case .Identifier: identifier_statement(p, c)
     case:
         parser_error(p, "Expected a statement")
@@ -230,14 +244,11 @@ statement :: proc(p: ^Parser, c: ^Compiler)  {
 ```
 <block> ::= ( <statement> )*
 ```
-
-**Assumptions**
-- We just consumed the `do` token.
  */
 block :: proc(p: ^Parser, c: ^Compiler) {
     curr_block: Block
     compiler_push_block(c, &curr_block)
-    for !block_end(p) {
+    for block_continue(p) {
         statement(p, c)
     }
     compiler_pop_block(c)
@@ -393,7 +404,7 @@ assignment :: proc(p: ^Parser, c: ^Compiler, tail: ^Assign_List, lhs_count: u16)
 ```
  */
 return_statement :: proc(p: ^Parser, c: ^Compiler) {
-    if block_end(p) {
+    if !block_continue(p) {
         compiler_code_return(c, 0, 0)
         return
     }
@@ -408,11 +419,11 @@ return_statement :: proc(p: ^Parser, c: ^Compiler) {
         ret_count := arg_count
         if last.type != .Call {
             last_reg := compiler_push_expr_next(c, &last)
-            assert(first_reg == last_reg - arg_count + 1)
+            parser_assert(p, first_reg == last_reg - arg_count + 1)
         } else {
             ret_count = u16(VARIADIC)
             compiler_discharge_returns(c, &last, ret_count)
-            assert(first_reg == last.reg - arg_count + 1)
+            parser_assert(p, first_reg == last.reg - arg_count + 1)
         }
         compiler_pop_reg(c, first_reg, arg_count)
         compiler_code_return(c, first_reg, ret_count)
@@ -427,28 +438,22 @@ return_statement :: proc(p: ^Parser, c: ^Compiler) {
 ```
  */
 if_statement :: proc(p: ^Parser, c: ^Compiler) {
-    // Absolute pc of `.Jump_If_False`.
-    then_pc := then_block(p, c)
+    // Absolute pc of `.Jump_If_False` and the absolute target pc for
+    // `.Jump_If_False` when 'if' fails.
+    then_jump, then_target := then_block(p, c)
 
-    // Absolute target pc for `.Jump_If_False` when 'if' fails.
-    then_target := c.pc - 1
-
-    // Absolute pc of `.Jump`, if any 'else' block (even implicit) exists.
+    // Jump list. Absolute pc of the current `.Jump`, if any 'else' block
+    // (even implicit) exists.
     else_list := NO_JUMP
+
     for match_token(p, .Elseif) {
-        // All 'elseif' blocks share the same 'else' jump (even implicit).
+        // 'if' and all its sister 'elseif' blocks share the same 'else' jump.
         compiler_add_jump_list(c, &else_list)
 
-        // Absolute target pc for `.Jump_If_False` when 'elseif' fails.
-        elseif_pc := then_block(p, c)
-
-        // Current 'then' jump will go to the new 'else' jump upon
-        // failure. This ensures that we try 'elseif' blocks sequentially.
-        compiler_patch_jump(c, then_pc, else_list)
-
-        // Next jump to be discharged.
-        then_pc       = elseif_pc
-        then_target   = c.pc - 1
+        // Current 'then' jump will go to the new 'else' jump upon failure.
+        // This ensures that we try 'elseif' blocks sequentially.
+        compiler_patch_jump(c, then_jump, else_list)
+        then_jump, then_target = then_block(p, c)
     }
 
     if match_token(p, .Else) {
@@ -456,8 +461,8 @@ if_statement :: proc(p: ^Parser, c: ^Compiler) {
         block(p, c)
     }
 
-    expect_token(p, .End)
-    compiler_patch_jump(c, then_pc, then_target)
+    expect_token(p, .End, "to close 'if' statement")
+    compiler_patch_jump(c, then_jump, then_target)
     compiler_patch_jump_list(c, else_list, c.pc - 1)
 }
 
@@ -467,16 +472,52 @@ if_statement :: proc(p: ^Parser, c: ^Compiler) {
 <then_block> ::= ( 'if' | 'elseif' ) <expression> 'then' <block>
 ```
  */
-then_block :: proc(p: ^Parser, c: ^Compiler) -> (then_pc: i32) {
+then_block :: proc(p: ^Parser, c: ^Compiler) -> (jump, target: i32) {
     cond := expression(p, c)
-    expect_token(p, .Then, "after <condition>")
+    expect_token(p, .Then, "after 'if' condition")
 
-    reg := compiler_push_expr_any(c, &cond)
-    compiler_pop_reg(c, reg)
+    // Conditions that are known to always be true can be omitted so that
+    // the block is executed unconditionally.
+    if expr_is_truthy(&cond) {
+        jump = NO_JUMP
+    } else {
+        reg := compiler_push_expr_any(c, &cond)
+        compiler_pop_reg(c, reg)
+        jump = compiler_code_jump(c, .Jump_If, reg)
+    }
 
-    then_pc = compiler_code_jump(c, .Jump_If, reg)
     block(p, c)
-    return then_pc
+    return jump, c.pc - 1
+}
+
+/*
+**Grammar**
+```
+<while_loop> ::= 'while' <expression> 'do' <block> 'end'
+```
+ */
+while_loop :: proc(p: ^Parser, c: ^Compiler) {
+    cond := expression(p, c)
+    expect_token(p, .Do, "after 'while' condition")
+
+    // Absolute pc of the `.Jump_If`, or the first block pc if always true.
+    loop_start := c.pc
+    jump_false := NO_JUMP
+    if !expr_is_truthy(&cond) {
+        reg := compiler_push_expr_any(c, &cond)
+        compiler_pop_reg(c, reg)
+        jump_false = compiler_code_jump(c, .Jump_If, reg)
+    }
+
+    block(p, c)
+    expect_token(p, .End, "to close 'while' loop")
+
+    jump_true := compiler_code_jump(c, .Jump, 0)
+
+    // Subtract 1 because negative offsets need to account for the fact that
+    // the VM always does ip += 1.
+    compiler_patch_jump(c, jump_true, loop_start - 1)
+    compiler_patch_jump(c, jump_false, c.pc - 1)
 }
 
 /*
@@ -567,7 +608,7 @@ prefix :: proc(p: ^Parser, c: ^Compiler) -> (e: Expr) {
 
 string_expression :: proc(p: ^Parser, c: ^Compiler) -> Expr {
     VALID_STRINGS :: bit_set[Token_Type]{.String, .Identifier}
-    assert(p.consumed.type in VALID_STRINGS)
+    parser_assert(p, p.consumed.type in VALID_STRINGS)
 
     index := compiler_add_string(c, p.consumed.string)
     return expr_make_index(.Constant, index)
@@ -593,7 +634,7 @@ string_expression :: proc(p: ^Parser, c: ^Compiler) -> Expr {
 a function call expression.
  */
 variable_expression :: proc(p: ^Parser, c: ^Compiler) -> (var: Expr) {
-    assert(p.consumed.type == .Identifier)
+    parser_assert(p, p.consumed.type == .Identifier)
 
     name := p.consumed.string
     reg, scope := compiler_resolve_local(c, name)

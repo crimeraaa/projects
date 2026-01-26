@@ -400,6 +400,11 @@ vm_execute :: proc(L: ^State, ret_expect: int) {
             _protect(L, pc)
             run_call(L, RA, arg_count, ret_count)
 
+            // In case varargs pushed more than our current stack frame.
+            if len(L.registers) > len(R) {
+                R = L.registers
+            }
+
         case .Jump:
             offset := int(i.s.Bx)
             ip = mem.ptr_offset(ip, offset)

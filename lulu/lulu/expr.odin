@@ -110,3 +110,13 @@ expr_is_literal :: #force_inline proc(e: ^Expr) -> bool {
     LITERAL_TYPES :: bit_set[Expr_Type]{.Nil, .Boolean, .Number, .Constant}
     return e.type in LITERAL_TYPES
 }
+
+expr_is_truthy :: #force_inline proc(e: ^Expr) -> bool {
+    #partial switch e.type {
+    case .Boolean:           return e.boolean
+    case .Number, .Constant: return true
+    case:
+        break
+    }
+    return false
+}

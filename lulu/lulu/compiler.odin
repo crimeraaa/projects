@@ -78,15 +78,7 @@ compiler_end :: proc(c: ^Compiler) {
 
 @(disabled=ODIN_DISABLE_ASSERT)
 compiler_assert :: proc(c: ^Compiler, cond: bool, msg := #caller_expression(cond), args: ..any, loc := #caller_location) {
-    if !cond {
-        file := chunk_name(c.chunk)
-        line := c.parser.consumed.line
-        col  := c.parser.consumed.col
-
-        here := fmt.tprintf("\n%s:%i:%i", file, line, col)
-        info := fmt.tprintf(msg, ..args)
-        context.assertion_failure_proc(here, info, loc)
-    }
+    parser_assert(c.parser, cond, msg, ..args, loc=loc)
 }
 
 /*
@@ -152,12 +144,12 @@ compiler_define_locals :: proc(c: ^Compiler, count: u16) {
         compiler_assert(c, local.name != nil)
 
         compiler_assert(c, local.birth_pc == INVALID_PC,
-            "locals[%i]: Expected pc(%i) but got pc(%i)",
-            local_index, INVALID_PC, local.birth_pc)
+            "Got locals[%i].pc(%i)",
+            local_index, local.birth_pc)
 
         compiler_assert(c, local.death_pc == INVALID_PC,
-            "locals[%i]: Expected pc(%i) but got pc(%i)",
-            local_index, INVALID_PC, local.death_pc)
+            "Got locals[%i].pc(%i)",
+            local_index, local.death_pc)
 
         local.birth_pc = birth_pc
     }
@@ -171,7 +163,7 @@ compiler_push_block :: proc(c: ^Compiler, b: ^Block) {
 }
 
 compiler_pop_block :: proc(c: ^Compiler) {
-    compiler_assert(c, c.block != nil, "\nNo block to pop, have c.active_count(%i)", c.active_count)
+    compiler_assert(c, c.block != nil, "No block to pop with c.active_count(%i)", c.active_count)
 
     death_pc   := c.pc
     prev_count := c.block.plcount
@@ -180,13 +172,10 @@ compiler_pop_block :: proc(c: ^Compiler) {
     for local_index in c.active_locals[prev_count:c.active_count] {
         local := &c.chunk.locals[local_index]
         compiler_assert(c, local.name != nil)
-        compiler_assert(c, local.birth_pc != INVALID_PC,
-            "locals[%i]: Expected pc != %i but got pc(%i)",
-            local_index, INVALID_PC, local.birth_pc)
-
+        compiler_assert(c, local.birth_pc != INVALID_PC)
         compiler_assert(c, local.death_pc == INVALID_PC,
-            "locals[%i]: Expected pc(%i) but got pc(%i)",
-            local_index, INVALID_PC, local.death_pc)
+            "Got locals[%i].pc(%i)",
+            local_index, local.death_pc)
 
         local.death_pc = death_pc
     }
@@ -250,12 +239,11 @@ compiler_code_ABx :: proc(c: ^Compiler, op: Opcode, A: u16, Bx: u32) -> (pc: i32
 }
 
 compiler_code_AsBx :: proc(c: ^Compiler, op: Opcode, A: u16, sBx: i32) -> (pc: i32) {
-    compiler_assert(c, OP_INFO[op].mode == .AsBx, "expected AsBx, got %v", OP_INFO[op].mode)
+    compiler_assert(c, OP_INFO[op].mode == .AsBx)
     compiler_assert(c, OP_INFO[op].b != nil)
     compiler_assert(c, OP_INFO[op].c == nil)
 
     i := Instruction{s={op=op, A=A, Bx=sBx}}
-    fmt.println(c.pc, i.s)
     return _add_instruction(c, i)
 }
 
@@ -290,14 +278,17 @@ compiler_add_jump_list :: proc(c: ^Compiler, list: ^i32) -> (next: i32) {
 }
 
 compiler_patch_jump :: proc(c: ^Compiler, jump, target: i32) {
+    if jump == NO_JUMP {
+        return
+    }
+
     prev := _patch_jump(c, jump, target)
     // `.Jump_If_False` can never be a jump list.
     compiler_assert(c, prev == NO_JUMP)
 }
 
 compiler_patch_jump_list :: proc(c: ^Compiler, list, target: i32) {
-    jump := list
-    for jump != NO_JUMP {
+    for jump := list; jump != NO_JUMP; {
         prev := _patch_jump(c, jump, target)
         jump = prev
     }
@@ -306,7 +297,7 @@ compiler_patch_jump_list :: proc(c: ^Compiler, list, target: i32) {
 @(private="file")
 _patch_jump :: proc(c: ^Compiler, jump, target: i32) -> (prev: i32) {
     offset := target - jump
-    if offset > MAX_sBx {
+    if offset < MIN_sBx || offset > MAX_sBx {
         parser_error(c.parser, "jump too large")
     }
     ip := &c.chunk.code[jump]
@@ -576,7 +567,8 @@ _discharge_expr_to_reg :: proc(c: ^Compiler, e: ^Expr, reg: u16, loc := #caller_
 
     case .Number:
         // Can we load it as a positive integer immediately from Bx?
-        if n := e.number; 0.0 <= n && n <= MAX_IMM_Bx && n == math.floor(n) {
+        n := e.number
+        if 0.0 <= n && n <= MAX_IMM_Bx && n == math.floor(n) {
             imm := u32(n)
             compiler_code_ABx(c, .Load_Imm, reg, imm)
         } // Otherwise, we need to load this number in a dedicated instruction.
@@ -679,9 +671,24 @@ register allocation for its result by the caller.
  */
 compiler_code_unary :: proc(c: ^Compiler, op: Opcode, e: ^Expr) {
     // Constant folding to avoid unnecessary work.
-    if op == .Unm && e.type == .Number {
-        e.number = number_unm(e.number)
-        return
+    #partial switch e.type {
+    case .Nil:
+        if op == .Not {
+            e^ = expr_make_boolean(true)
+            return
+        }
+    case .Boolean:
+        if op == .Not {
+            e.boolean = !e.boolean
+            return
+        }
+    case .Number:
+        if op == .Unm {
+            e.number = number_unm(e.number)
+            return
+        }
+    case:
+        break
     }
 
     rb := compiler_push_expr_any(c, e)
