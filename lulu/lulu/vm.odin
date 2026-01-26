@@ -191,9 +191,9 @@ Op :: #type proc "contextless" (a, b: f64) -> f64
 Works only for register-immediate encodings.
  */
 @(private="file")
-_arith_imm :: proc(L: ^State, pc: i32, ra: ^Value, op: Op, rb: ^Value, imm: u16) {
+_arith_imm :: proc(L: ^State, pc: i32, ra: ^Value, procedure: Op, rb: ^Value, imm: u16) {
     if left, ok := value_to_number(rb^); ok {
-        ra^ = value_make(op(left, f64(imm)))
+        ra^ = value_make(procedure(left, f64(imm)))
     } else {
         _protect(L, pc)
         debug_arith_error(L, rb, rb)
@@ -204,11 +204,11 @@ _arith_imm :: proc(L: ^State, pc: i32, ra: ^Value, op: Op, rb: ^Value, imm: u16)
 Works for both register-register and register-constant encodings.
 */
 @(private="file")
-_arith :: proc(L: ^State, pc: i32, ra: ^Value, op: Op, rb, rc: ^Value) {
+_arith :: proc(L: ^State, pc: i32, ra: ^Value, procedure: Op, rb, rc: ^Value) {
     try: {
         left   := value_to_number(rb^) or_break try
         right  := value_to_number(rc^) or_break try
-        ra^     = value_make(op(left, right))
+        ra^     = value_make(procedure(left, right))
         return
     }
     _protect(L, pc)
@@ -288,15 +288,15 @@ vm_execute :: proc(L: ^State, ret_expect: int) {
         ip = &ip[1] // ip++
         _print_stack(chunk, i, pc, R)
 
-        a  := i.A
-        ra := &R[a]
+        A  := i.A
+        RA := &R[A]
         op := i.op
         switch op {
-        case .Move:       ra^ = R[i.B]
-        case .Load_Nil:   mem.zero_slice(R[a:i.B])
-        case .Load_Bool:  ra^ = value_make(bool(i.B))
-        case .Load_Imm:   ra^ = value_make(f64(i.u.Bx))
-        case .Load_Const: ra^ = K[i.u.Bx]
+        case .Move:       RA^ = R[i.B]
+        case .Load_Nil:   mem.zero_slice(R[A:i.B])
+        case .Load_Bool:  RA^ = value_make(bool(i.B))
+        case .Load_Imm:   RA^ = value_make(f64(i.u.Bx))
+        case .Load_Const: RA^ = K[i.u.Bx]
 
         case .Get_Global:
             k := K[i.u.Bx]
@@ -305,70 +305,70 @@ vm_execute :: proc(L: ^State, ret_expect: int) {
                 what := value_get_string(k)
                 debug_runtime_error(L, "Attempt to read undefined global '%s'", what)
             } else {
-                ra^ = v;
+                RA^ = v;
             }
 
         case .Set_Global:
             _protect(L, pc)
-            vm_set_table(L, _G, K[i.u.Bx], ra^)
+            vm_set_table(L, _G, K[i.u.Bx], RA^)
 
         case .New_Table:
             hash_count  := 1 << (i.B - 1) if i.B != 0 else 0
             array_count := 1 << (i.C - 1) if i.C != 0 else 0
             t := table_new(L, hash_count=hash_count, array_count=array_count)
-            ra^ = value_make(t)
+            RA^ = value_make(t)
 
-        case .Get_Table:        _get_table(L, pc, ra, &R[i.B], R[i.C])
-        case .Get_Field:        _get_table(L, pc, ra, &R[i.B], K[i.C])
-        case .Set_Table:        _set_table(L, pc, ra, R[i.B], R[i.C])
-        case .Set_Table_Const:  _set_table(L, pc, ra, R[i.B], K[i.C])
-        case .Set_Field:        _set_table(L, pc, ra, K[i.B], R[i.C])
-        case .Set_Field_Const:  _set_table(L, pc, ra, K[i.B], K[i.C])
+        case .Get_Table:        _get_table(L, pc, RA, &R[i.B], R[i.C])
+        case .Get_Field:        _get_table(L, pc, RA, &R[i.B], K[i.C])
+        case .Set_Table:        _set_table(L, pc, RA, R[i.B], R[i.C])
+        case .Set_Table_Const:  _set_table(L, pc, RA, R[i.B], K[i.C])
+        case .Set_Field:        _set_table(L, pc, RA, K[i.B], R[i.C])
+        case .Set_Field_Const:  _set_table(L, pc, RA, K[i.B], K[i.C])
 
         // Unary
         case .Len:
             #partial switch rb := &R[i.B]; value_type(rb^) {
             case .String:
                 n  := value_get_ostring(rb^).len
-                ra^ = value_make(f64(n))
+                RA^ = value_make(f64(n))
 
             case .Table:
                 n  := table_len(value_get_table(rb^))
-                ra^ = value_make(f64(n))
+                RA^ = value_make(f64(n))
             case:
                 _protect(L, pc)
                 debug_type_error(L, "get length of", rb)
             }
 
-        case .Not: ra^ = value_make(value_is_falsy(R[i.B]))
+        case .Not: RA^ = value_make(value_is_falsy(R[i.B]))
         case .Unm:
             rb := &R[i.B]
             if n, ok := value_to_number(rb^); ok {
-                ra^ = value_make(number_unm(n))
+                RA^ = value_make(number_unm(n))
             } else {
                 _protect(L, pc)
                 debug_arith_error(L, rb, rb)
             }
 
         // Arithmetic (register-immediate)
-        case .Add_Imm: _arith_imm(L, pc, ra, number_add, &R[i.B], i.C)
-        case .Sub_Imm: _arith_imm(L, pc, ra, number_sub, &R[i.B], i.C)
+        case .Add_Imm: _arith_imm(L, pc, RA, number_add, &R[i.B], i.C)
+        case .Sub_Imm: _arith_imm(L, pc, RA, number_sub, &R[i.B], i.C)
 
         // Arithmetic (register-constant)
-        case .Add_Const: _arith(L, pc, ra, number_add, &R[i.B], &K[i.C])
-        case .Sub_Const: _arith(L, pc, ra, number_sub, &R[i.B], &K[i.C])
-        case .Mul_Const: _arith(L, pc, ra, number_mul, &R[i.B], &K[i.C])
-        case .Div_Const: _arith(L, pc, ra, number_div, &R[i.B], &K[i.C])
-        case .Mod_Const: _arith(L, pc, ra, number_mod, &R[i.B], &K[i.C])
-        case .Pow_Const: _arith(L, pc, ra, number_pow, &R[i.B], &K[i.C])
+        case .Add_Const: _arith(L, pc, RA, number_add, &R[i.B], &K[i.C])
+        case .Sub_Const: _arith(L, pc, RA, number_sub, &R[i.B], &K[i.C])
+        case .Mul_Const: _arith(L, pc, RA, number_mul, &R[i.B], &K[i.C])
+        case .Div_Const: _arith(L, pc, RA, number_div, &R[i.B], &K[i.C])
+        case .Mod_Const: _arith(L, pc, RA, number_mod, &R[i.B], &K[i.C])
+        case .Pow_Const: _arith(L, pc, RA, number_pow, &R[i.B], &K[i.C])
 
         // Arithmetic (register-register)
-        case .Add: _arith(L, pc, ra, number_add, &R[i.B], &R[i.C])
-        case .Sub: _arith(L, pc, ra, number_sub, &R[i.B], &R[i.C])
-        case .Mul: _arith(L, pc, ra, number_mul, &R[i.B], &R[i.C])
-        case .Div: _arith(L, pc, ra, number_div, &R[i.B], &R[i.C])
-        case .Mod: _arith(L, pc, ra, number_mod, &R[i.B], &R[i.C])
-        case .Pow: _arith(L, pc, ra, number_pow, &R[i.B], &R[i.C])
+        case .Add: _arith(L, pc, RA, number_add, &R[i.B], &R[i.C])
+        case .Sub: _arith(L, pc, RA, number_sub, &R[i.B], &R[i.C])
+        case .Mul: _arith(L, pc, RA, number_mul, &R[i.B], &R[i.C])
+        case .Div: _arith(L, pc, RA, number_div, &R[i.B], &R[i.C])
+        case .Mod: _arith(L, pc, RA, number_mod, &R[i.B], &R[i.C])
+        case .Pow: _arith(L, pc, RA, number_pow, &R[i.B], &R[i.C])
 
         // Comparison
         // case .Eq..=.Geq:
@@ -377,11 +377,11 @@ vm_execute :: proc(L: ^State, ret_expect: int) {
         case .Concat:
             args := R[i.B:i.C]
             _protect(L, pc)
-            vm_concat(L, ra, args)
+            vm_concat(L, RA, args)
 
         // Control flow
         case .Call:
-            arg_first := int(a)   + 1
+            arg_first := int(A)   + 1
             arg_count := int(i.B) + VARIADIC
             ret_count := int(i.C) + VARIADIC
 
@@ -398,20 +398,20 @@ vm_execute :: proc(L: ^State, ret_expect: int) {
                 arg_count = get_top(L) - arg_first
             }
             _protect(L, pc)
-            run_call(L, ra, arg_count, ret_count)
+            run_call(L, RA, arg_count, ret_count)
 
         case .Jump:
             offset := int(i.s.Bx)
             ip = mem.ptr_offset(ip, offset)
 
-        case .Jump_If_False:
-            if value_is_falsy(ra^) {
+        case .Jump_If:
+            if value_is_falsy(RA^) {
                 offset := int(i.s.Bx)
                 ip = mem.ptr_offset(ip, offset)
             }
 
         case .Return:
-            ret_first := int(a)
+            ret_first := int(A)
             ret_count := int(i.B) + VARIADIC
             if ret_count == VARIADIC {
                 ret_count = get_top(L) - ret_first

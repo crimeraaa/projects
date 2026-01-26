@@ -247,65 +247,6 @@ block :: proc(p: ^Parser, c: ^Compiler) {
 /*
 **Grammar**
 ```
-<variable_expression> ::= <lvalue>
-    | <variable_call>
-
-<variable_call> ::= <lvalue> <function_call>
-
-<lvalue> ::= <identifier>
-    | <lvalue> '.' <identifier>
-    | <lvalue> '[' <expression> ']'
-    | <lvalue> ':' <identifier>
-```
-
-**Assumptions**
-- We just consumed the `<identifier>` token.
-- The `<identifier>` tokoen is potentially the start of an index expression or
-a function call expression.
- */
-variable_expression :: proc(p: ^Parser, c: ^Compiler) -> (var: Expr) {
-    assert(p.consumed.type == .Identifier)
-
-    name := p.consumed.string
-    reg, scope := compiler_resolve_local(c, name)
-    if scope == SCOPE_GLOBAL {
-        var = expr_make_index(.Global, compiler_add_string(c, name))
-    } else {
-        var = expr_make_reg(.Local, reg)
-    }
-
-    for {
-        #partial switch peek_lookahead(p) {
-        case .Paren_Open, .String, .Curly_Open:
-            function_call(p, c, &var)
-
-        case .Period:
-            advance_token(p)
-            expect_token(p, .Identifier)
-            key := string_expression(p, c)
-            compiler_get_table(c, &var, &key)
-
-        case .Bracket_Open:
-            advance_token(p)
-            key := expression(p, c)
-            expect_token(p, .Bracket_Close)
-            compiler_get_table(c, &var, &key)
-
-        case .Colon:
-            advance_token(p)
-            expect_token(p, .Identifier)
-            parser_error(p, "'self' syntax not yet supported")
-
-        case:
-            return var
-        }
-    }
-    unreachable()
-}
-
-/*
-**Grammar**
-```
 <local_statement> ::= 'local' <identifier_list> ( '=' <expression_list> )?
 <identifier_list> ::= <identifier> ( ',' <identifier> )*
 ```
@@ -493,12 +434,10 @@ if_statement :: proc(p: ^Parser, c: ^Compiler) {
     then_target := c.pc - 1
 
     // Absolute pc of `.Jump`, if any 'else' block (even implicit) exists.
-    else_list := i32(INVALID_PC)
-
-    elseif_count := 0
+    else_list := NO_JUMP
     for match_token(p, .Elseif) {
         // All 'elseif' blocks share the same 'else' jump (even implicit).
-        else_list = compiler_append_jump(c, else_list)
+        compiler_add_jump_list(c, &else_list)
 
         // Absolute target pc for `.Jump_If_False` when 'elseif' fails.
         elseif_pc := then_block(p, c)
@@ -510,16 +449,10 @@ if_statement :: proc(p: ^Parser, c: ^Compiler) {
         // Next jump to be discharged.
         then_pc       = elseif_pc
         then_target   = c.pc - 1
-        elseif_count += 1
-    }
-
-    // We require an explicit/implicit 'else' jump?
-    if check_token(p, .Else) || elseif_count > 0 {
-        else_list   = compiler_append_jump(c, else_list)
-        then_target = else_list
     }
 
     if match_token(p, .Else) {
+        then_target = compiler_add_jump_list(c, &else_list)
         block(p, c)
     }
 
@@ -541,10 +474,164 @@ then_block :: proc(p: ^Parser, c: ^Compiler) -> (then_pc: i32) {
     reg := compiler_push_expr_any(c, &cond)
     compiler_pop_reg(c, reg)
 
-    then_pc = compiler_code_jump(c, .Jump_If_False, reg)
+    then_pc = compiler_code_jump(c, .Jump_If, reg)
     block(p, c)
     return then_pc
 }
+
+/*
+Parse a comma-separated list of expressions. All expressions, except the
+last (and possible only) are pushed to the next free register.
+
+**Grammar**
+```
+<expression_list> ::= <expression> ( ',' <expression> )*
+```
+
+**Returns**
+- last: The last, unpushed expression.
+- count: How many expressions were parsed in total.
+ */
+expression_list :: proc(p: ^Parser, c: ^Compiler) -> (last: Expr, count: u16) {
+    for {
+        expr  := expression(p, c)
+        count += 1
+        if !match_token(p, .Comma) {
+            return expr, count
+        }
+        compiler_push_expr_next(c, &expr)
+    }
+    return {}, count
+}
+
+/*
+Parse an expression using a Depth-First-Search (DFS). The 'parse tree' is
+constructed and traversed entirely on the native stack. We do not ever work
+with a complete parse tree- nodes are discarded along with their associated
+stack frames.
+
+**Parameters**
+- prec: Parent caller expression precedence. Useful to enforce operator
+precedence and left/right associativity.
+
+**Returns**
+- e: An expression with a pending register for the result.
+
+**Assumptions**
+- Register allocation of `e` is the caller's responsibility.
+ */
+expression :: proc(p: ^Parser, c: ^Compiler, prec: Precedence = nil) -> Expr {
+    advance_token(p)
+    left := prefix(p, c)
+    infix(p, c, &left, prec)
+    return left
+}
+
+// PREFIX EXPRESSIONS ====================================================== {{{
+
+
+prefix :: proc(p: ^Parser, c: ^Compiler) -> (e: Expr) {
+    // The 3 unary expressions are parsed in the exact same ways.
+    unary :: proc(p: ^Parser, c: ^Compiler, op: Opcode) -> (e: Expr) {
+        e = expression(p, c, .Unary)
+        compiler_code_unary(c, op, &e)
+        return e
+    }
+
+    #partial switch peek_consumed(p) {
+    // Grouping
+    case .Paren_Open:
+        e = expression(p, c)
+        expect_token(p, .Paren_Close, "after expression")
+        return e
+
+    case .Curly_Open: return constructor(p, c)
+
+    // Unary
+    case .Not:      return unary(p, c, .Not)
+    case .Minus:    return unary(p, c, .Unm)
+    case .Sharp:    return unary(p, c, .Len)
+
+    // Literal values
+    case .Nil:      return expr_make_nil()
+    case .False:    return expr_make_boolean(false)
+    case .True:     return expr_make_boolean(true)
+    case .Number:   return expr_make_number(p.consumed.number)
+    case .String:   return string_expression(p, c)
+
+    case .Identifier: return variable_expression(p, c)
+    case:
+        parser_error(p, "Expected an expression")
+    }
+}
+
+string_expression :: proc(p: ^Parser, c: ^Compiler) -> Expr {
+    VALID_STRINGS :: bit_set[Token_Type]{.String, .Identifier}
+    assert(p.consumed.type in VALID_STRINGS)
+
+    index := compiler_add_string(c, p.consumed.string)
+    return expr_make_index(.Constant, index)
+}
+
+/*
+**Grammar**
+```
+<variable_expression> ::= <lvalue>
+    | <variable_call>
+
+<variable_call> ::= <lvalue> <function_call>
+
+<lvalue> ::= <identifier>
+    | <lvalue> '.' <identifier>
+    | <lvalue> '[' <expression> ']'
+    | <lvalue> ':' <identifier>
+```
+
+**Assumptions**
+- We just consumed the `<identifier>` token.
+- The `<identifier>` tokoen is potentially the start of an index expression or
+a function call expression.
+ */
+variable_expression :: proc(p: ^Parser, c: ^Compiler) -> (var: Expr) {
+    assert(p.consumed.type == .Identifier)
+
+    name := p.consumed.string
+    reg, scope := compiler_resolve_local(c, name)
+    if scope == SCOPE_GLOBAL {
+        var = expr_make_index(.Global, compiler_add_string(c, name))
+    } else {
+        var = expr_make_reg(.Local, reg)
+    }
+
+    for {
+        #partial switch peek_lookahead(p) {
+        case .Paren_Open, .String, .Curly_Open:
+            function_call(p, c, &var)
+
+        case .Period:
+            advance_token(p)
+            expect_token(p, .Identifier)
+            key := string_expression(p, c)
+            compiler_get_table(c, &var, &key)
+
+        case .Bracket_Open:
+            advance_token(p)
+            key := expression(p, c)
+            expect_token(p, .Bracket_Close)
+            compiler_get_table(c, &var, &key)
+
+        case .Colon:
+            advance_token(p)
+            expect_token(p, .Identifier)
+            parser_error(p, "'self' syntax not yet supported")
+
+        case:
+            return var
+        }
+    }
+    unreachable()
+}
+
 
 /*
 **Grammar**
@@ -605,32 +692,6 @@ function_call :: proc(p: ^Parser, c: ^Compiler, func: ^Expr) {
     ret_count -= u16(VARIADIC)
     pc   := compiler_code_ABC(c, .Call, call_reg, arg_count, ret_count)
     func^ = expr_make_pc(.Call, pc)
-}
-
-
-/*
-Parse a comma-separated list of expressions. All expressions, except the
-last (and possible only) are pushed to the next free register.
-
-**Grammar**
-```
-<expression_list> ::= <expression> ( ',' <expression> )*
-```
-
-**Returns**
-- last: The last, unpushed expression.
-- count: How many expressions were parsed in total.
- */
-expression_list :: proc(p: ^Parser, c: ^Compiler) -> (last: Expr, count: u16) {
-    for {
-        expr  := expression(p, c)
-        count += 1
-        if !match_token(p, .Comma) {
-            return expr, count
-        }
-        compiler_push_expr_next(c, &expr)
-    }
-    return {}, count
 }
 
 Constructor :: struct {
@@ -738,73 +799,9 @@ _set_array :: proc(p: ^Parser, c: ^Compiler, ct: ^Constructor) {
 }
 
 
-/*
-Parse an expression using a Depth-First-Search (DFS). The 'parse tree' is
-constructed and traversed entirely on the native stack. We do not ever work
-with a complete parse tree- nodes are discarded along with their associated
-stack frames.
 
-**Parameters**
-- prec: Parent caller expression precedence. Useful to enforce operator
-precedence and left/right associativity.
-
-**Returns**
-- e: An expression with a pending register for the result.
-
-**Assumptions**
-- Register allocation of `e` is the caller's responsibility.
- */
-expression :: proc(p: ^Parser, c: ^Compiler, prec: Precedence = nil) -> Expr {
-    advance_token(p)
-    left := prefix(p, c)
-    infix(p, c, &left, prec)
-    return left
-}
-
-prefix :: proc(p: ^Parser, c: ^Compiler) -> (e: Expr) {
-    // The 3 unary expressions are parsed in the exact same ways.
-    unary :: proc(p: ^Parser, c: ^Compiler, op: Opcode) -> (e: Expr) {
-        e = expression(p, c, .Unary)
-        compiler_code_unary(c, op, &e)
-        return e
-    }
-
-    #partial switch peek_consumed(p) {
-    // Grouping
-    case .Paren_Open:
-        e = expression(p, c)
-        expect_token(p, .Paren_Close, "after expression")
-        return e
-
-    case .Curly_Open: return constructor(p, c)
-
-    // Unary
-    case .Not:      return unary(p, c, .Not)
-    case .Minus:    return unary(p, c, .Unm)
-    case .Sharp:    return unary(p, c, .Len)
-
-    // Literal values
-    case .Nil:      return expr_make_nil()
-    case .False:    return expr_make_boolean(false)
-    case .True:     return expr_make_boolean(true)
-    case .Number:   return expr_make_number(p.consumed.number)
-    case .String:   return string_expression(p, c)
-
-    case .Identifier: return variable_expression(p, c)
-    case:
-        parser_error(p, "Expected an expression")
-    }
-}
-
-string_expression :: proc(p: ^Parser, c: ^Compiler) -> Expr {
-    VALID_STRINGS :: bit_set[Token_Type]{.String, .Identifier}
-    assert(p.consumed.type in VALID_STRINGS)
-
-    index := compiler_add_string(c, p.consumed.string)
-    return expr_make_index(.Constant, index)
-}
-
-// INFIX EXPRESSIONS
+// === }}} =====================================================================
+// === INFIX EXPRESSIONS =================================================== {{{
 
 
 infix :: proc(p: ^Parser, c: ^Compiler, left: ^Expr, prec: Precedence = nil) {
@@ -869,3 +866,5 @@ _concat :: proc(p: ^Parser, c: ^Compiler, left: ^Expr, prec: Precedence) {
     right := expression(p, c, prec)
     compiler_code_concat(c, left, &right)
 }
+
+// === }}} =====================================================================

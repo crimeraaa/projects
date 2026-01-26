@@ -51,13 +51,13 @@ Pow,        //  A B C   | R[A] := R[B] ^ R[C]
 // Leq,        //  A B C
 // Geq,        //  A B C
 
-Concat,     //  A B C   | R[A] := concat R[i] for B <= i < C
+Concat,     //  A B C   | R[A] := concat( R[B:C] )
 
 // Control Flow
-Call,           //  A B C   | R[A : A+C-1]:= R[A]( R[A+1 : A+B-1] ) ; (*) See note.
-Jump,           //    sBx   | ip += sBx
-Jump_If_False,  //  A sBx   | ip += sBx if not R[A] else 1 ; (*) See note.
-Return,         //  A B     | return R[A:A+B-1] ; (*) See note.
+Call,       //  A B C   | R[A:A+C-1] := R[A]( R[A+1:A+B-1] ) ; (*) See note.
+Jump,       //    sBx   | ip += sBx
+Jump_If,    //  A sBx   | ip += sBx if not R[A] else 1 ; (*) See note.
+Return,     //  A B     | return R[A:A+B-1] ; (*) See note.
 }
 
 /*
@@ -74,7 +74,7 @@ A sBx   |               sBx(18)              |      A(8)     |    Op(6)   |
 
 Unlike Lua 5.1, we do not, for the most part, make use of RK registers in
 order to simplify instruction decoding. So we follow Lua 5.4 and 5.5 in
-having dedicated instructions for woking with various operand combinations.
+having dedicated instructions for working with various operand combinations.
 
 Operand B will never function as an RK.
 Operand C will only function as RK in table manipulation instructions.
@@ -87,9 +87,9 @@ Operand C will only function as RK in table manipulation instructions.
     - When decoding, we first treat the operand as a signed integer and then
     subtract 1 (or add `VARIADIC`) to get the intended count.
 
-(*) .Jump:
-    - the `ip += 1` business is assuming that the next instruction is an
-    unconditional jump or part of an 'else' block , so we want to skip it.
+(*) .Jump_If:
+    - the `ip += 1` business is assuming that the next instruction is something
+    we want to skip, e.g. an unconditional `.Jump`.
  */
 Instruction :: struct #raw_union {
     using base: Instruction_ABC,
@@ -187,10 +187,10 @@ OP_INFO := [Opcode]Op_Info{
     .Concat     = {mode=.ABC, a=true, b=.Reg, c=.Reg},
 
     // Control flow
-    .Call           = {mode=.ABC,   a=true,  b=.Imm, c=.Imm},
-    .Jump           = {mode=.AsBx,  a=false, b=.Imm},
-    .Jump_If_False  = {mode=.AsBx,  a=false, b=.Imm},
-    .Return         = {mode=.ABC,   a=false, b=.Imm},
+    .Call       = {mode=.ABC,   a=true,  b=.Imm, c=.Imm},
+    .Jump       = {mode=.AsBx,  a=false, b=.Imm},
+    .Jump_If    = {mode=.AsBx,  a=false, b=.Imm},
+    .Return     = {mode=.ABC,   a=false, b=.Imm},
 }
 
 instruction_eq :: proc(i1, i2: Instruction) -> bool {

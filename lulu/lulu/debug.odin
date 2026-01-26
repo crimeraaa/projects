@@ -308,7 +308,7 @@ disassemble_at :: proc(chunk: ^Chunk, i: Instruction, pc: i32, pad := 0) {
         offset := i.s.Bx
         fmt.printf("goto .code[%i]", pc + 1 + offset)
 
-    case .Jump_If_False:
+    case .Jump_If:
         offset := i.s.Bx
         skip   := pc + 1
         target := skip + offset
@@ -428,8 +428,8 @@ _symbolic_execute :: proc(chunk: ^Chunk, reg, error_pc: int) -> (i: Instruction)
         "\nExpected %v but got %v",
         NEUTRAL_RETURN.base, chunk.code[prev_pc].base)
 
-    // TODO(2026-01-03): Verify bytecode correctness? Execute jumps?
-    for pc in 0..<error_pc {
+    // TODO(2026-01-03): Verify bytecode correctness?
+    for pc := 0; pc < error_pc; pc += 1 {
         i = chunk.code[pc]
         op := i.op
 
@@ -437,6 +437,15 @@ _symbolic_execute :: proc(chunk: ^Chunk, reg, error_pc: int) -> (i: Instruction)
         if OP_INFO[op].a {
             if int(i.A) == reg {
                 prev_pc = pc
+            }
+        }
+
+        #partial switch op {
+        case .Jump:
+            dst := pc + 1 + int(i.s.Bx)
+            // If we perform the jump, we don't skip `error_pc`?
+            if pc < dst && dst <= error_pc {
+                pc = dst
             }
         }
     }

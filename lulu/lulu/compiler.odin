@@ -4,7 +4,8 @@ package lulu
 import "core:fmt"
 import "core:math"
 
-INVALID_PC :: -1
+INVALID_PC :: i32(-1)
+NO_JUMP    :: i32(-1)
 
 Compiler :: struct {
     // Parent state.
@@ -254,6 +255,7 @@ compiler_code_AsBx :: proc(c: ^Compiler, op: Opcode, A: u16, sBx: i32) -> (pc: i
     compiler_assert(c, OP_INFO[op].c == nil)
 
     i := Instruction{s={op=op, A=A, Bx=sBx}}
+    fmt.println(c.pc, i.s)
     return _add_instruction(c, i)
 }
 
@@ -271,42 +273,51 @@ compiler_set_returns :: proc(c: ^Compiler, call: ^Expr, ret_count: u16) {
     }
 }
 
-compiler_code_jump :: proc(c: ^Compiler, op: Opcode, A: u16) -> (jump_pc: i32) {
-    compiler_assert(c, op == .Jump || op == .Jump_If_False)
+compiler_code_jump :: proc(c: ^Compiler, op: Opcode, A: u16) -> (pc: i32) {
+    compiler_assert(c, op == .Jump || op == .Jump_If)
     return compiler_code_AsBx(c, op, A, -1)
 }
 
-compiler_append_jump :: proc(c: ^Compiler, list_pc: i32) -> (next_pc: i32) {
-    compiler_assert(c, list_pc == INVALID_PC || c.chunk.code[list_pc].op == .Jump)
-    return compiler_code_AsBx(c, .Jump, 0, list_pc)
+compiler_add_jump_list :: proc(c: ^Compiler, list: ^i32) -> (next: i32) {
+    pc := list^
+    compiler_assert(c, pc == NO_JUMP || c.chunk.code[pc].op == .Jump)
+    // Don't subtract 1 from `c.pc` because offset is relative to the `.Jump`.
+    offset := -1 if pc == NO_JUMP else c.pc - pc
+
+    next  = compiler_code_AsBx(c, .Jump, 0, offset)
+    list^ = next
+    return next
 }
 
-compiler_patch_jump :: proc(c: ^Compiler, jump_pc, target_pc: i32) {
-    prev_pc := _patch_jump(c, jump_pc, target_pc)
+compiler_patch_jump :: proc(c: ^Compiler, jump, target: i32) {
+    prev := _patch_jump(c, jump, target)
     // `.Jump_If_False` can never be a jump list.
-    compiler_assert(c, prev_pc == INVALID_PC)
+    compiler_assert(c, prev == NO_JUMP)
 }
 
-compiler_patch_jump_list :: proc(c: ^Compiler, list_pc, target_pc: i32) {
-    jump_pc := list_pc
-    for jump_pc != INVALID_PC {
-        prev_pc := _patch_jump(c, jump_pc, target_pc)
-        jump_pc = prev_pc
+compiler_patch_jump_list :: proc(c: ^Compiler, list, target: i32) {
+    jump := list
+    for jump != NO_JUMP {
+        prev := _patch_jump(c, jump, target)
+        jump = prev
     }
 }
 
 @(private="file")
-_patch_jump :: proc(c: ^Compiler, jump_pc, target_pc: i32) -> (prev_pc: i32) {
-    offset := target_pc - jump_pc
+_patch_jump :: proc(c: ^Compiler, jump, target: i32) -> (prev: i32) {
+    offset := target - jump
     if offset > MAX_sBx {
         parser_error(c.parser, "jump too large")
     }
-    ip := &c.chunk.code[jump_pc]
-    assert(ip.op == .Jump || ip.op == .Jump_If_False)
+    ip := &c.chunk.code[jump]
+    assert(ip.op == .Jump || ip.op == .Jump_If)
 
-    prev_pc = ip.s.Bx
+    prev = ip.s.Bx
+    if prev != NO_JUMP {
+        prev = jump - prev
+    }
     ip.s.Bx = offset
-    return prev_pc
+    return prev
 }
 
 /*
