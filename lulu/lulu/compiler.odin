@@ -27,6 +27,11 @@ Compiler :: struct {
     // written in the current chunk's code array.
     pc: i32,
 
+    // Absolute pc of the last 'jump' target.
+    // This is used to determine if we can implicitly use the stack frame
+    // itself to load nil. This is because jumps can introduce complications.
+    last_target: i32,
+
     // Number of all the values we have actively written in `chunk.constants`.
     // Also acts as the index of the next constant to be written.
     constants_count: u32,
@@ -55,16 +60,25 @@ Block :: struct {
     // This is a stack-allocated linked list.
     prev: ^Block,
 
+    // Absolute pc of the most recently emitted `.Jump` for a `break` statement.
+    // It is a jump list, that is its sBx argument is actually an offset
+    // going to the previous `.Jump`. The jump list terminates at `NO_JUMP`.
+    break_list: i32,
+
     // 'Previous local count'.
     //
     // How many active locals are occupying the array slots in `active_locals`
     // at the time the block was pushed. This is used to 'pop' locals
     // upon exiting this block.
     plcount: u16,
+
+    // If we see any `break`, they can be patched if this is `true` otherwise
+    // we should throw a syntax error.
+    breakable: bool,
 }
 
 compiler_make :: proc(L: ^State, parser: ^Parser, chunk: ^Chunk) -> Compiler {
-    c := Compiler{L=L, parser=parser, chunk=chunk}
+    c := Compiler{L=L, parser=parser, chunk=chunk, last_target=NO_JUMP}
     return c
 }
 
@@ -136,49 +150,53 @@ compiler_resolve_local :: proc(c: ^Compiler, name: ^Ostring) -> (reg: u16, scope
 }
 
 compiler_define_locals :: proc(c: ^Compiler, count: u16) {
-    birth_pc := c.pc
-    start    := c.active_count
-    stop     := start + count
+    born  := c.pc
+    start := c.active_count
+    stop  := start + count
     for local_index in c.active_locals[start:stop] {
         local := &c.chunk.locals[local_index]
         compiler_assert(c, local.name != nil)
 
-        compiler_assert(c, local.birth_pc == INVALID_PC,
+        compiler_assert(c, local.born == INVALID_PC,
             "Got locals[%i].pc(%i)",
-            local_index, local.birth_pc)
+            local_index, local.born)
 
-        compiler_assert(c, local.death_pc == INVALID_PC,
+        compiler_assert(c, local.died == INVALID_PC,
             "Got locals[%i].pc(%i)",
-            local_index, local.death_pc)
+            local_index, local.died)
 
-        local.birth_pc = birth_pc
+        local.born = born
     }
     c.active_count = stop
 }
 
-compiler_push_block :: proc(c: ^Compiler, b: ^Block) {
-    b.prev    = c.block
-    b.plcount = c.active_count
-    c.block   = b
+compiler_push_block :: proc(c: ^Compiler, b: ^Block, breakable: bool) {
+    b.prev       = c.block
+    b.break_list = NO_JUMP
+    b.plcount    = c.active_count
+    b.breakable  = breakable
+    c.block      = b
 }
 
 compiler_pop_block :: proc(c: ^Compiler) {
     compiler_assert(c, c.block != nil, "No block to pop with c.active_count(%i)", c.active_count)
 
-    death_pc   := c.pc
+    died       := compiler_get_target(c)
     prev_count := c.block.plcount
 
     // Finalize local information for this scope.
     for local_index in c.active_locals[prev_count:c.active_count] {
         local := &c.chunk.locals[local_index]
         compiler_assert(c, local.name != nil)
-        compiler_assert(c, local.birth_pc != INVALID_PC)
-        compiler_assert(c, local.death_pc == INVALID_PC,
+        compiler_assert(c, local.born != INVALID_PC)
+        compiler_assert(c, local.died == INVALID_PC,
             "Got locals[%i].pc(%i)",
-            local_index, local.death_pc)
+            local_index, local.died)
 
-        local.death_pc = death_pc
+        local.died = died
     }
+
+    compiler_patch_jump_list(c, c.block.break_list, died)
 
     // Pop this scope's locals, restoring the previous active count.
     c.block        = c.block.prev
@@ -244,6 +262,7 @@ compiler_code_AsBx :: proc(c: ^Compiler, op: Opcode, A: u16, sBx: i32) -> (pc: i
     compiler_assert(c, OP_INFO[op].c == nil)
 
     i := Instruction{s={op=op, A=A, Bx=sBx}}
+    // fmt.printfln(".code[%i] = %v", c.pc, i.s)
     return _add_instruction(c, i)
 }
 
@@ -267,27 +286,34 @@ compiler_code_jump :: proc(c: ^Compiler, op: Opcode, A: u16) -> (pc: i32) {
 }
 
 compiler_add_jump_list :: proc(c: ^Compiler, list: ^i32) -> (next: i32) {
-    pc := list^
-    compiler_assert(c, pc == NO_JUMP || c.chunk.code[pc].op == .Jump)
-    // Don't subtract 1 from `c.pc` because offset is relative to the `.Jump`.
-    offset := -1 if pc == NO_JUMP else c.pc - pc
+    jump := list^
+    compiler_assert(c, jump == NO_JUMP || c.chunk.code[jump].op == .Jump)
+
+    offset := NO_JUMP
+    if jump != NO_JUMP {
+        // Jump lists are chained together in a series of negative offsets.
+        // And yes, the reversed arguments are intentional.
+        target := compiler_get_target(c)
+        offset = _get_offset(jump=target, target=jump)
+    }
 
     next  = compiler_code_AsBx(c, .Jump, 0, offset)
     list^ = next
     return next
 }
 
-compiler_patch_jump :: proc(c: ^Compiler, jump, target: i32) {
+compiler_patch_jump :: proc(c: ^Compiler, jump: i32, target := INVALID_PC) {
     if jump == NO_JUMP {
         return
     }
-
-    prev := _patch_jump(c, jump, target)
-    // `.Jump_If_False` can never be a jump list.
+    target := _get_target(c, target)
+    prev   := _patch_jump(c, jump, target)
+    // `.Jump_If` can never be a jump list.
     compiler_assert(c, prev == NO_JUMP)
 }
 
-compiler_patch_jump_list :: proc(c: ^Compiler, list, target: i32) {
+compiler_patch_jump_list :: proc(c: ^Compiler, list: i32, target := INVALID_PC) {
+    target := _get_target(c, target)
     for jump := list; jump != NO_JUMP; {
         prev := _patch_jump(c, jump, target)
         jump = prev
@@ -295,8 +321,27 @@ compiler_patch_jump_list :: proc(c: ^Compiler, list, target: i32) {
 }
 
 @(private="file")
+_get_offset :: proc(jump, target: i32) -> (offset: i32) {
+    return target - (jump + 1)
+}
+
+@(private="file")
+_get_target :: proc(c: ^Compiler, target: i32) -> i32 {
+    return target if target != NO_JUMP else compiler_get_target(c)
+}
+
+/*
+Mark the current pc as a jump target, preventing invalid optimizations
+relating to implicitly loading `nil`.
+ */
+compiler_get_target :: proc(c: ^Compiler) -> (target: i32) {
+    c.last_target = c.pc
+    return c.pc
+}
+
+@(private="file")
 _patch_jump :: proc(c: ^Compiler, jump, target: i32) -> (prev: i32) {
-    offset := target - jump
+    offset := _get_offset(jump, target)
     if offset < MIN_sBx || offset > MAX_sBx {
         parser_error(c.parser, "jump too large")
     }
@@ -305,7 +350,9 @@ _patch_jump :: proc(c: ^Compiler, jump, target: i32) -> (prev: i32) {
 
     prev = ip.s.Bx
     if prev != NO_JUMP {
-        prev = jump - prev
+        // If a jump list, then the previous jump can be found at the
+        // given negative offset.
+        prev = (jump + 1) + prev
     }
     ip.s.Bx = offset
     return prev
@@ -427,12 +474,12 @@ compiler_pop_reg :: proc(c: ^Compiler, reg: u16, count: u16 = 1, loc := #caller_
 
 compiler_load_nil :: proc(c: ^Compiler, reg, count: u16) {
     // At the start of the function? E.g. assigning empty locals
-    if c.pc == 0 {
+    if c.pc == 0 && c.pc < c.last_target {
         return
     }
 
     // We might be able to fold consecutive nil loads into one?
-    fold: if prev_pc := c.pc - 1; prev_pc > 0 {
+    fold: if prev_pc := c.pc - 1; prev_pc > 0 && prev_pc < c.last_target {
         ip := &c.chunk.code[prev_pc]
         if ip.op != .Load_Nil {
             break fold

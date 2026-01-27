@@ -66,32 +66,23 @@ parser_assert :: proc(p: ^Parser, cond: bool, msg := #caller_expression(cond), a
 
 @(private="package")
 program :: proc(L: ^State, builder: ^strings.Builder, name: ^Ostring, input: string) {
-    chunk := chunk_new(L, name)
-    // Ensure `chunk` cannot be collected.
-    vm_push(L, value_make(cast(^Object)chunk, .Chunk))
+    main_chunk := chunk_new(L, name)
+    // Ensure `main_chunk` cannot be collected.
+    vm_push(L, value_make(cast(^Object)main_chunk, .Chunk))
 
     p := parser_make(L, builder, name, input)
-    c := compiler_make(L, &p, chunk)
+    c := compiler_make(L, &p, main_chunk)
 
     // Block for file scope (outermost scope).
-    block: Block
-    compiler_push_block(&c, &block)
-
-    for !check_token(&p, .EOF) {
-        statement(&p, &c)
-        // Ensure all temporary registers were popped.
-        c.free_reg = c.active_count
-    }
-
+    block(&p, &c)
     expect_token(&p, .EOF)
-    compiler_pop_block(&c)
     compiler_end(&c)
 
     // Make the closure BEFORE popping the chunk in order to prevent the chunk
     // from being collected in case GC is run during the closure's creation.
-    cl := closure_lua_new(L, chunk, 0)
+    main_closure := closure_lua_new(L, main_chunk, 0)
     vm_pop(L)
-    vm_push(L, cl)
+    vm_push(L, main_closure)
 }
 
 /*
@@ -217,21 +208,22 @@ error_at :: proc(p: ^Parser, t: Token, msg: string) -> ! {
 **Grammar**
 ```
 <statement> ::= 'do' <block> 'end'
-      | <local_statement>
-      | <identifier_statement>
-      | <return_statement>
+    | <if_statement>
+    | <local_statement>
+    | <return_statement>
+    | <while_statement>
+    | <identifier_statement>
 ```
  */
 statement :: proc(p: ^Parser, c: ^Compiler)  {
     advance_token(p)
     #partial switch peek_consumed(p) {
-    case .Do:
-        block(p, c)
-        expect_token(p, .End)
+    case .Break:      break_statement(p, c)
+    case .Do:         block(p, c); expect_token(p, .End)
     case .If:         if_statement(p, c)
     case .Local:      local_statement(p, c)
     case .Return:     return_statement(p, c)
-    case .While:      while_loop(p, c)
+    case .While:      while_statement(p, c)
     case .Identifier: identifier_statement(p, c)
     case:
         parser_error(p, "Expected a statement")
@@ -244,13 +236,26 @@ statement :: proc(p: ^Parser, c: ^Compiler)  {
 ```
 <block> ::= ( <statement> )*
 ```
+
+**Note(2026-01-27)**
+- This procedure eagerly stops at any 'block-ending' token.
+- That is, it does not check for correctness if 'end' or '<eof>' is encountered.
+- It is up to the caller to expect and consume the correct ending token.
  */
 block :: proc(p: ^Parser, c: ^Compiler) {
-    curr_block: Block
-    compiler_push_block(c, &curr_block)
+    // Breakable blocks must only exist outside of this call because
+    // there may be context for break lists.
+    b: Block
+    compiler_push_block(c, &b, breakable=false)
     for block_continue(p) {
         statement(p, c)
+        // Ensure all temporary registers were popped.
+        c.free_reg = c.active_count
     }
+
+    // Ensure we pop in order.
+    compiler_assert(c, c.block == &b && !c.block.breakable)
+    compiler_assert(c, c.block.break_list == NO_JUMP)
     compiler_pop_block(c)
 }
 
@@ -397,6 +402,16 @@ assignment :: proc(p: ^Parser, c: ^Compiler, tail: ^Assign_List, lhs_count: u16)
     }
 }
 
+break_statement :: proc(p: ^Parser, c: ^Compiler) {
+    for b := c.block; b != nil; b = b.prev {
+        if b.breakable {
+            compiler_add_jump_list(c, &b.break_list)
+            return
+        }
+    }
+    parser_error(p, "No block to 'break' at")
+}
+
 /*
 **Grammar**
 ```
@@ -456,6 +471,23 @@ if_statement :: proc(p: ^Parser, c: ^Compiler) {
         then_jump, then_target = then_block(p, c)
     }
 
+    // Note(2026-01-27)
+    //  - If we just had a `break`, we have no way of knowing that an explicit
+    //  jump over the else block is actually unnecessary.
+    //
+    // Concept check:
+    // ```
+    // while x do
+    //  print("loop")
+    //  if x then
+    //      print("break")
+    //      break
+    //      -- unnecessary jump here!
+    //  else
+    //      print("continue")
+    //  end
+    // end
+    // ```
     if match_token(p, .Else) {
         then_target = compiler_add_jump_list(c, &else_list)
         block(p, c)
@@ -463,7 +495,7 @@ if_statement :: proc(p: ^Parser, c: ^Compiler) {
 
     expect_token(p, .End, "to close 'if' statement")
     compiler_patch_jump(c, then_jump, then_target)
-    compiler_patch_jump_list(c, else_list, c.pc - 1)
+    compiler_patch_jump_list(c, else_list)
 }
 
 /*
@@ -473,51 +505,50 @@ if_statement :: proc(p: ^Parser, c: ^Compiler) {
 ```
  */
 then_block :: proc(p: ^Parser, c: ^Compiler) -> (jump, target: i32) {
+    is_if := p.consumed.type == .If
+    jump = condition(p, c)
+    expect_token(p, .Then, "after 'if' condition" if is_if else "after 'elseif' condition")
+    block(p, c)
+    return jump, compiler_get_target(c)
+}
+
+condition :: proc(p: ^Parser, c: ^Compiler) -> (jump: i32) {
     cond := expression(p, c)
-    expect_token(p, .Then, "after 'if' condition")
 
     // Conditions that are known to always be true can be omitted so that
     // the block is executed unconditionally.
     if expr_is_truthy(&cond) {
-        jump = NO_JUMP
-    } else {
-        reg := compiler_push_expr_any(c, &cond)
-        compiler_pop_reg(c, reg)
-        jump = compiler_code_jump(c, .Jump_If, reg)
+        return NO_JUMP
     }
-
-    block(p, c)
-    return jump, c.pc - 1
+    reg := compiler_push_expr_any(c, &cond)
+    compiler_pop_reg(c, reg)
+    return compiler_code_jump(c, .Jump_If, reg)
 }
 
 /*
 **Grammar**
 ```
-<while_loop> ::= 'while' <expression> 'do' <block> 'end'
+<while_statement> ::= 'while' <expression> 'do' <block> 'end'
 ```
  */
-while_loop :: proc(p: ^Parser, c: ^Compiler) {
-    cond := expression(p, c)
+while_statement :: proc(p: ^Parser, c: ^Compiler) {
+    // Absolute pc of the `.Jump_If`, or the first block pc if always true.
+    loop_start := compiler_get_target(c)
+    jump_false := condition(p, c)
     expect_token(p, .Do, "after 'while' condition")
 
-    // Absolute pc of the `.Jump_If`, or the first block pc if always true.
-    loop_start := c.pc
-    jump_false := NO_JUMP
-    if !expr_is_truthy(&cond) {
-        reg := compiler_push_expr_any(c, &cond)
-        compiler_pop_reg(c, reg)
-        jump_false = compiler_code_jump(c, .Jump_If, reg)
-    }
-
+    // Must be outside of `block()` so that we can patch the break list
+    // AFTER the unconditional jump has been emitted.
+    b: Block
+    compiler_push_block(c, &b, breakable=true)
     block(p, c)
     expect_token(p, .End, "to close 'while' loop")
 
     jump_true := compiler_code_jump(c, .Jump, 0)
+    compiler_patch_jump(c, jump_true, loop_start)
 
-    // Subtract 1 because negative offsets need to account for the fact that
-    // the VM always does ip += 1.
-    compiler_patch_jump(c, jump_true, loop_start - 1)
-    compiler_patch_jump(c, jump_false, c.pc - 1)
+    compiler_pop_block(c)
+    compiler_patch_jump(c, jump_false)
 }
 
 /*

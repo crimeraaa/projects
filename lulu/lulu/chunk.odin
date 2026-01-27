@@ -32,18 +32,18 @@ Location :: struct {
 Local variables have predetermined lifetimes. That is, they go into scope
 and go out of scope at known points in the program. The lifetime is given
 by the half-open range (in terms of program counter indexes)
-`[birth_pc, death_pc)`.
+`[born, died)`.
  */
 Local_Info :: struct {
     name: ^Ostring,
 
     // Inclusive start index of the instruction in the parent chunk where this
     // local is first valid (i.e. it first comes into scope).
-    birth_pc: i32,
+    born: i32,
 
     // Exclusive stop index of the instruction in the parent chunk where this
     // local is last valid (i.e. it finally goes out of scope).
-    death_pc: i32,
+    died: i32,
 }
 
 local_name :: proc(var: Local_Info) -> string {
@@ -156,12 +156,12 @@ find_local :: proc(chunk: ^Chunk, #any_int reg, pc: i32) -> (name: string, ok: b
     for local in chunk.locals {
         // This local, and all locals succeeding it, are all beyond the lifetime
         // of `pc`?
-        if local.birth_pc > pc {
+        if local.born > pc {
             break
         }
 
         // Local is alive at some point in `pc`?
-        if pc < local.death_pc {
+        if pc < local.died {
             // Correct scope, keep going
             counter -= 1
 

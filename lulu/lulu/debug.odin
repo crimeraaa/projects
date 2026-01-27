@@ -106,8 +106,8 @@ disassemble :: proc(chunk: ^Chunk) {
         pad := math.count_digits_of_base(n - 1, base=10)
         for local, i in chunk.locals {
             name := local_name(local)
-            born := local.birth_pc
-            died := local.death_pc
+            born := local.born
+            died := local.died
             fmt.printfln("[%0*i] .local '%s' ; .code[%i:%i]", pad, i, name, born, died)
         }
         fmt.println()
@@ -143,8 +143,8 @@ disassemble_at :: proc(chunk: ^Chunk, i: Instruction, pc: i32, pad := 0) {
         }
     }
 
-    _get_global :: proc(chunk: ^Chunk, arg: Arg) -> string {
-        return value_get_string(chunk.constants[arg.(Bx)])
+    _get_global :: proc(chunk: ^Chunk, Bx: u32) -> string {
+        return value_get_string(chunk.constants[Bx])
     }
 
     loc := chunk.loc[pc]
@@ -163,31 +163,15 @@ disassemble_at :: proc(chunk: ^Chunk, i: Instruction, pc: i32, pad := 0) {
 
     buf1, buf2, buf3: [VALUE_TO_STRING_BUFFER_SIZE]byte
     op := i.op
-    // Register A is always used for something
+
+    // Argument A is always used for something
     fmt.printf("%-18s % -4i ", op, i.A)
 
-    Arg :: union {
-        BC, Bx, sBx
-    }
-
-    BC  :: struct {b, c: u16}
-    Bx  :: u32
-    sBx :: i32
-
-    arg: Arg
     info := OP_INFO[op]
     switch info.mode {
-    case .ABC:
-        arg = BC{i.B, i.C}
-        fmt.printf("% -4i % -4i ; ", i.B, i.C)
-
-    case .ABx:
-        arg = i.u.Bx
-        fmt.printf("% -9i ; ", arg)
-
-    case .AsBx:
-        arg = i.s.Bx
-        fmt.printf("% -9i ; ", arg)
+    case .ABC:  fmt.printf("% -4i % -4i ; ", i.B, i.C)
+    case .ABx:  fmt.printf("% -9i ; ", i.u.Bx)
+    case .AsBx: fmt.printf("% -9i ; ", i.s.Bx)
     }
 
     ra := _get_reg(chunk, i.A, pc, buf1[:])
@@ -197,31 +181,31 @@ disassemble_at :: proc(chunk: ^Chunk, i: Instruction, pc: i32, pad := 0) {
     }
 
     switch op {
-    case .Move:       fmt.print(_get_reg(chunk, arg.(BC).b, pc, buf1[:]))
-    case .Load_Nil:   fmt.printf("$r[%i:%i] := nil", i.A, arg.(BC).b)
-    case .Load_Bool:  fmt.print(bool(arg.(BC).b))
-    case .Load_Imm:   fmt.print(arg.(Bx))
+    case .Move:       fmt.print(_get_reg(chunk, i.B, pc, buf1[:]))
+    case .Load_Nil:   fmt.printf("$r[%i:%i] := nil", i.A, i.B)
+    case .Load_Bool:  fmt.print(bool(i.B))
+    case .Load_Imm:   fmt.print(i.u.Bx)
     case .Load_Const:
-        v := chunk.constants[arg.(Bx)]
+        v := chunk.constants[i.u.Bx]
         s := value_to_string(v, buf1[:])
         fmt.printf("%q" if value_is_string(v) else "%s", s)
 
-    case .Get_Global: fmt.printf("_G.%s", _get_global(chunk, arg))
-    case .Set_Global: fmt.printf("_G.%s := %s", _get_global(chunk, arg), ra)
+    case .Get_Global: fmt.printf("_G.%s", _get_global(chunk, i.u.Bx))
+    case .Set_Global: fmt.printf("_G.%s := %s", _get_global(chunk, i.u.Bx), ra)
     case .New_Table:
-        hash_count  := 1 << (arg.(BC).b - 1) if arg.(BC).b != 0 else 0
-        array_count := 1 << (arg.(BC).c - 1) if arg.(BC).c != 0 else 0
+        hash_count  := 1 << (i.B - 1) if i.B != 0 else 0
+        array_count := 1 << (i.C - 1) if i.C != 0 else 0
         fmt.printf("{{}} ; #hash=%i, #array=%i", hash_count, array_count)
     case .Get_Table:
         // Use separate buffers to avoid aliasing issues
-        table_reg := _get_reg(chunk, arg.(BC).b, pc, buf2[:])
-        key_reg   := _get_reg(chunk, arg.(BC).c, pc, buf3[:])
+        table_reg := _get_reg(chunk, i.B, pc, buf2[:])
+        key_reg   := _get_reg(chunk, i.C, pc, buf3[:])
         fmt.printf("%s[%s]", table_reg, key_reg)
 
     case .Get_Field:
         // Use separate buffers to avoid aliasing issues
-        table_reg := _get_reg(chunk, arg.(BC).b, pc, buf2[:])
-        key       := chunk.constants[arg.(BC).c]
+        table_reg := _get_reg(chunk, i.B, pc, buf2[:])
+        key       := chunk.constants[i.C]
         key_k     := value_to_string(key, buf3[:])
         form      := "%s[%q]" if value_is_string(key) else "%s[%s]"
         fmt.printf(form, table_reg, key_k)
@@ -229,32 +213,32 @@ disassemble_at :: proc(chunk: ^Chunk, i: Instruction, pc: i32, pad := 0) {
 
     case .Set_Table:
         // Use separate buffers to avoid aliasing issues
-        key_reg := _get_reg(chunk, arg.(BC).b, pc, buf2[:])
-        val_reg := _get_reg(chunk, arg.(BC).c, pc, buf3[:])
+        key_reg := _get_reg(chunk, i.B, pc, buf2[:])
+        val_reg := _get_reg(chunk, i.C, pc, buf3[:])
         fmt.printf("%s[%s] := %s", ra, key_reg, val_reg)
 
 
     case .Set_Table_Const:
-        key_reg := _get_reg(chunk, arg.(BC).b, pc, buf2[:])
-        val     := chunk.constants[arg.(BC).c]
+        key_reg := _get_reg(chunk, i.B, pc, buf2[:])
+        val     := chunk.constants[i.C]
         val_reg := value_to_string(val, buf3[:])
         fmt.printf("%s[%s] := ", ra, key_reg)
         fmt.printf("%q" if value_is_string(val) else "%s", val_reg)
 
     case .Set_Field:
         // Use separate buffers to avoid aliasing issues
-        key := chunk.constants[arg.(BC).b]
+        key := chunk.constants[i.B]
         kb  := value_to_string(key, buf2[:])
-        rc  := _get_reg(chunk, arg.(BC).c, pc, buf3[:])
+        rc  := _get_reg(chunk, i.C, pc, buf3[:])
         form := "%s[%q] := %s" if value_is_string(key) else "%s[%s] := %s"
         fmt.printf(form, ra, kb, rc)
 
     case .Set_Field_Const:
         // Use separate buffers to avoid aliasing issues
-        key := chunk.constants[arg.(BC).b]
+        key := chunk.constants[i.B]
         key_reg := value_to_string(key, buf2[:])
 
-        val := chunk.constants[arg.(BC).c]
+        val := chunk.constants[i.C]
         val_reg := value_to_string(val, buf3[:])
 
         form := "%s[%q] := " if value_is_string(key) else "%s[%s] := "
@@ -262,21 +246,21 @@ disassemble_at :: proc(chunk: ^Chunk, i: Instruction, pc: i32, pad := 0) {
         fmt.printf("%q" if value_is_string(val) else "%s", val_reg)
 
     case .Len..=.Unm:
-        rb := _get_reg(chunk, arg.(BC).b, pc, buf1[:])
+        rb := _get_reg(chunk, i.B, pc, buf1[:])
         fmt.printf("%s(%s)", _op_string(op), rb)
 
     case .Add_Imm..=.Sub_Imm:
-        rb := _get_reg(chunk, arg.(BC).b, pc, buf1[:])
-        fmt.printf("%s %s %i", rb, _op_string(op), arg.(BC).c)
+        rb := _get_reg(chunk, i.B, pc, buf1[:])
+        fmt.printf("%s %s %i", rb, _op_string(op), i.C)
 
     case .Add_Const..=.Pow_Const:
-        rb := _get_reg(chunk, arg.(BC).b, pc, buf1[:])
-        kc := value_to_string(chunk.constants[arg.(BC).c], buf2[:])
+        rb := _get_reg(chunk, i.B, pc, buf1[:])
+        kc := value_to_string(chunk.constants[i.C], buf2[:])
         fmt.printf("%s %s %s", rb, _op_string(op), kc)
 
     case .Add..=.Pow:
-        rb := _get_reg(chunk, arg.(BC).b, pc, buf1[:])
-        rc := _get_reg(chunk, arg.(BC).c, pc, buf2[:])
+        rb := _get_reg(chunk, i.B, pc, buf1[:])
+        rc := _get_reg(chunk, i.C, pc, buf2[:])
         fmt.printf("%s %s %s", rb, _op_string(op), rc)
 
     case .Concat: fmt.printf("concat $r[%i:%i]", i.B, i.C)
@@ -284,8 +268,8 @@ disassemble_at :: proc(chunk: ^Chunk, i: Instruction, pc: i32, pad := 0) {
     case .Call:
         base_reg  := int(i.A)
         arg_first := base_reg + 1
-        arg_count := int(arg.(BC).b) + VARIADIC
-        ret_count := int(arg.(BC).c) + VARIADIC
+        arg_count := int(i.B) + VARIADIC
+        ret_count := int(i.C) + VARIADIC
         switch ret_count {
         case VARIADIC: fmt.printf("$r[%i:] := ", base_reg)
         case 0:        break
@@ -310,13 +294,12 @@ disassemble_at :: proc(chunk: ^Chunk, i: Instruction, pc: i32, pad := 0) {
 
     case .Jump_If:
         offset := i.s.Bx
-        skip   := pc + 1
-        target := skip + offset
-        fmt.printf("goto .code[%i if not %s else %i]", target, ra, skip)
+        target := pc + 1 + offset
+        fmt.printf("if not %s then goto .code[%i]", ra, target)
 
     case .Return:
         start := int(i.A)
-        count := int(arg.(BC).b) + VARIADIC
+        count := int(i.B) + VARIADIC
         stop  := start + count
         fmt.print("return")
         if count == VARIADIC {

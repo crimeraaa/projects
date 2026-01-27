@@ -8,9 +8,9 @@ vars:
   FLAGS: >-
     -debug
     -sanitize=address
-    -out:"{{.OUT}}"
 
   REPL_EXTRA_FLAGS: >-
+    -out:"{{.OUT}}"
     -define:LULU_DISASSEMBLE_CHUNK=true
     -define:LULU_DISASSEMBLE_INLINE=true
 
