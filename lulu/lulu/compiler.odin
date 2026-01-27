@@ -247,6 +247,13 @@ compiler_code_ABC :: proc(cl: ^Compiler, op: Opcode, A, B, C: u16) -> (pc: i32) 
     return _add_instruction(cl, i)
 }
 
+compiler_code_ABCk :: proc(cl: ^Compiler, op: Opcode, A, B, C: u16, k: bool) -> (pc: i32) {
+    compiler_assert(cl, OP_INFO[op].mode == .ABCk)
+
+    i := Instruction{k={op=op, A=A, B=B, C=C, k=k}}
+    return _add_instruction(cl, i)
+}
+
 compiler_code_ABx :: proc(c: ^Compiler, op: Opcode, A: u16, Bx: u32) -> (pc: i32) {
     compiler_assert(c, OP_INFO[op].mode == .ABx)
     compiler_assert(c, OP_INFO[op].b != nil)
@@ -281,7 +288,7 @@ compiler_set_returns :: proc(c: ^Compiler, call: ^Expr, ret_count: u16) {
 }
 
 compiler_code_jump :: proc(c: ^Compiler, op: Opcode, A: u16) -> (pc: i32) {
-    compiler_assert(c, op == .Jump || op == .Jump_If)
+    compiler_assert(c, op == .Jump || op == .Jump_Not)
     return compiler_code_AsBx(c, op, A, -1)
 }
 
@@ -346,7 +353,7 @@ _patch_jump :: proc(c: ^Compiler, jump, target: i32) -> (prev: i32) {
         parser_error(c.parser, "jump too large")
     }
     ip := &c.chunk.code[jump]
-    assert(ip.op == .Jump || ip.op == .Jump_If)
+    assert(ip.op == .Jump || ip.op == .Jump_Not)
 
     prev = ip.s.Bx
     if prev != NO_JUMP {
@@ -385,12 +392,12 @@ compiler_get_table :: proc(c: ^Compiler, #no_alias var, key: ^Expr) {
 
 compiler_set_table :: proc(c: ^Compiler, table_reg: u16, #no_alias key, value: ^Expr) {
     key_rk,   key_is_k   := _push_expr_k(c, key,   limit=MAX_B)
-    value_rk, value_is_k := _push_expr_k(c, value, limit=MAX_C)
+    value_rk, value_is_k := _push_expr_k(c, value, limit=MAX_Ck)
     compiler_pop_expr(c, value)
     compiler_pop_expr(c, key)
 
-    op := _get_table_op(key_is_k, value_is_k)
-    compiler_code_ABC(c, op, table_reg, key_rk, value_rk)
+    op := _get_table_op(key_is_k)
+    compiler_code_ABCk(c, op, table_reg, key_rk, value_rk, value_is_k)
 }
 
 compiler_set_variable :: proc(c: ^Compiler, #no_alias variable, value: ^Expr) {
@@ -406,9 +413,9 @@ compiler_set_variable :: proc(c: ^Compiler, #no_alias variable, value: ^Expr) {
         return
 
     case .Table:
-        value_reg, value_is_k := _push_expr_k(c, value, MAX_C)
-        op := _get_table_op(variable.table.is_k, value_is_k)
-        compiler_code_ABC(c, op, variable.table.reg, variable.table.key, value_reg)
+        value_reg, value_is_k := _push_expr_k(c, value, limit=MAX_Ck)
+        op := _get_table_op(variable.table.is_k)
+        compiler_code_ABCk(c, op, variable.table.reg, variable.table.key, value_reg, value_is_k)
 
     case:
         unreachable()
@@ -416,11 +423,11 @@ compiler_set_variable :: proc(c: ^Compiler, #no_alias variable, value: ^Expr) {
     compiler_pop_expr(c, value)
 }
 
-_get_table_op :: proc(key_is_k, value_is_k: bool) -> (op: Opcode) {
+_get_table_op :: proc(key_is_k: bool) -> (op: Opcode) {
     if key_is_k {
-        return .Set_Field_Const if value_is_k else .Set_Field
+        return .Set_Field
     } else {
-        return .Set_Table_Const if value_is_k else .Set_Table
+        return .Set_Table
     }
 }
 
@@ -633,14 +640,17 @@ _discharge_expr_to_reg :: proc(c: ^Compiler, e: ^Expr, reg: u16, loc := #caller_
     case .Pc_Pending_Register:
         c.chunk.code[e.pc].A = reg
 
+    case .Compare:
+        // These instructions may be jump targets by themselves.
+        compiler_code_ABC(c, .Load_Bool, reg, u16(true),  1)
+        compiler_code_ABC(c, .Load_Bool, reg, u16(false), 0)
+
     case .Register:
-        dst := reg
-        src := e.reg
         // Differing registers, so we need to explicitly move?
         // Otherwise, they are the same so we don't do anything as that would
         // be redundant.
-        if dst != src {
-            compiler_code_ABC(c, .Move, dst, src, 0)
+        if reg != e.reg {
+            compiler_code_ABC(c, .Move, reg, e.reg, 0)
         }
     }
     e^ = expr_make_reg(.Register, reg)
@@ -674,7 +684,7 @@ _push_expr_k :: proc(c: ^Compiler, e: ^Expr, limit: u16) -> (rk: u16, is_k: bool
     case .Constant: return _check_k(c, e, e.index, limit)
 
     // Nothing we can do.
-    case .Global, .Local, .Table, .Pc_Pending_Register, .Call, .Register:
+    case .Global, .Local, .Table, .Pc_Pending_Register, .Call, .Compare, .Register:
         break
     }
     rk = compiler_push_expr_any(c, e)
@@ -756,7 +766,8 @@ allocation for its result by the caller.
 compiler_code_arith :: proc(c: ^Compiler, op: Opcode, #no_alias left, right: ^Expr) {
     // Helper to avoid division or modulo by zero.
     check_nonzero :: proc(a: f64) -> (val: f64, ok: bool) {
-        if ok = a == 0; ok {
+        ok = a != 0
+        if ok {
             val = a
         }
         return val, ok
@@ -857,6 +868,21 @@ _check_imm :: proc(e: ^Expr) -> (imm: u16, neg, ok: bool) {
     return imm, neg, ok
 }
 
+compiler_code_compare :: proc(c: ^Compiler, op: Opcode, invert: bool, #no_alias left, right: ^Expr) {
+    rb := left.reg
+    rc := compiler_push_expr_any(c, right)
+
+    if rb > rc {
+        compiler_pop_reg(c, rb)
+        compiler_pop_reg(c, rc)
+    } else {
+        compiler_pop_reg(c, rc)
+        compiler_pop_reg(c, rb)
+    }
+
+    pc := compiler_code_ABC(c, op, rb, rc, u16(!invert))
+    left^ = expr_make_pc(.Compare, pc)
+}
 
 compiler_code_concat :: proc(c: ^Compiler, #no_alias left, right: ^Expr) {
     compiler_assert(c, left.type == .Register)

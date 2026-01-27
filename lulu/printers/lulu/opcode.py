@@ -13,7 +13,7 @@ opmodes: Final = {
     "Get_Global":   OpCode_Format.ABx,
     "Set_Global":   OpCode_Format.ABx,
     "Jump":         OpCode_Format.AsBx,
-    "Jump_If":      OpCode_Format.AsBx,
+    "Jump_Not":     OpCode_Format.AsBx,
     "For_Prep":     OpCode_Format.AsBx,
     "For_Loop":     OpCode_Format.AsBx,
     "Closure":      OpCode_Format.ABx,

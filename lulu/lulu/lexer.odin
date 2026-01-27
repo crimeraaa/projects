@@ -560,8 +560,8 @@ make_rune_token :: proc(x: ^Lexer, r: rune) -> Token {
     // Assignment, Comparison Operators
     case '=': type = .Equal_To if match_rune(x, '=') else .Assign
     case '~': expect_rune(x, '='); type = .Not_Equal
-    case '<': type = .Less_Than    if match_rune(x, '=') else .Less_Equal
-    case '>': type = .Greater_Than if match_rune(x, '=') else .Greater_Equal
+    case '<': type = .Less_Than    if !match_rune(x, '=') else .Less_Equal
+    case '>': type = .Greater_Than if !match_rune(x, '=') else .Greater_Equal
     }
     return make_token_type(x, type)
 }

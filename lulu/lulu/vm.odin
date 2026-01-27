@@ -184,14 +184,11 @@ vm_save_stack :: proc(L: ^State, value: ^Value) -> (index: int) {
     return find_ptr_index_unsafe(L.stack[:], value)
 }
 
-@(private="file")
-Op :: #type proc "contextless" (a, b: f64) -> f64
-
 /*
 Works only for register-immediate encodings.
  */
 @(private="file")
-_arith_imm :: proc(L: ^State, pc: i32, ra: ^Value, procedure: Op, rb: ^Value, imm: u16) {
+_arith_imm :: proc(L: ^State, pc: i32, ra: ^Value, procedure: $T, rb: ^Value, imm: u16) {
     if left, ok := value_to_number(rb^); ok {
         ra^ = value_make(procedure(left, f64(imm)))
     } else {
@@ -204,7 +201,7 @@ _arith_imm :: proc(L: ^State, pc: i32, ra: ^Value, procedure: Op, rb: ^Value, im
 Works for both register-register and register-constant encodings.
 */
 @(private="file")
-_arith :: proc(L: ^State, pc: i32, ra: ^Value, procedure: Op, rb, rc: ^Value) {
+_arith :: proc(L: ^State, pc: i32, ra: ^Value, procedure: $T, rb, rc: ^Value) {
     try: {
         left   := value_to_number(rb^) or_break try
         right  := value_to_number(rc^) or_break try
@@ -213,6 +210,20 @@ _arith :: proc(L: ^State, pc: i32, ra: ^Value, procedure: Op, rb, rc: ^Value) {
     }
     _protect(L, pc)
     debug_arith_error(L, rb, rc)
+}
+
+@(private="file")
+_compare :: proc(L: ^State, ip: ^[^]Instruction, pc: i32, procedure: $T, ra, rb: ^Value, cond: bool) {
+    try: {
+        left   := value_to_number(ra^) or_break try
+        right  := value_to_number(rb^) or_break try
+        if procedure(left, right) != cond {
+            ip^ = mem.ptr_offset(ip^, 1)
+        }
+        return
+    }
+    _protect(L, pc)
+    debug_compare_error(L, ra, rb)
 }
 
 @(private="file")
@@ -294,7 +305,11 @@ vm_execute :: proc(L: ^State, ret_expect: int) {
         switch op {
         case .Move:       RA^ = R[i.B]
         case .Load_Nil:   mem.zero_slice(R[A:i.B])
-        case .Load_Bool:  RA^ = value_make(bool(i.B))
+        case .Load_Bool:
+            RA^ = value_make(bool(i.B))
+            if bool(i.C) {
+                ip = mem.ptr_offset(ip, 1)
+            }
         case .Load_Imm:   RA^ = value_make(f64(i.u.Bx))
         case .Load_Const: RA^ = K[i.u.Bx]
 
@@ -318,12 +333,10 @@ vm_execute :: proc(L: ^State, ret_expect: int) {
             t := table_new(L, hash_count=hash_count, array_count=array_count)
             RA^ = value_make(t)
 
-        case .Get_Table:        _get_table(L, pc, RA, &R[i.B], R[i.C])
-        case .Get_Field:        _get_table(L, pc, RA, &R[i.B], K[i.C])
-        case .Set_Table:        _set_table(L, pc, RA, R[i.B], R[i.C])
-        case .Set_Table_Const:  _set_table(L, pc, RA, R[i.B], K[i.C])
-        case .Set_Field:        _set_table(L, pc, RA, K[i.B], R[i.C])
-        case .Set_Field_Const:  _set_table(L, pc, RA, K[i.B], K[i.C])
+        case .Get_Table: _get_table(L, pc, RA, &R[i.B], R[i.C])
+        case .Get_Field: _get_table(L, pc, RA, &R[i.B], K[i.C])
+        case .Set_Table: _set_table(L, pc, RA, R[i.B], (K if i.k.k else R)[i.k.C])
+        case .Set_Field: _set_table(L, pc, RA, K[i.B], (K if i.k.k else R)[i.k.C])
 
         // Unary
         case .Len:
@@ -371,9 +384,18 @@ vm_execute :: proc(L: ^State, ret_expect: int) {
         case .Pow: _arith(L, pc, RA, number_pow, &R[i.B], &R[i.C])
 
         // Comparison
-        // case .Eq..=.Geq:
-        //     unreachable("Unimplemented: %v", i.op)
+        case .Eq:
+            rb   := R[i.B]
+            cond := bool(i.C)
+            res  := value_eq(RA^, rb)
+            if res != cond {
+                ip = mem.ptr_offset(ip, 1)
+            }
 
+        case .Lt:  _compare(L, &ip, pc, number_lt,  RA, &R[i.B], bool(i.C))
+        case .Leq: _compare(L, &ip, pc, number_leq, RA, &R[i.B], bool(i.C))
+
+        // Misc.
         case .Concat:
             args := R[i.B:i.C]
             _protect(L, pc)
@@ -409,10 +431,19 @@ vm_execute :: proc(L: ^State, ret_expect: int) {
             offset := int(i.s.Bx)
             ip = mem.ptr_offset(ip, offset)
 
-        case .Jump_If:
+        case .Jump_Not:
             if value_is_falsy(RA^) {
                 offset := int(i.s.Bx)
                 ip = mem.ptr_offset(ip, offset)
+            }
+
+        case .Move_If:
+            RB   := R[i.B]
+            cond := bool(i.C)
+            if !value_is_falsy(RB) == cond {
+                RA^ = RB
+            } else {
+                ip = mem.ptr_offset(ip, 1)
             }
 
         case .Return:

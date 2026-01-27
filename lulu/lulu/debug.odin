@@ -15,6 +15,12 @@ debug_arith_error :: proc(L: ^State, a, b: ^Value) -> ! {
     debug_type_error(L, "perform arithmetic on", culprit)
 }
 
+debug_compare_error :: proc(L: ^State, a, b: ^Value) -> ! {
+    t1 := value_type_name(a^)
+    t2 := value_type_name(b^)
+    debug_runtime_error(L, "Attempt to compare %s with %s", t1, t2)
+}
+
 /*
 Report a runtime error due to attempting `action` on `culprit`.
 
@@ -143,6 +149,14 @@ disassemble_at :: proc(chunk: ^Chunk, i: Instruction, pc: i32, pad := 0) {
         }
     }
 
+    _get_rk :: proc(chunk: ^Chunk, reg: u16, k: bool, pc: i32, buf: []byte) -> string {
+        if k {
+            v := chunk.constants[reg]
+            return value_to_string(v, buf[:])
+        }
+        return _get_reg(chunk, reg, pc, buf[:])
+    }
+
     _get_global :: proc(chunk: ^Chunk, Bx: u32) -> string {
         return value_get_string(chunk.constants[Bx])
     }
@@ -165,11 +179,12 @@ disassemble_at :: proc(chunk: ^Chunk, i: Instruction, pc: i32, pad := 0) {
     op := i.op
 
     // Argument A is always used for something
-    fmt.printf("%-18s % -4i ", op, i.A)
+    fmt.printf("%-12s % -3i ", op, i.A)
 
     info := OP_INFO[op]
     switch info.mode {
-    case .ABC:  fmt.printf("% -4i % -4i ; ", i.B, i.C)
+    case .ABC:  fmt.printf("% -3i % -3i   ; ", i.B, i.C)
+    case .ABCk: fmt.printf("% -3i % -3i %i ; ", i.B, i.k.C, int(i.k.k))
     case .ABx:  fmt.printf("% -9i ; ", i.u.Bx)
     case .AsBx: fmt.printf("% -9i ; ", i.s.Bx)
     }
@@ -183,7 +198,11 @@ disassemble_at :: proc(chunk: ^Chunk, i: Instruction, pc: i32, pad := 0) {
     switch op {
     case .Move:       fmt.print(_get_reg(chunk, i.B, pc, buf1[:]))
     case .Load_Nil:   fmt.printf("$r[%i:%i] := nil", i.A, i.B)
-    case .Load_Bool:  fmt.print(bool(i.B))
+    case .Load_Bool:
+        fmt.print(bool(i.B))
+        if bool(i.C) {
+            fmt.printf("; goto .code[%i]", pc + 1 + 1)
+        }
     case .Load_Imm:   fmt.print(i.u.Bx)
     case .Load_Const:
         v := chunk.constants[i.u.Bx]
@@ -214,36 +233,17 @@ disassemble_at :: proc(chunk: ^Chunk, i: Instruction, pc: i32, pad := 0) {
     case .Set_Table:
         // Use separate buffers to avoid aliasing issues
         key_reg := _get_reg(chunk, i.B, pc, buf2[:])
-        val_reg := _get_reg(chunk, i.C, pc, buf3[:])
+        val_reg := _get_rk(chunk, i.k.C, i.k.k, pc, buf3[:])
         fmt.printf("%s[%s] := %s", ra, key_reg, val_reg)
 
-
-    case .Set_Table_Const:
-        key_reg := _get_reg(chunk, i.B, pc, buf2[:])
-        val     := chunk.constants[i.C]
-        val_reg := value_to_string(val, buf3[:])
-        fmt.printf("%s[%s] := ", ra, key_reg)
-        fmt.printf("%q" if value_is_string(val) else "%s", val_reg)
 
     case .Set_Field:
         // Use separate buffers to avoid aliasing issues
         key := chunk.constants[i.B]
         kb  := value_to_string(key, buf2[:])
-        rc  := _get_reg(chunk, i.C, pc, buf3[:])
+        rc  := _get_rk(chunk, i.k.C, i.k.k, pc, buf3[:])
         form := "%s[%q] := %s" if value_is_string(key) else "%s[%s] := %s"
         fmt.printf(form, ra, kb, rc)
-
-    case .Set_Field_Const:
-        // Use separate buffers to avoid aliasing issues
-        key := chunk.constants[i.B]
-        key_reg := value_to_string(key, buf2[:])
-
-        val := chunk.constants[i.C]
-        val_reg := value_to_string(val, buf3[:])
-
-        form := "%s[%q] := " if value_is_string(key) else "%s[%s] := "
-        fmt.printf(form, ra, key_reg)
-        fmt.printf("%q" if value_is_string(val) else "%s", val_reg)
 
     case .Len..=.Unm:
         rb := _get_reg(chunk, i.B, pc, buf1[:])
@@ -262,6 +262,11 @@ disassemble_at :: proc(chunk: ^Chunk, i: Instruction, pc: i32, pad := 0) {
         rb := _get_reg(chunk, i.B, pc, buf1[:])
         rc := _get_reg(chunk, i.C, pc, buf2[:])
         fmt.printf("%s %s %s", rb, _op_string(op), rc)
+
+    case .Eq..=.Leq:
+        rb := _get_reg(chunk, i.B, pc, buf2[:])
+        c  := "not" if bool(i.C) else ""
+        fmt.printf("goto .code[%i] if %s (%s %s %s)", pc + 1 + 1, c, ra, _op_string(op), rb)
 
     case .Concat: fmt.printf("concat $r[%i:%i]", i.B, i.C)
 
@@ -292,10 +297,15 @@ disassemble_at :: proc(chunk: ^Chunk, i: Instruction, pc: i32, pad := 0) {
         offset := i.s.Bx
         fmt.printf("goto .code[%i]", pc + 1 + offset)
 
-    case .Jump_If:
+    case .Jump_Not:
         offset := i.s.Bx
         target := pc + 1 + offset
         fmt.printf("if not %s then goto .code[%i]", ra, target)
+
+    case .Move_If:
+        rb   := _get_reg(chunk, i.B, pc, buf2[:])
+        cond := "" if bool(i.C) else "not "
+        fmt.printf("%s := %s if %s%s else ip += 1", ra, rb, cond, rb)
 
     case .Return:
         start := int(i.A)
@@ -330,12 +340,9 @@ _op_string :: proc(op: Opcode) -> string {
     case .Pow, .Pow_Const:           return "^"
 
     // Comparison
-    // case .Eq:   return "=="
-    // case .Neq:  return "~="
-    // case .Lt:   return "<"
-    // case .Gt:   return ">"
-    // case .Leq:  return "<="
-    // case .Geq:  return ">="
+    case .Eq:   return "=="
+    case .Lt:   return "<"
+    case .Leq:  return "<="
     }
     unreachable("Invalid opcode: %v", op)
 }

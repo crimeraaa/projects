@@ -5,17 +5,15 @@ Opcode :: enum u8 {
 // Op               Args    | Side-effects
 Move,           //  A B     | R[A] := R[B]
 Load_Nil,       //  A B     | R[A:B] := nil
-Load_Bool,      //  A B     | R[A] := (Bool)B
+Load_Bool,      //  A B C   | R[A] := (Bool)B; if Bool(C) then ip += 1
 Load_Imm,       //  A Bx    | R[A] := (Number)Bx
 Load_Const,     //  A Bx    | R[A] := K[Bx]
 Get_Global,     //  A Bx    | R[A] := _G[K[Bx]]
 Get_Table,      //  A B C   | R[A] := R[B][R[C]]
 Get_Field,      //  A B C   | R[A] := R[B][K[C]]
 Set_Global,     //  A Bx    | _G[K[Bx]]  := R[A]
-Set_Table,      //  A B C k | R[A][R[B]] := R[C]
-Set_Table_Const,//  A B C   | R[A][R[B]] := K[C]
-Set_Field,      //  A B C k | R[A][K[B]] := R[C]
-Set_Field_Const,//  A B C   | R[A][K[B]] := K[C]
+Set_Table,      //  A B C k | R[A][R[B]] := (K if k else R)[C]
+Set_Field,      //  A B C k | R[A][K[B]] := (K if k else R)[C]
 New_Table,      //  A B C   | R[A] := {} ; #hash=B, #array=C
 
 // Unary
@@ -44,19 +42,18 @@ Mod,        //  A B C   | R[A] := R[B] % R[C]
 Pow,        //  A B C   | R[A] := R[B] ^ R[C]
 
 // Comparison
-// Eq,         //  A B C
-// Neq,        //  A B C
-// Lt,         //  A B C
-// Gt,         //  A B C
-// Leq,        //  A B C
-// Geq,        //  A B C
+Eq,         //  A B C   | ip += 1 if (R[A] == R[B]) != Bool(C)
+Lt,         //  A B C   | ip += 1 if (R[A] <  R[B]) != Bool(C)
+Leq,        //  A B C   | ip += 1 if (R[A] <= R[B]) != Bool(C)
 
+// Misc.
 Concat,     //  A B C   | R[A] := concat( R[B:C] )
 
 // Control Flow
 Call,       //  A B C   | R[A:A+C-1] := R[A]( R[A+1:A+B-1] ) ; (*) See note.
 Jump,       //    sBx   | ip += sBx
-Jump_If,    //  A sBx   | ip += sBx if not R[A] else 1 ; (*) See note.
+Jump_Not,   //  A sBx   | ip += sBx if not R[A] else 1 ; (*) See note.
+Move_If,    //  A B C   | R[A] := R[B] if Bool(R[B]) == Bool(C) else ip += 1
 Return,     //  A B     | return R[A:A+B-1] ; (*) See note.
 }
 
@@ -94,6 +91,9 @@ Operand C will only function as RK in table manipulation instructions.
 Instruction :: struct #raw_union {
     using base: Instruction_ABC,
 
+    // ABC but C has a `k` flag.
+    k: Instruction_ABCk,
+
     // Extended, unsigned.
     u: Instruction_ABx,
 
@@ -105,6 +105,14 @@ Instruction_ABC :: bit_field u32 {
     op: Opcode | SIZE_OP,
     A:  u16    | SIZE_A,
     C:  u16    | SIZE_C,
+    B:  u16    | SIZE_B,
+}
+
+Instruction_ABCk :: bit_field u32 {
+    op: Opcode | SIZE_OP,
+    A:  u16    | SIZE_A,
+    C:  u16    | SIZE_C - 1,
+    k:  bool   | 1,
     B:  u16    | SIZE_B,
 }
 
@@ -130,6 +138,7 @@ SIZE_J   :: SIZE_A + SIZE_B + SIZE_C
 MAX_A   :: (1 << SIZE_A)  - 1
 MAX_B   :: (1 << SIZE_B)  - 1
 MAX_C   :: (1 << SIZE_C)  - 1
+MAX_Ck  :: MAX_C >> 1
 MAX_Bx  :: (1 << SIZE_Bx) - 1
 MAX_sBx :: MAX_Bx >> 1
 MIN_sBx :: 0 - MAX_Bx
@@ -146,10 +155,10 @@ Op_Info :: bit_field u8 {
 }
 
 Op_Format :: enum u8 {
-    ABC, ABx, AsBx,
+    ABC, ABCk, ABx, AsBx,
 }
 
-Op_Mode :: enum {
+Op_Mode :: enum u8 {
     None,   // Operand is unused? E.g. operand C given that Bx is active.
     Reg,    // (R): Operand is a (virtual) register in the VM stack?
     Const,  // (K): Operand is the index of a value in the constants array?
@@ -158,20 +167,18 @@ Op_Mode :: enum {
 
 
 OP_INFO := [Opcode]Op_Info{
-    .Move            = {mode=.ABC, a=true,  b=.Reg},
-    .Load_Nil        = {mode=.ABC, a=true,  b=.Reg},
-    .Load_Bool       = {mode=.ABC, a=true,  b=.Imm},
-    .Load_Imm        = {mode=.ABx, a=true,  b=.Imm},
-    .Load_Const      = {mode=.ABx, a=true,  b=.Const},
-    .Get_Global      = {mode=.ABx, a=true,  b=.Const},
-    .Get_Table       = {mode=.ABC, a=true,  b=.Reg,   c=.Reg},
-    .Get_Field       = {mode=.ABC, a=true,  b=.Reg,   c=.Const},
-    .Set_Global      = {mode=.ABx, a=false, b=.Const},
-    .Set_Table       = {mode=.ABC, a=false, b=.Reg,   c=.Reg},
-    .Set_Table_Const = {mode=.ABC, a=false, b=.Reg,   c=.Const},
-    .Set_Field       = {mode=.ABC, a=false, b=.Const, c=.Reg},
-    .Set_Field_Const = {mode=.ABC, a=false, b=.Const, c=.Const},
-    .New_Table       = {mode=.ABC, a=true,  b=.Imm},
+    .Move            = {mode=.ABC,  a=true,  b=.Reg},
+    .Load_Nil        = {mode=.ABC,  a=true,  b=.Reg},
+    .Load_Bool       = {mode=.ABC,  a=true,  b=.Imm},
+    .Load_Imm        = {mode=.ABx,  a=true,  b=.Imm},
+    .Load_Const      = {mode=.ABx,  a=true,  b=.Const},
+    .Get_Global      = {mode=.ABx,  a=true,  b=.Const},
+    .Get_Table       = {mode=.ABC,  a=true,  b=.Reg,   c=.Reg},
+    .Get_Field       = {mode=.ABC,  a=true,  b=.Reg,   c=.Const},
+    .Set_Global      = {mode=.ABx,  a=false, b=.Const},
+    .Set_Table       = {mode=.ABCk, a=false, b=.Reg,   c=.Reg},
+    .Set_Field       = {mode=.ABCk, a=false, b=.Const, c=.Reg},
+    .New_Table       = {mode=.ABC,  a=true,  b=.Imm},
 
     // Unary
     .Len..=.Unm = {mode=.ABC, a=true, b=.Reg},
@@ -184,12 +191,18 @@ OP_INFO := [Opcode]Op_Info{
 
     // Arithmetic (register-register)
     .Add..=.Pow = {mode=.ABC, a=true, b=.Reg, c=.Reg},
+
+    // Comparison
+    .Eq..=.Leq  = {mode=.ABC, a=false, b=.Reg, c=.Imm},
+
+    // Misc.
     .Concat     = {mode=.ABC, a=true, b=.Reg, c=.Reg},
 
     // Control flow
     .Call       = {mode=.ABC,   a=true,  b=.Imm, c=.Imm},
     .Jump       = {mode=.AsBx,  a=false, b=.Imm},
-    .Jump_If    = {mode=.AsBx,  a=false, b=.Imm},
+    .Jump_Not   = {mode=.AsBx,  a=false, b=.Imm},
+    .Move_If    = {mode=.AsBx,  a=true,  b=.Reg},
     .Return     = {mode=.ABC,   a=false, b=.Imm},
 }
 

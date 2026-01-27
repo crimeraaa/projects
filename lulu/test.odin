@@ -29,8 +29,9 @@ TESTS := [?]Test{
     {"fun.lua",     #load("fun.lua"),       nil},
     {"table.lua",   #load("table.lua"),     nil},
     {"if-else.lua", #load("if-else.lua"),   nil},
-    {"while.lua",   #load("while.lua"),     nil},
-    {"break.lua",   #load("break.lua"),     nil},
+    {"while.lua",   #load("while.lua"),     4.0},
+    {"break.lua",   #load("break.lua"),     2.0},
+    {"compare.lua", #load("compare.lua"),   1.0},
 }
 
 try_test :: proc(t: ^testing.T, L: ^lulu.State, test: Test) -> Value {

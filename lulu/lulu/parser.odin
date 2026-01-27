@@ -43,6 +43,8 @@ Rule :: struct {
     // Right-hand-side precedence. Helps determine when we should recursively
     // parse higher-precedence child expressions.
     right: Precedence,
+
+    invert: bool,
 }
 
 parser_make :: proc(L: ^State, builder: ^strings.Builder, name: ^Ostring, input: string) -> Parser {
@@ -454,7 +456,7 @@ return_statement :: proc(p: ^Parser, c: ^Compiler) {
  */
 if_statement :: proc(p: ^Parser, c: ^Compiler) {
     // Absolute pc of `.Jump_If_False` and the absolute target pc for
-    // `.Jump_If_False` when 'if' fails.
+    // said jump when 'if' fails.
     then_jump, then_target := then_block(p, c)
 
     // Jump list. Absolute pc of the current `.Jump`, if any 'else' block
@@ -465,9 +467,9 @@ if_statement :: proc(p: ^Parser, c: ^Compiler) {
         // 'if' and all its sister 'elseif' blocks share the same 'else' jump.
         compiler_add_jump_list(c, &else_list)
 
-        // Current 'then' jump will go to the new 'else' jump upon failure.
+        // Current 'then' jump will go to the 'elseif' condition upon failure.
         // This ensures that we try 'elseif' blocks sequentially.
-        compiler_patch_jump(c, then_jump, else_list)
+        compiler_patch_jump(c, then_jump, else_list + 1)
         then_jump, then_target = then_block(p, c)
     }
 
@@ -489,7 +491,8 @@ if_statement :: proc(p: ^Parser, c: ^Compiler) {
     // end
     // ```
     if match_token(p, .Else) {
-        then_target = compiler_add_jump_list(c, &else_list)
+        // We want the 'if' or last 'elseif' to jump over, hence + 1.
+        then_target = compiler_add_jump_list(c, &else_list) + 1
         block(p, c)
     }
 
@@ -513,16 +516,25 @@ then_block :: proc(p: ^Parser, c: ^Compiler) -> (jump, target: i32) {
 }
 
 condition :: proc(p: ^Parser, c: ^Compiler) -> (jump: i32) {
-    cond := expression(p, c)
+    expr := expression(p, c)
 
     // Conditions that are known to always be true can be omitted so that
     // the block is executed unconditionally.
-    if expr_is_truthy(&cond) {
+    if expr_is_truthy(&expr) {
         return NO_JUMP
     }
-    reg := compiler_push_expr_any(c, &cond)
-    compiler_pop_reg(c, reg)
-    return compiler_code_jump(c, .Jump_If, reg)
+
+    if expr.type != .Compare {
+        reg := compiler_push_expr_any(c, &expr)
+        compiler_pop_reg(c, reg)
+        return compiler_code_jump(c, .Jump_Not, reg)
+    }
+
+    // Invert the condition because we want to skip the jump when the
+    // intended comparison succeeds.
+    ip   := &c.chunk.code[expr.pc]
+    ip.C  = u16(!bool(ip.C))
+    return compiler_code_jump(c, .Jump, 0)
 }
 
 /*
@@ -888,6 +900,8 @@ infix :: proc(p: ^Parser, c: ^Compiler, left: ^Expr, prec: Precedence = nil) {
         #partial switch rule.op {
         case .Add..=.Pow:
             arith(p, c, rule.op, left, rule.right)
+        case .Eq..=.Leq:
+            compare(p, c, rule.op, rule.invert, left, rule.right)
         case .Concat:
             _concat(p, c, left, rule.right)
         case:
@@ -900,13 +914,23 @@ get_rule  :: proc(type: Token_Type) -> Rule {
     #partial switch type {
     // right = left + 0: Enforce right-associativity for exponentiation.
     // right = left + 1: Enforce left-associativity for all other operators.
-    case .Plus:         return Rule{.Add,    .Terminal, .Factor}
-    case .Minus:        return Rule{.Sub,    .Terminal, .Factor}
-    case .Asterisk:     return Rule{.Mul,    .Factor,   .Exponent}
-    case .Slash:        return Rule{.Div,    .Factor,   .Exponent}
-    case .Percent:      return Rule{.Mod,    .Factor,   .Exponent}
-    case .Caret:        return Rule{.Pow,    .Exponent, .Exponent}
-    case .Ellipsis2:    return Rule{.Concat, .Concat,   .Concat}
+    case .Plus:         return Rule{.Add, .Terminal, .Factor,   false}
+    case .Minus:        return Rule{.Sub, .Terminal, .Factor,   false}
+    case .Asterisk:     return Rule{.Mul, .Factor,   .Exponent, false}
+    case .Slash:        return Rule{.Div, .Factor,   .Exponent, false}
+    case .Percent:      return Rule{.Mod, .Factor,   .Exponent, false}
+    case .Caret:        return Rule{.Pow, .Exponent, .Exponent, false}
+
+    // Comparison
+    case .Equal_To:      return Rule{.Eq,   .Equality,   .Comparison,  false}
+    case .Less_Than:     return Rule{.Lt,   .Comparison, .Concat,      false}
+    case .Less_Equal:    return Rule{.Leq,  .Comparison, .Concat,      false}
+    case .Not_Equal:     return Rule{.Eq,   .Equality,   .Comparison,  true}
+    case .Greater_Than:  return Rule{.Lt,   .Comparison, .Concat,      true}
+    case .Greater_Equal: return Rule{.Leq,  .Comparison, .Concat,      true}
+
+    // Misc.
+    case .Ellipsis2:     return Rule{.Concat, .Concat, .Concat, false}
     }
     return Rule{}
 }
@@ -928,6 +952,13 @@ arith :: proc(p: ^Parser, c: ^Compiler, op: Opcode, left: ^Expr, prec: Precedenc
     advance_token(p)
     right := expression(p, c, prec)
     compiler_code_arith(c, op, left, &right)
+}
+
+compare :: proc(p: ^Parser, c: ^Compiler, op: Opcode, invert: bool, left: ^Expr, prec: Precedence) {
+    compiler_push_expr_any(c, left)
+    advance_token(p)
+    right := expression(p, c, prec)
+    compiler_code_compare(c, op, invert, left, &right)
 }
 
 _concat :: proc(p: ^Parser, c: ^Compiler, left: ^Expr, prec: Precedence) {

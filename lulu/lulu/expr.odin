@@ -66,6 +66,10 @@ Expr_Type :: enum {
     // Expression is a call instruction which we can manipulate. See `Expr.pc`.
     Call,
 
+    // Expression is a comparison instruction which we can manipulate.
+    // See `Expr.pc`.
+    Compare,
+
     // Expression is 'discharged', i.e. it is now stored in a register?
     // See `Expr.reg`.
     Register,

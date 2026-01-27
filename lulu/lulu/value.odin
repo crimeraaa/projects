@@ -118,13 +118,17 @@ value_get_object :: #force_inline proc(v: Value) -> (o: ^Object) {
 // Everything below is implemented in terms of the data payload functions.
 
 
-number_unm :: proc "contextless" (a: f64)    -> f64 {return -a}
-number_add :: proc "contextless" (a, b: f64) -> f64 {return a + b}
-number_sub :: proc "contextless" (a, b: f64) -> f64 {return a - b}
-number_mul :: proc "contextless" (a, b: f64) -> f64 {return a * b}
-number_div :: proc "contextless" (a, b: f64) -> f64 {return a / b}
-number_mod :: proc "contextless" (a, b: f64) -> f64 {q := a / b; return a - math.floor(q) * b}
+number_unm :: proc (a: f64)    -> f64 { return -a    }
+number_add :: proc (a, b: f64) -> f64 { return a + b }
+number_sub :: proc (a, b: f64) -> f64 { return a - b }
+number_mul :: proc (a, b: f64) -> f64 { return a * b }
+number_div :: proc (a, b: f64) -> f64 { return a / b }
+number_mod :: proc (a, b: f64) -> f64 {q := a / b; return a - math.floor(q) * b}
 number_pow :: math.pow_f64
+
+number_eq  :: proc(a, b: f64) -> bool { return a == b }
+number_lt  :: proc(a, b: f64) -> bool { return a <  b }
+number_leq :: proc(a, b: f64) -> bool { return a <= b }
 
 
 /*
