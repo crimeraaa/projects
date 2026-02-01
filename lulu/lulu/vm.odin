@@ -24,7 +24,7 @@ vm_init :: proc(L: ^State, g: ^Global_State, allocator: mem.Allocator) -> (ok: b
         s := ostring_new(L, MEMORY_ERROR_MESSAGE)
         s.mark += {.Fixed}
         for kw_type in Token_Type.And..=Token_Type.While {
-            kw := token_string(kw_type)
+            kw := token_type_string(kw_type)
             s   = ostring_new(L, kw)
             s.kw_type = kw_type
             s.mark   += {.Fixed}
@@ -218,7 +218,7 @@ _compare :: proc(L: ^State, ip: ^[^]Instruction, pc: i32, procedure: $T, ra, rb:
         left   := value_to_number(ra^) or_break try
         right  := value_to_number(rb^) or_break try
         if procedure(left, right) != cond {
-            ip^ = mem.ptr_offset(ip^, 1)
+            ip^ = &ip[1]
         }
         return
     }
@@ -308,7 +308,7 @@ vm_execute :: proc(L: ^State, ret_expect: int) {
         case .Load_Bool:
             RA^ = value_make(bool(i.B))
             if bool(i.C) {
-                ip = mem.ptr_offset(ip, 1)
+                ip = &ip[1]
             }
         case .Load_Imm:   RA^ = value_make(f64(i.u.Bx))
         case .Load_Const: RA^ = K[i.u.Bx]
@@ -389,7 +389,7 @@ vm_execute :: proc(L: ^State, ret_expect: int) {
             cond := bool(i.C)
             res  := value_eq(RA^, rb)
             if res != cond {
-                ip = mem.ptr_offset(ip, 1)
+                ip = &ip[1]
             }
 
         case .Lt:  _compare(L, &ip, pc, number_lt,  RA, &R[i.B], bool(i.C))
@@ -429,12 +429,12 @@ vm_execute :: proc(L: ^State, ret_expect: int) {
 
         case .Jump:
             offset := int(i.s.Bx)
-            ip = mem.ptr_offset(ip, offset)
+            ip = &ip[offset]
 
         case .Jump_Not:
             if value_is_falsy(RA^) {
                 offset := int(i.s.Bx)
-                ip = mem.ptr_offset(ip, offset)
+                ip = &ip[offset]
             }
 
         case .Move_If:
@@ -443,7 +443,7 @@ vm_execute :: proc(L: ^State, ret_expect: int) {
             if !value_is_falsy(RB) == cond {
                 RA^ = RB
             } else {
-                ip = mem.ptr_offset(ip, 1)
+                ip = &ip[1]
             }
 
         case .Return:

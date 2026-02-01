@@ -34,14 +34,16 @@ Key :: struct #raw_union {
 
     // Optimized to reduce unnecessary padding of `hash` if we know it can
     // safely fit in the would-be padding of `type`.
+    //
+    // ORDER: The order of `type` and `data` must match `value.odin:Value`!
     h: struct {
-        data: Value_Data,
         type: Value_Type,
 
         // Saving the result of `hash_value()` is useful because it helps us
         // do quick comparisons for early-outs. It also allows to avoid
         // redundant work in `table_resize()`.
         hash: u32,
+        data: Value_Data,
     }
 }
 

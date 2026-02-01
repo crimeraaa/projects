@@ -6,6 +6,7 @@ import "core:testing"
 
 // local
 import "lulu"
+import lulu_aux "lulu/aux"
 import lulu_lib "lulu/libs"
 
 Value :: union {
@@ -20,23 +21,32 @@ Test :: struct {
     expected:    Value,
 }
 
+_test :: proc "contextless" ($name: string, expected: Value) -> Test {
+    return Test{name, #load("tests/" + name), expected}
+}
+
 TESTS := [?]Test{
-    {"hello.lua",   #load("hello.lua"),     nil},
-    {"literal.lua", #load("literal.lua"),   7.8},
-    {"arith.lua",   #load("arith.lua") ,    7.8},
-    {"error.lua",   #load("error.lua"),     lulu.Error.Runtime},
-    {"blocks.lua",  #load("blocks.lua"),    "file"},
-    {"fun.lua",     #load("fun.lua"),       nil},
-    {"table.lua",   #load("table.lua"),     nil},
-    {"if-else.lua", #load("if-else.lua"),   nil},
-    {"while.lua",   #load("while.lua"),     4.0},
-    {"break.lua",   #load("break.lua"),     2.0},
-    {"compare.lua", #load("compare.lua"),   1.0},
+    _test("ambiguous.lua",     lulu.Error.Syntax),
+    _test("arith.lua",         7.8),
+    _test("blocks.lua",        "file"),
+    _test("break.lua",         2.0),
+    _test("compare.lua",       1.0),
+    _test("compare-neq.lua",   -1.0),
+    _test("error-concat.lua",  lulu.Error.Runtime),
+    _test("error-comment.lua", lulu.Error.Syntax),
+    _test("fun.lua",           nil),
+    _test("hello.lua",         nil),
+    _test("if-else.lua",       nil),
+    _test("if-return.lua",     nil),
+    _test("literal.lua",       7.8),
+    _test("return-number.lua", lulu.Error.Syntax),
+    _test("table.lua",         nil),
+    _test("while.lua",         4.0),
 }
 
 try_test :: proc(t: ^testing.T, L: ^lulu.State, test: Test) -> Value {
     fmt.printfln("[LULU ] --- Running '%s'...", test.name, flush=false)
-    lulu.load(L, test.name, test.input) or_return
+    lulu_aux.load(L, test.name, test.input) or_return
     lulu.pcall(L, arg_count=0, ret_count=1) or_return
 
     #partial switch type := lulu.type(L, -1); type {

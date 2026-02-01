@@ -49,6 +49,7 @@ is now able to see the results.
  */
 Api_Proc :: #type proc(L: ^State) -> (ret_count: int)
 
+Reader_Proc :: #type proc(user_data: rawptr) -> (current: []byte)
 
 /*
 Indicates that a function will take an arbitrary number of arguments
@@ -473,21 +474,22 @@ set_field :: proc(L: ^State, table: int, field: string) {
     vm_pop(L, 2)
 }
 
-load :: proc(L: ^State, name, input: string) -> Error {
+load :: proc(L: ^State, name: string, reader_proc: Reader_Proc, reader_data: rawptr, allocator := context.allocator) -> Error {
     // Must be outside protected call to ensure that we can defer destroy.
-    b, _ := strings.builder_make(allocator=L.global_state.backing_allocator)
-    defer strings.builder_destroy(&b)
+    b1, _ := strings.builder_make(allocator=allocator)
+    defer strings.builder_destroy(&b1)
 
     Data :: struct {
-        builder:    ^strings.Builder,
-        name, input: string,
+        builder: ^strings.Builder,
+        name:    string,
+        input:   Reader,
     }
 
-    data := Data{&b, name, input}
+    data := Data{&b1, name, reader_make(reader_proc, reader_data)}
 
     // Try to push the main function as a closure on the caller's VM stack.
     return run_raw_pcall(L, proc(L: ^State, user_data: rawptr) {
-        data  := (cast(^Data)user_data)^
+        data  := cast(^Data)user_data
         name  := ostring_new(L, data.name)
         program(L, data.builder, name, data.input)
     }, &data)

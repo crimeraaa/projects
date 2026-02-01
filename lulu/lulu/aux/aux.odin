@@ -1,5 +1,8 @@
 package lulu_aux
 
+// standard
+import os "core:os/os2"
+
 // local
 import lulu ".."
 
@@ -105,4 +108,63 @@ opt_string :: proc(L: ^lulu.State, index: int, default: string) -> string {
         return default
     }
     return check_string(L, index)
+}
+
+load :: proc {
+    load_line,
+    load_file,
+}
+
+/*
+**Errors**
+- .Syntax
+ */
+load_line :: proc(L: ^lulu.State, name, line: string) -> (err: lulu.Error) {
+    line_reader_proc :: proc(user_data: rawptr) -> (current: []byte) {
+        line   := cast(^[]byte)user_data
+        current = line^
+
+        // Upon the first read, make it so that `buf` will always cause the EOF
+        // condition from now on.
+        if len(current) > 0 {
+            line^ = nil
+        }
+        return
+    }
+
+    line := transmute([]byte)line
+    return lulu.load(L, "stdin", line_reader_proc, &line)
+}
+
+/*
+Errors:
+- .Runtime: We failed to load the file for some reason.
+- .Syntax
+ */
+load_file :: proc(L: ^lulu.State, name: string) -> (err: lulu.Error) {
+    File_Reader_Data :: struct {
+        file: ^os.File,
+        buf:  [4096 - size_of(^os.File)]byte,
+    }
+
+    file_reader_proc :: proc(user_data: rawptr) -> (current: []byte) {
+        data := cast(^File_Reader_Data)user_data
+        n, err := os.read(data.file, data.buf[:])
+
+        // EOF was not reached and nothing bad happened?
+        if n > 0 && err == nil {
+            current = data.buf[:n]
+        }
+        return
+    }
+
+    file, file_err := os.open(name)
+    if file_err != nil {
+        lulu.push(L, os.error_string(file_err))
+        return .Runtime
+    }
+    defer os.close(file)
+
+    data := File_Reader_Data{file=file}
+    return lulu.load(L, name, file_reader_proc, &data)
 }

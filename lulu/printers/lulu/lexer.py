@@ -41,9 +41,12 @@ class TokenPrinter:
         if i in TOKEN_MODE:
             self.__data = token["data"][TOKEN_MODE[i]]
         else:
-            self.__data = str(TOKEN_TYPE_STRINGS[i])
+            self.__data = None
         self.__line = int(token["line"])
         self.__col  = int(token["col"])
 
     def to_string(self) -> str:
-        return f"{self.__line}:{self.__col}: {self.__type}({self.__data})"
+        s = f"{self.__line}:{self.__col}: {self.__type}"
+        if self.__data:
+            s += f"({self.__data})"
+        return s

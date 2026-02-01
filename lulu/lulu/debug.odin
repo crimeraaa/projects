@@ -85,11 +85,12 @@ Throws a runtime error and reports a message in the form `file:line:col: message
 - https://www.gnu.org/prep/standards/standards.html#Errors
  */
 debug_syntax_error :: proc(x: ^Lexer, here: Token, msg: string) -> ! {
-    L := x.L
+    L    := x.L
     file := ostring_to_string(x.name)
     line := here.line
     col  := here.col
-    vm_push_fstring(L, "%s:%i:%i: %s near '%s'", file, line, col, msg, here.lexeme)
+    loc  := token_string(here)
+    vm_push_fstring(L, "%s:%i:%i: %s near '%s'", file, line, col, msg, loc)
     throw_error(L, .Syntax)
 }
 
@@ -265,8 +266,8 @@ disassemble_at :: proc(chunk: ^Chunk, i: Instruction, pc: i32, pad := 0) {
 
     case .Eq..=.Leq:
         rb := _get_reg(chunk, i.B, pc, buf2[:])
-        c  := "not" if bool(i.C) else ""
-        fmt.printf("goto .code[%i] if %s (%s %s %s)", pc + 1 + 1, c, ra, _op_string(op), rb)
+        c  := "not " if bool(i.C) else ""
+        fmt.printf("goto .code[%i] if %s(%s %s %s)", pc + 1 + 1, c, ra, _op_string(op), rb)
 
     case .Concat: fmt.printf("concat $r[%i:%i]", i.B, i.C)
 

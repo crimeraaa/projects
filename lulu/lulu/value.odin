@@ -6,8 +6,8 @@ import "core:math"
 import "core:strconv"
 
 Value :: struct {
-    using data: Value_Data,
     type: Value_Type,
+    using data: Value_Data,
 }
 
 /*
@@ -123,7 +123,11 @@ number_add :: proc (a, b: f64) -> f64 { return a + b }
 number_sub :: proc (a, b: f64) -> f64 { return a - b }
 number_mul :: proc (a, b: f64) -> f64 { return a * b }
 number_div :: proc (a, b: f64) -> f64 { return a / b }
-number_mod :: proc (a, b: f64) -> f64 {q := a / b; return a - math.floor(q) * b}
+number_mod :: proc (a, b: f64) -> f64 {
+    q := a / b
+    return a - math.floor(q) * b
+}
+
 number_pow :: math.pow_f64
 
 number_eq  :: proc(a, b: f64) -> bool { return a == b }

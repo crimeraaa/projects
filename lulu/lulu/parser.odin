@@ -13,11 +13,18 @@ Parser :: struct {
     consumed: Token,
 
     // Token stream. Helps determine what the next action should be.
+    token: Token,
+
+    // Token stream. The lookahead token is used only for table constructors
+    // in order to differentiate key-value pairs and identifiers in expressions.
     lookahead: Token,
 
-    // Token stream. The lookahead(2) token is used only for table constructors
-    // in order to differentiate key-value pairs and identifiers in expressions.
-    lookahead2: Token,
+    // Used to prevent invalidation of `consumed.lexeme` whenever we scan
+    // a new token. The backing buffer must exist at the same lifetime of
+    // the parent parser. It is tempting to inline the backing buffer in the
+    // struct directly, but returning parsers by value on the stack makes this
+    // complicated.
+    consumed_builder: strings.Builder,
 }
 
 Precedence :: enum u8 {
@@ -47,8 +54,10 @@ Rule :: struct {
     invert: bool,
 }
 
-parser_make :: proc(L: ^State, builder: ^strings.Builder, name: ^Ostring, input: string) -> Parser {
-    p := Parser{lexer=lexer_make(L, builder, name, input)}
+parser_make :: proc(L: ^State, builder: ^strings.Builder, consumed_buf: []byte, name: ^Ostring, input: Reader) -> Parser {
+    p: Parser
+    p.lexer            = lexer_make(L, builder, name, input)
+    p.consumed_builder = strings.builder_from_bytes(consumed_buf[:])
     advance_token(&p)
     return p
 }
@@ -67,12 +76,14 @@ parser_assert :: proc(p: ^Parser, cond: bool, msg := #caller_expression(cond), a
 }
 
 @(private="package")
-program :: proc(L: ^State, builder: ^strings.Builder, name: ^Ostring, input: string) {
+program :: proc(L: ^State, builder: ^strings.Builder, name: ^Ostring, input: Reader) {
     main_chunk := chunk_new(L, name)
     // Ensure `main_chunk` cannot be collected.
     vm_push(L, value_make(cast(^Object)main_chunk, .Chunk))
 
-    p := parser_make(L, builder, name, input)
+    // Any more is probably overkill. We really only need this to report errors.
+    buf: [16]byte
+    p := parser_make(L, builder, buf[:], name, input)
     c := compiler_make(L, &p, main_chunk)
 
     // Block for file scope (outermost scope).
@@ -92,39 +103,53 @@ Unconditionally consumes a new token.
 
 **Guarantees**
 - The old consumed token is thrown away.
-- The old lookahead is now the new consumed token.
-- The next scanned token is now the new lookahead token if there is no
-lookahead(2) token to discharge. Otherwise, the lookahead(2) token is used
-as the new primary lookahead and the lookahead(2) token is thrown away.
+- The old current token  is the new consumed token.
+- The next scanned token is now the new current token if there is no
+lookahead token to discharge. Otherwise, the lookahead token is discharged.
  */
 advance_token :: proc(p: ^Parser) {
     next: Token
-    if p.lookahead2.type == nil {
+    if p.lookahead.type == nil {
+        // For numbers, copy the current token's lexeme to avoid invalidation.
+        // Otherwise we can use the token type or the string payload.
+        if s, is_owned := token_string(p.token); is_owned {
+            b   := &p.consumed_builder
+            cap := strings.builder_cap(b^)
+            strings.builder_reset(b)
+
+            n := strings.write_string(b, s if len(s) <= cap else s[:cap - 3])
+            if n < len(s) {
+                strings.write_string(b, "...")
+            }
+            p.token.lexeme = strings.to_string(b^)
+        }
         next = lexer_scan_token(&p.lexer)
     } else {
-        next = p.lookahead2
-        p.lookahead2 = {}
+        // Discharge the lookahead.
+        next        = p.lookahead
+        p.lookahead = {}
     }
 
     if next.type == nil {
-        error_lookahead(p, "Unexpected token")
+        error_at(p, next, "Unexpected token")
     }
 
-    p.consumed  = p.lookahead
-    p.lookahead = next
+    p.consumed = p.token
+    p.token    = next
+    // fmt.println(next)
 }
 
 /*
 **Returns**
-- type: The token type of the lookahead(2) token.
+- type: The token type of the lookahead token.
  */
-consume_lookahead2 :: proc(p: ^Parser) -> (type: Token_Type) {
-    parser_assert(p, p.lookahead2.type == nil)
+consume_lookahead :: proc(p: ^Parser) -> (type: Token_Type) {
+    parser_assert(p, p.lookahead.type == nil)
     next := lexer_scan_token(&p.lexer)
     if next.type == nil {
-        error_lookahead(p, "Unexpected token")
+        error_at(p, next, "Unexpected token")
     }
-    p.lookahead2 = next
+    p.lookahead = next
     return next.type
 }
 
@@ -132,26 +157,26 @@ peek_consumed :: proc(p: ^Parser) -> Token_Type {
     return p.consumed.type
 }
 
-peek_lookahead :: proc(p: ^Parser) -> Token_Type {
-    return p.lookahead.type
+peek_token :: proc(p: ^Parser) -> Token_Type {
+    return p.token.type
 }
 
 expect_token :: proc(p: ^Parser, want: Token_Type, info := "") {
     if !match_token(p, want) {
         buf: [256]byte
         msg: string
-        what := token_string(want)
+        what := token_type_string(want)
         if info == "" {
             msg = fmt.bprintf(buf[:], "Expected '%s'", what)
         } else {
             msg = fmt.bprintf(buf[:], "Expected '%s' %s", what, info)
         }
-        error_lookahead(p, msg)
+        error_current(p, msg)
     }
 }
 
 check_token :: proc(p: ^Parser, want: Token_Type) -> (found: bool) {
-    return p.lookahead.type == want
+    return p.token.type == want
 }
 
 /*
@@ -161,7 +186,7 @@ Consumes the lookahead token iff it matches `want`.
 - `true` if the lookahead token matched `want`, else `false`.
  */
 match_token :: proc(p: ^Parser, want: Token_Type) -> (found: bool) {
-    found = p.lookahead.type == want
+    found = p.token.type == want
     if found {
         advance_token(p)
     }
@@ -175,7 +200,7 @@ match_token :: proc(p: ^Parser, want: Token_Type) -> (found: bool) {
 expect a proper ending token.
  */
 block_continue :: proc(p: ^Parser) -> bool {
-    #partial switch p.lookahead.type {
+    #partial switch p.token.type {
     case .Else, .Elseif, .End, .EOF: return false
     case:
         break
@@ -192,18 +217,14 @@ parser_error :: proc(p: ^Parser, msg: string) -> ! {
 }
 
 /*
-Throws a syntax error at the lookahead token.
+Throws a syntax error at the current token.
  */
-error_lookahead :: proc(p: ^Parser, msg: string) -> ! {
-    error_at(p, p.lookahead, msg)
+error_current :: proc(p: ^Parser, msg: string) -> ! {
+    error_at(p, p.token, msg)
 }
 
 error_at :: proc(p: ^Parser, t: Token, msg: string) -> ! {
-    here := t
-    if len(here.lexeme) == 0 {
-        here.lexeme = token_string(t.type)
-    }
-    debug_syntax_error(&p.lexer, here, msg)
+    debug_syntax_error(&p.lexer, t, msg)
 }
 
 /*
@@ -688,7 +709,7 @@ variable_expression :: proc(p: ^Parser, c: ^Compiler) -> (var: Expr) {
     }
 
     for {
-        #partial switch peek_lookahead(p) {
+        #partial switch peek_token(p) {
         case .Paren_Open, .String, .Curly_Open:
             function_call(p, c, &var)
 
@@ -735,6 +756,10 @@ function_call :: proc(p: ^Parser, c: ^Compiler, func: ^Expr) {
 
     ret_count := u16(1)
     call_reg  := compiler_push_expr_next(c, func)
+
+    if p.consumed.line != p.token.line {
+        error_current(p, "Ambiguous function call")
+    }
     advance_token(p)
     #partial switch peek_consumed(p) {
     case .Paren_Open:
@@ -811,27 +836,18 @@ constructor :: proc(p: ^Parser, c: ^Compiler) -> (e: Expr) {
     for !check_token(p, .Curly_Close) {
         // Don't advance immediately because expressions representing array
         // elements require their first token to be in the lookahead.
-        #partial switch peek_lookahead(p) {
+        #partial switch peek_token(p) {
         case .Identifier:
-            if consume_lookahead2(p) == .Assign {
+            if consume_lookahead(p) == .Assign {
                 // skip whatever was before <identifier>.
-                //
-                //  consumed:  <identifier>
-                //  lookahead: '='
                 advance_token(p)
                 key := string_expression(p, c)
 
                 // skip <identifier>. itself.
-                //
-                //  consumed:   '='
-                //  lookahead:  <prefix>
                 advance_token(p)
-                _set_field(p, c, &ct, &key)
+                __set_field(p, c, &ct, &key)
             } else {
-                // consumed:   ?
-                // lookahead:  <identifier>
-                // lookahead2: <infix>
-                _set_array(p, c, &ct)
+                __set_array(p, c, &ct)
             }
 
         case .Bracket_Open:
@@ -839,10 +855,10 @@ constructor :: proc(p: ^Parser, c: ^Compiler) -> (e: Expr) {
             key := expression(p, c)
             expect_token(p, .Bracket_Close)
             expect_token(p, .Assign)
-            _set_field(p, c, &ct, &key)
+            __set_field(p, c, &ct, &key)
 
         case:
-            _set_array(p, c, &ct)
+            __set_array(p, c, &ct)
         }
 
         if !match_token(p, .Comma) {
@@ -864,10 +880,10 @@ constructor :: proc(p: ^Parser, c: ^Compiler) -> (e: Expr) {
     return e
 }
 
-_set_field :: proc(p: ^Parser, c: ^Compiler, ct: ^Constructor, key: ^Expr) {
+__set_field :: proc(p: ^Parser, c: ^Compiler, ct: ^Constructor, key: ^Expr) {
     // Explicit field also works as a continuous array index?
     if key.type == .Number && key.number == f64(ct.array_count + 1) {
-        _set_array(p, c, ct)
+        __set_array(p, c, ct)
     } else {
         value := expression(p, c)
         compiler_set_table(c, ct.reg, key, &value)
@@ -875,7 +891,7 @@ _set_field :: proc(p: ^Parser, c: ^Compiler, ct: ^Constructor, key: ^Expr) {
     }
 }
 
-_set_array :: proc(p: ^Parser, c: ^Compiler, ct: ^Constructor) {
+__set_array :: proc(p: ^Parser, c: ^Compiler, ct: ^Constructor) {
     key   := expr_make_number(f64(ct.array_count + 1))
     value := expression(p, c)
     compiler_set_table(c, ct.reg, &key, &value)
@@ -890,7 +906,7 @@ _set_array :: proc(p: ^Parser, c: ^Compiler, ct: ^Constructor) {
 
 infix :: proc(p: ^Parser, c: ^Compiler, left: ^Expr, prec: Precedence = nil) {
     for {
-        rule := get_rule(p.lookahead.type)
+        rule := get_rule(p.token.type)
         // No binary operation OR parent caller is of a higher precedence?
         if rule.op == nil || prec > rule.left {
             break
@@ -903,7 +919,7 @@ infix :: proc(p: ^Parser, c: ^Compiler, left: ^Expr, prec: Precedence = nil) {
         case .Eq..=.Leq:
             compare(p, c, rule.op, rule.invert, left, rule.right)
         case .Concat:
-            _concat(p, c, left, rule.right)
+            __concat(p, c, left, rule.right)
         case:
             unreachable()
         }
@@ -961,7 +977,7 @@ compare :: proc(p: ^Parser, c: ^Compiler, op: Opcode, invert: bool, left: ^Expr,
     compiler_code_compare(c, op, invert, left, &right)
 }
 
-_concat :: proc(p: ^Parser, c: ^Compiler, left: ^Expr, prec: Precedence) {
+__concat :: proc(p: ^Parser, c: ^Compiler, left: ^Expr, prec: Precedence) {
     compiler_push_expr_next(c, left)
 
     // Advance only now so that the above push has the correct line/col info.

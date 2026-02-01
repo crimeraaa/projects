@@ -7,6 +7,7 @@ import "core:mem"
 
 // local
 import "lulu"
+import lulu_aux "lulu/aux"
 import lulu_lib "lulu/libs"
 
 _ :: mem
@@ -57,7 +58,7 @@ main :: proc() {
     err  := lulu.api_pcall(L, proc(L: ^lulu.State) -> (ret_count: int) {
         data := cast(^Data)lulu.to_userdata(L, 1)
         lulu_lib.open(L)
-
+        lulu.set_top(L, 0)
         switch len(data.args) {
         case 1: data.err = run_repl(L)
         case 2: data.err = run_file(L, data.args[1])
@@ -91,34 +92,38 @@ run_repl :: proc(L: ^lulu.State) -> (err: os.Error) {
         line_buf: [512]byte
         line_read := os.read(os.stdin, line_buf[:]) or_return
         // Skip the newline stored at `line_buf[line_read]`.
-        run_input(L, "stdin", string(line_buf[:line_read - 1]))
+        line     := string(line_buf[:line_read - 1])
+        load_err := lulu_aux.load(L, "stdin", line)
+        run_input(L, load_err, "stdin")
     }
     unreachable()
 }
 
+
 run_file :: proc(L: ^lulu.State, name: string) -> (err: os.Error) {
-    buf := os.read_entire_file(name, context.allocator) or_return
-    run_input(L, name, string(buf))
-    delete(buf)
+    load_err := lulu_aux.load(L, name)
+    run_input(L, load_err, name)
     return nil
 }
 
-run_input :: proc(L: ^lulu.State, name, input: string) {
-    lulu.set_top(L, 0)
-    err := lulu.load(L, name, input)
-    if err == nil {
-        err = lulu.pcall(L, arg_count=0, ret_count=lulu.VARIADIC)
-    }
-
-    if err != nil {
+run_input :: proc(L: ^lulu.State, load_err: lulu.Error, name: string) {
+    if load_err != nil {
         fmt.println(lulu.to_string(L, -1))
         lulu.pop(L, 1)
     } else {
-        if n := lulu.get_top(L); n > 0 {
-            fmt.printf("'%s' returned: ", name, flush=false)
-            lulu.get_global(L, "print")
-            lulu.insert(L, 1)
-            lulu.call(L, arg_count=n, ret_count=0)
+        call_err := lulu.pcall(L, arg_count=0, ret_count=lulu.VARIADIC)
+        if call_err != nil {
+            fmt.println(lulu.to_string(L, -1))
+            // pop error message and main chunk.
+            lulu.pop(L, 2)
+        } else {
+            if n := lulu.get_top(L); n > 0 {
+                fmt.printf("'%s' returned: ", name, flush=false)
+                lulu.get_global(L, "print")
+                lulu.insert(L, 1)
+                lulu.call(L, arg_count=n, ret_count=0)
+            }
         }
     }
+    assert(lulu.get_top(L) == 0)
 }

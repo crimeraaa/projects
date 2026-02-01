@@ -869,8 +869,9 @@ _check_imm :: proc(e: ^Expr) -> (imm: u16, neg, ok: bool) {
 }
 
 compiler_code_compare :: proc(c: ^Compiler, op: Opcode, invert: bool, #no_alias left, right: ^Expr) {
-    rb := left.reg
-    rc := compiler_push_expr_any(c, right)
+    rb     := left.reg
+    rc     := compiler_push_expr_any(c, right)
+    invert := invert
 
     if rb > rc {
         compiler_pop_reg(c, rb)
@@ -880,6 +881,10 @@ compiler_code_compare :: proc(c: ^Compiler, op: Opcode, invert: bool, #no_alias 
         compiler_pop_reg(c, rb)
     }
 
+    if op != .Eq && invert {
+        rb, rc = rc, rb
+        invert = !invert
+    }
     pc := compiler_code_ABC(c, op, rb, rc, u16(!invert))
     left^ = expr_make_pc(.Compare, pc)
 }
