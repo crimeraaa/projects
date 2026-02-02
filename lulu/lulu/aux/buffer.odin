@@ -6,37 +6,44 @@ import "core:unicode/utf8"
 // local
 import lulu ".."
 
-BUFFER_SIZE :: #config(LULU_BUFFER_SIZE, 4096)
+BUFFER_SIZE :: #config(LULU_BUFFER_SIZE, 1024)
 
 Buffer :: struct {
     pushed: int,
     index:  int,
-    data:   [BUFFER_SIZE]byte,
+    data:   [BUFFER_SIZE - size_of(int) * 2]byte,
 }
 
 @(private="file")
-_flush :: proc(L: ^lulu.State, b: ^Buffer) {
+__flush :: proc(L: ^lulu.State, b: ^Buffer) {
     lulu.push(L, string(b.data[:b.index]))
     b.index   = 0
     b.pushed += 1
 }
 
 @(private="file")
-_flush_if_over :: proc(L: ^lulu.State, b: ^Buffer, count: int) {
+__flush_if_over :: proc(L: ^lulu.State, b: ^Buffer, count: int) {
     if b.index + count >= len(b.data) {
-        _flush(L, b)
+        __flush(L, b)
     }
 }
 
+write :: proc {
+    write_byte,
+    write_bytes,
+    write_rune,
+    write_string,
+}
+
 write_byte :: proc(L: ^lulu.State, b: ^Buffer, data: byte) {
-    _flush_if_over(L, b, 1)
+    __flush_if_over(L, b, 1)
     b.data[b.index] = data
     b.index += 1
 }
 
 write_bytes :: proc(L: ^lulu.State, b: ^Buffer, data: []byte) {
     n := len(data)
-    _flush_if_over(L, b, n)
+    __flush_if_over(L, b, n)
 
     dst := b.data[b.index:b.index + n]
     copy(dst, data)
@@ -53,7 +60,7 @@ write_string :: proc(L: ^lulu.State, b: ^Buffer, data: string) {
 }
 
 push_result :: proc(L: ^lulu.State, b: ^Buffer) {
-    _flush(L, b)
+    __flush(L, b)
     lulu.concat(L, b.pushed)
     b.pushed = 1
 }

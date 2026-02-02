@@ -304,7 +304,7 @@ insert :: proc(L: ^State, index: int) {
 }
 
 push_nil :: proc(L: ^State, count := 1) {
-    for i in 1..=count {
+    for _ in 1..=count {
         vm_push(L, value_make())
     }
 }
@@ -312,6 +312,7 @@ push_nil :: proc(L: ^State, count := 1) {
 push :: proc {
     push_boolean,
     push_number,
+    push_integer,
     push_lightuserdata,
     push_string,
     push_api_proc,
@@ -325,6 +326,10 @@ push_boolean :: proc(L: ^State, b: bool) {
 push_number :: proc(L: ^State, n: f64) {
     v := value_make(n)
     vm_push(L, v)
+}
+
+push_integer :: proc(L: ^State, i: int) {
+    push(L, f64(i))
 }
 
 push_lightuserdata :: proc(L: ^State, p: rawptr) {
@@ -363,13 +368,13 @@ push_fstring :: proc(L: ^State, format: string, args: ..any) -> string {
 Concatenates the top `count` values.
 
 **Side-effects**
-- push: 1 if `count >= 1` else 0
+- push: 1 if `count > 1` else 0
 - pop: `count - 1` if `count >= 2` else 0
 */
 concat :: proc(L: ^State, count: int) {
     switch count {
-    case 0: return
-    case 1: push(L, ""); return
+    case 0: push(L, ""); return
+    case 1: return
     case:
         break
     }
@@ -474,10 +479,10 @@ set_field :: proc(L: ^State, table: int, field: string) {
     vm_pop(L, 2)
 }
 
-load :: proc(L: ^State, name: string, reader_proc: Reader_Proc, reader_data: rawptr, allocator := context.allocator) -> Error {
+load :: proc(L: ^State, name: string, reader_proc: Reader_Proc, reader_data: rawptr, allocator: mem.Allocator) -> Error {
     // Must be outside protected call to ensure that we can defer destroy.
-    b1, _ := strings.builder_make(allocator=allocator)
-    defer strings.builder_destroy(&b1)
+    b, _ := strings.builder_make(allocator=allocator)
+    defer strings.builder_destroy(&b)
 
     Data :: struct {
         builder: ^strings.Builder,
@@ -485,7 +490,7 @@ load :: proc(L: ^State, name: string, reader_proc: Reader_Proc, reader_data: raw
         input:   Reader,
     }
 
-    data := Data{&b1, name, reader_make(reader_proc, reader_data)}
+    data := Data{&b, name, reader_make(reader_proc, reader_data)}
 
     // Try to push the main function as a closure on the caller's VM stack.
     return run_raw_pcall(L, proc(L: ^State, user_data: rawptr) {

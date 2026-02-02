@@ -94,7 +94,8 @@ run_repl :: proc(L: ^lulu.State) -> (err: os.Error) {
         // Skip the newline stored at `line_buf[line_read]`.
         line     := string(line_buf[:line_read - 1])
         load_err := lulu_aux.load(L, "stdin", line)
-        run_input(L, load_err, "stdin")
+        check_no_error(L, load_err) or_continue
+        run_input(L, "stdin")
     }
     unreachable()
 }
@@ -102,28 +103,33 @@ run_repl :: proc(L: ^lulu.State) -> (err: os.Error) {
 
 run_file :: proc(L: ^lulu.State, name: string) -> (err: os.Error) {
     load_err := lulu_aux.load(L, name)
-    run_input(L, load_err, name)
+    if check_no_error(L, load_err) {
+        run_input(L, name)
+    }
     return nil
 }
 
-run_input :: proc(L: ^lulu.State, load_err: lulu.Error, name: string) {
-    if load_err != nil {
+check_no_error :: proc(L: ^lulu.State, err: lulu.Error) -> (ok: bool) {
+    if err != nil {
         fmt.println(lulu.to_string(L, -1))
         lulu.pop(L, 1)
-    } else {
-        call_err := lulu.pcall(L, arg_count=0, ret_count=lulu.VARIADIC)
-        if call_err != nil {
-            fmt.println(lulu.to_string(L, -1))
-            // pop error message and main chunk.
-            lulu.pop(L, 2)
-        } else {
-            if n := lulu.get_top(L); n > 0 {
-                fmt.printf("'%s' returned: ", name, flush=false)
-                lulu.get_global(L, "print")
-                lulu.insert(L, 1)
-                lulu.call(L, arg_count=n, ret_count=0)
-            }
+        return false
+    }
+    return true
+}
+
+run_input :: proc(L: ^lulu.State, name: string) {
+    call_err := lulu.pcall(L, arg_count=0, ret_count=lulu.VARIADIC)
+    if check_no_error(L, call_err) {
+        if n := lulu.get_top(L); n > 0 {
+            fmt.printf("'%s' returned: ", name, flush=false)
+            lulu.get_global(L, "print")
+            lulu.insert(L, 1)
+            lulu.call(L, arg_count=n, ret_count=0)
         }
+    } else {
+        // Pop main chunk as well.
+        lulu.pop(L, 1)
     }
     assert(lulu.get_top(L) == 0)
 }

@@ -313,14 +313,16 @@ compiler_patch_jump :: proc(c: ^Compiler, jump: i32, target := INVALID_PC) {
     if jump == NO_JUMP {
         return
     }
-    target := _get_target(c, target)
+    target := target
+    target  = _get_target(c, target)
     prev   := _patch_jump(c, jump, target)
     // `.Jump_If` can never be a jump list.
     compiler_assert(c, prev == NO_JUMP)
 }
 
 compiler_patch_jump_list :: proc(c: ^Compiler, list: i32, target := INVALID_PC) {
-    target := _get_target(c, target)
+    target := target
+    target = _get_target(c, target)
     for jump := list; jump != NO_JUMP; {
         prev := _patch_jump(c, jump, target)
         jump = prev

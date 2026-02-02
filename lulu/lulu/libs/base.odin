@@ -11,17 +11,17 @@ import lulu_aux "../aux"
 
 @(private="package", rodata)
 base_procs := [?]lulu_aux.Library_Entry{
-    {"assert",      _assert},
-    {"error",       _error},
-    {"print",       _print},
-    {"tostring",    _to_string},
-    {"tonumber",    _to_number},
-    {"sequence",    _sequence},
-    {"tuple",       _tuple},
-    {"type",        _type},
+    {"assert",      __assert},
+    {"error",       __error},
+    {"print",       __print},
+    {"tostring",    __to_string},
+    {"tonumber",    __to_number},
+    // {"sequence",    __sequence},
+    // {"tuple",       __tuple},
+    {"type",        __type},
 }
 
-_assert :: proc(L: ^lulu.State) -> (ret_count: int) {
+__assert :: proc(L: ^lulu.State) -> (ret_count: int) {
     arg_count := lulu.get_top(L)
     condition := lulu.to_boolean(L, 1)
     if !condition {
@@ -31,13 +31,13 @@ _assert :: proc(L: ^lulu.State) -> (ret_count: int) {
     return arg_count
 }
 
-_error :: proc(L: ^lulu.State) -> int {
+__error :: proc(L: ^lulu.State) -> int {
     message := lulu_aux.check_string(L, 1)
     lulu_aux.errorf(L, "%s", message)
     // return 0
 }
 
-_print :: proc(L: ^lulu.State) -> (ret_count: int) {
+__print :: proc(L: ^lulu.State) -> (ret_count: int) {
     arg_count := lulu.get_top(L)
     lulu.get_global(L, "tostring")
     for i in 1..=arg_count {
@@ -54,7 +54,7 @@ _print :: proc(L: ^lulu.State) -> (ret_count: int) {
     return 0
 }
 
-_to_string :: proc(L: ^lulu.State) -> (ret_count: int) {
+__to_string :: proc(L: ^lulu.State) -> (ret_count: int) {
     i := 1
 
     lulu_aux.check_any(L, i)
@@ -73,7 +73,7 @@ _to_string :: proc(L: ^lulu.State) -> (ret_count: int) {
     return 1
 }
 
-_to_number :: proc(L: ^lulu.State) -> (ret_count: int) {
+__to_number :: proc(L: ^lulu.State) -> (ret_count: int) {
     lulu_aux.check_any(L, 1)
 
     base := int(lulu_aux.opt_number(L, 2, default=10))
@@ -131,23 +131,23 @@ _to_number :: proc(L: ^lulu.State) -> (ret_count: int) {
     return 1
 }
 
-_sequence :: proc(L: ^lulu.State) -> (ret_count: int) {
-    start := int(lulu_aux.check_number(L, 1))
-    stop  := int(lulu_aux.check_number(L, 2))
-    step  := int(lulu_aux.opt_number(L, index=3, default=1))
+// __sequence :: proc(L: ^lulu.State) -> (ret_count: int) {
+//     start := int(lulu_aux.check_number(L, 1))
+//     stop  := int(lulu_aux.check_number(L, 2))
+//     step  := int(lulu_aux.opt_number(L, index=3, default=1))
 
-    for i := start; i < stop; i += step {
-        lulu.push(L, f64(i))
-        ret_count += 1
-    }
-    return ret_count
-}
+//     for i := start; i < stop; i += step {
+//         lulu.push(L, f64(i))
+//         ret_count += 1
+//     }
+//     return ret_count
+// }
 
-_tuple :: proc(L: ^lulu.State) -> (ret_count: int) {
-    return lulu.get_top(L)
-}
+// __tuple :: proc(L: ^lulu.State) -> (ret_count: int) {
+//     return lulu.get_top(L)
+// }
 
-_type :: proc(L: ^lulu.State) -> (ret_count: int) {
+__type :: proc(L: ^lulu.State) -> (ret_count: int) {
     lulu_aux.check_any(L, 1)
     type_name := lulu_aux.type_name_at(L, 1)
     lulu.push(L, type_name)

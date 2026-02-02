@@ -178,12 +178,6 @@ read_rune :: proc(x: ^Lexer) -> (r: rune) {
     return r
 }
 
-read_save_rune :: proc(x: ^Lexer) -> (r: rune) {
-    r = read_rune(x)
-    save_rune(x, r)
-    return r
-}
-
 save_rune :: proc(x: ^Lexer, r: rune) {
     strings.write_rune(x.builder, r)
 }

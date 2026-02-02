@@ -263,8 +263,8 @@ value_eq :: proc(a, b: Value) -> bool {
 
     switch t {
     case .Nil:      return true
-    case .Boolean:  return value_get_bool(a)    == value_get_bool(b)
-    case .Number:   return value_get_number(a)  == value_get_number(b)
+    case .Boolean:  return value_get_bool(a) == value_get_bool(b)
+    case .Number:   return number_eq(value_get_number(a), value_get_number(b))
     case .Light_Userdata, .String, .Table, .Function:
         return value_get_pointer(a) == value_get_pointer(b)
 

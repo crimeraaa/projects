@@ -1,7 +1,6 @@
 #+private package
 package lulu
 
-import "base:runtime"
 import "core:fmt"
 import "core:mem"
 import "core:strings"
@@ -78,7 +77,6 @@ vm_push_fstring :: proc(L: ^State, format: string, args: ..any) -> string {
         spec_i := fmt_i + 1
 
         buf: [VALUE_TO_STRING_BUFFER_SIZE]byte
-        b := strings.builder_from_bytes(buf[:])
         switch spec := format[spec_i]; spec {
         case 'c':
             r := arg.(rune) or_else rune(arg.(byte))

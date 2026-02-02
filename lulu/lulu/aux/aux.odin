@@ -88,6 +88,10 @@ check_number :: proc(L: ^lulu.State, index: int) -> f64 {
     return n
 }
 
+check_integer :: proc(L: ^lulu.State, index: int) -> int {
+    return int(check_number(L, index))
+}
+
 check_string :: proc(L: ^lulu.State, index: int) -> string {
     s, ok := lulu.to_string(L, index)
     if !ok {
@@ -101,6 +105,10 @@ opt_number :: proc(L: ^lulu.State, index: int, default: f64) -> f64 {
         return default
     }
     return check_number(L, index)
+}
+
+opt_integer :: proc(L: ^lulu.State, index, default: int) -> int {
+    return int(opt_number(L, index, f64(default)))
 }
 
 opt_string :: proc(L: ^lulu.State, index: int, default: string) -> string {
@@ -119,7 +127,7 @@ load :: proc {
 **Errors**
 - .Syntax
  */
-load_line :: proc(L: ^lulu.State, name, line: string) -> (err: lulu.Error) {
+load_line :: proc(L: ^lulu.State, name, line: string, allocator := context.allocator) -> (err: lulu.Error) {
     line_reader_proc :: proc(user_data: rawptr) -> (current: []byte) {
         line   := cast(^[]byte)user_data
         current = line^
@@ -133,7 +141,7 @@ load_line :: proc(L: ^lulu.State, name, line: string) -> (err: lulu.Error) {
     }
 
     line := transmute([]byte)line
-    return lulu.load(L, "stdin", line_reader_proc, &line)
+    return lulu.load(L, "stdin", line_reader_proc, &line, allocator)
 }
 
 /*
@@ -141,7 +149,7 @@ Errors:
 - .Runtime: We failed to load the file for some reason.
 - .Syntax
  */
-load_file :: proc(L: ^lulu.State, name: string) -> (err: lulu.Error) {
+load_file :: proc(L: ^lulu.State, name: string, allocator := context.allocator) -> (err: lulu.Error) {
     File_Reader_Data :: struct {
         file: ^os.File,
         buf:  [4096 - size_of(^os.File)]byte,
@@ -166,5 +174,5 @@ load_file :: proc(L: ^lulu.State, name: string) -> (err: lulu.Error) {
     defer os.close(file)
 
     data := File_Reader_Data{file=file}
-    return lulu.load(L, name, file_reader_proc, &data)
+    return lulu.load(L, name, file_reader_proc, &data, allocator)
 }
