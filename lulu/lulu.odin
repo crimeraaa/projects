@@ -2,6 +2,7 @@ package lulu_repl
 
 // standard
 import "core:fmt"
+import "core:io"
 import os "core:os/os2"
 import "core:mem"
 
@@ -61,11 +62,9 @@ main :: proc() {
         lulu.set_top(L, 0)
 
         // Test if lexer can properly handle token stream memory errors.
-        backing: [mem.DEFAULT_PAGE_SIZE]byte
-        arena: mem.Arena
-        mem.arena_init(&arena, backing[:])
-
-        allocator := mem.arena_allocator(&arena)
+        backing: [256]byte
+        fb_buffer := fb_buffer_make(backing[:])
+        allocator := fb_buffer_allocator(&fb_buffer)
         switch len(data.args) {
         case 1: data.err = run_repl(L, allocator)
         case 2: data.err = run_file(L, data.args[1], allocator)
@@ -84,6 +83,7 @@ main :: proc() {
         return 0
     }, &data)
 
+    io.flush(io.to_flusher(os.to_stream(os.stdout)))
     if err != nil {
         os.exit(int(err))
     }
@@ -112,6 +112,8 @@ run_file :: proc(L: ^lulu.State, name: string, allocator := context.allocator) -
     load_err := lulu_aux.load(L, name, allocator)
     if check_no_error(L, load_err) {
         run_input(L, name)
+    } else if load_err == .Memory {
+        return .Out_Of_Memory
     }
     return nil
 }

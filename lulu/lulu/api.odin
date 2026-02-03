@@ -130,7 +130,7 @@ current function upvalues.
 - 3.3 - Pseudo-Indices: https://www.lua.org/manual/5.1/manual.html#3.3
  */
 @(private="file")
-_get_any_index :: proc(L: ^State, index: int) -> ^Value {
+__get_any_ptr :: proc(L: ^State, index: int) -> ^Value {
     i   := index
     top := get_top(L)
     if i > 0 {
@@ -158,14 +158,14 @@ _get_any_index :: proc(L: ^State, index: int) -> ^Value {
             }
         }
     }
-    return &_VALUE_NONE
+    return &__VALUE_NONE
 }
 
 @(private="file", rodata)
-_VALUE_NONE: Value
+__VALUE_NONE: Value
 
 @(private="file")
-_get_stack_index :: proc(L: ^State, index: int) -> ^Value {
+__get_stack_ptr :: proc(L: ^State, index: int) -> ^Value {
     i := index
     if i > 0 {
         i -= 1
@@ -180,8 +180,8 @@ _get_stack_index :: proc(L: ^State, index: int) -> ^Value {
 }
 
 type :: proc(L: ^State, index: int) -> Type {
-    v := _get_any_index(L, index)
-    if v == &_VALUE_NONE {
+    v := __get_any_ptr(L, index)
+    if v == &__VALUE_NONE {
         return .None
     }
     return cast(Type)value_type(v^)
@@ -193,40 +193,40 @@ type_name :: proc(L: ^State, type: Type) -> string {
 }
 
 @(private="file")
-_is :: proc(L: ^State, index: int, $procedure: proc(Value) -> bool) -> bool {
-    v := _get_any_index(L, index)^
+__is :: #force_inline proc(L: ^State, index: int, $procedure: proc(Value) -> bool) -> bool {
+    v := __get_any_ptr(L, index)^
     return procedure(v)
 }
 
 is_none :: proc(L: ^State, index: int) -> bool {
-    v := _get_any_index(L, index)
-    return v == &_VALUE_NONE
+    v := __get_any_ptr(L, index)
+    return v == &__VALUE_NONE
 }
 
 is_none_or_nil :: proc(L: ^State, index: int) -> bool {
-    v := _get_any_index(L, index)
-    return v == &_VALUE_NONE || value_is_nil(v^)
+    v := __get_any_ptr(L, index)
+    return v == &__VALUE_NONE || value_is_nil(v^)
 }
 
-is_nil      :: proc(L: ^State, index: int) -> bool { return _is(L, index, value_is_nil)      }
-is_boolean  :: proc(L: ^State, index: int) -> bool { return _is(L, index, value_is_boolean)  }
-is_number   :: proc(L: ^State, index: int) -> bool { return _is(L, index, value_is_number)   }
-is_string   :: proc(L: ^State, index: int) -> bool { return _is(L, index, value_is_string)   }
-is_table    :: proc(L: ^State, index: int) -> bool { return _is(L, index, value_is_table)    }
-is_function :: proc(L: ^State, index: int) -> bool { return _is(L, index, value_is_function) }
+is_nil      :: proc(L: ^State, index: int) -> bool { return __is(L, index, value_is_nil)      }
+is_boolean  :: proc(L: ^State, index: int) -> bool { return __is(L, index, value_is_boolean)  }
+is_number   :: proc(L: ^State, index: int) -> bool { return __is(L, index, value_is_number)   }
+is_string   :: proc(L: ^State, index: int) -> bool { return __is(L, index, value_is_string)   }
+is_table    :: proc(L: ^State, index: int) -> bool { return __is(L, index, value_is_table)    }
+is_function :: proc(L: ^State, index: int) -> bool { return __is(L, index, value_is_function) }
 
 to_boolean :: proc(L: ^State, index: int) -> (b: bool) {
-    v := _get_any_index(L, index)^
+    v := __get_any_ptr(L, index)^
     return !value_is_falsy(v)
 }
 
 to_number :: proc(L: ^State, index: int) -> (n: f64, ok: bool) #optional_ok {
-    v := _get_any_index(L, index)^
+    v := __get_any_ptr(L, index)^
     return value_to_number(v)
 }
 
 to_pointer :: proc(L: ^State, index: int) -> (p: rawptr, ok: bool) #optional_ok {
-    v := _get_any_index(L, index)^
+    v := __get_any_ptr(L, index)^
     t := value_type(v)
     switch t {
     case .Light_Userdata: return value_get_pointer(v),  true
@@ -239,7 +239,7 @@ to_pointer :: proc(L: ^State, index: int) -> (p: rawptr, ok: bool) #optional_ok 
 }
 
 to_userdata :: proc(L: ^State, index: int) -> (p: rawptr, ok: bool) #optional_ok {
-    v := _get_any_index(L, index)^
+    v := __get_any_ptr(L, index)^
     t := value_type(v)
     #partial switch t {
     case .Light_Userdata: return value_get_pointer(v), true
@@ -250,7 +250,7 @@ to_userdata :: proc(L: ^State, index: int) -> (p: rawptr, ok: bool) #optional_ok
 }
 
 to_string :: proc(L: ^State, index: int) -> (s: string, ok: bool) #optional_ok {
-    v := _get_any_index(L, index)
+    v := __get_any_ptr(L, index)
     #partial switch value_type(v^) {
     case .String:
         s = value_get_string(v^)
@@ -281,7 +281,7 @@ Push `R[index]` to the top of the stack.
 - pop:  0
  */
 push_value :: proc(L: ^State, index: int) {
-    v := _get_any_index(L, index)^
+    v := __get_any_ptr(L, index)^
     vm_push(L, v)
 }
 
@@ -401,10 +401,7 @@ Push `_G[key]` to the top of the stack.
 - pop:  0
  */
 get_global :: proc(L: ^State, name: string) {
-    t := &L.globals_table
-    k := value_make(ostring_new(L, name))
-    v := vm_get_table(L, t, k)
-    vm_push(L, v)
+    get_field(L, GLOBALS_INDEX, name)
 }
 
 /*
@@ -415,8 +412,22 @@ Push `R[table][R[key]]` to the top of the stack.
 - pop:  0
  */
 get_table :: proc(L: ^State, table, key: int) {
-    t := _get_any_index(L, table)
-    k := _get_stack_index(L, key)^
+    t := __get_any_ptr(L, table)
+    k := __get_stack_ptr(L, key)^
+    v := vm_get_table(L, t, k)
+    vm_push(L, v)
+}
+
+/*
+Push `R[table][field]` to the top of the stack.
+
+**Side-effects**
+- push: 1
+- pop:  0
+ */
+get_field :: proc(L: ^State, table: int, field: string) {
+    t := __get_any_ptr(L, table)
+    k := value_make(ostring_new(L, field))
     v := vm_get_table(L, t, k)
     vm_push(L, v)
 }
@@ -429,16 +440,7 @@ get_table :: proc(L: ^State, table, key: int) {
 - pop:  1
  */
 set_global :: proc(L: ^State, name: string) {
-    t := &L.globals_table
-    k := value_make(ostring_new(L, name))
-    v := _get_stack_index(L, -1)^
-
-    // Prevent key from being collected.
-    vm_push(L, k)
-    vm_set_table(L, t, k, v)
-
-    // Pop both key and value.
-    vm_pop(L, 2)
+    set_field(L, GLOBALS_INDEX, name)
 }
 
 /*
@@ -449,9 +451,9 @@ set_global :: proc(L: ^State, name: string) {
 - pop:  1
  */
 set_table :: proc(L: ^State, table, key: int) {
-    t := _get_any_index(L, table)
-    k := _get_stack_index(L, key)^
-    v := _get_stack_index(L, -1)^
+    t := __get_any_ptr(L, table)
+    k := __get_stack_ptr(L, key)^
+    v := __get_stack_ptr(L, -1)^
 
     vm_set_table(L, t, k, v)
 
@@ -467,9 +469,9 @@ set_table :: proc(L: ^State, table, key: int) {
 - pop:  1
  */
 set_field :: proc(L: ^State, table: int, field: string) {
-    t := _get_any_index(L, table)
+    t := __get_any_ptr(L, table)
     k := value_make(ostring_new(L, field))
-    v := _get_stack_index(L, -1)^
+    v := __get_stack_ptr(L, -1)^
 
     // Prevent key from being collected.
     vm_push(L, k)
@@ -511,7 +513,7 @@ load :: proc(L: ^State, name: string, reader_proc: Reader_Proc, reader_data: raw
 - pop:  arg_count + 1
  */
 call :: proc(L: ^State, arg_count, ret_count: int) {
-    callee := _get_stack_index(L, -(arg_count + 1))
+    callee := __get_stack_ptr(L, -(arg_count + 1))
     run_call(L, callee, arg_count, ret_count)
 }
 
@@ -530,7 +532,7 @@ pcall :: proc(L: ^State, arg_count, ret_count: int) -> Error {
 
     return run_raw_pcall(L, proc(L: ^State, user_data: rawptr) {
         data   := (cast(^Data)user_data)^
-        callee := _get_stack_index(L, -(data.arg_count + 1))
+        callee := __get_stack_ptr(L, -(data.arg_count + 1))
         run_call(L, callee, data.arg_count, data.ret_count)
     }, &data)
 }

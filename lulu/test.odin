@@ -3,6 +3,7 @@ package lulu_repl
 // standard
 import "core:fmt"
 import "core:testing"
+import "core:mem"
 
 // local
 import "lulu"
@@ -34,6 +35,7 @@ TESTS := [?]Test{
     _test("compare-neq.lua",   -1.0),
     _test("error-concat.lua",  lulu.Error.Runtime),
     _test("error-comment.lua", lulu.Error.Syntax),
+    _test("error-stream-overflow.lua", lulu.Error.Syntax),
     _test("fun.lua",           nil),
     _test("hello.lua",         nil),
     _test("if-else.lua",       nil),
@@ -46,7 +48,8 @@ TESTS := [?]Test{
 
 try_test :: proc(t: ^testing.T, L: ^lulu.State, test: Test) -> Value {
     fmt.printfln("[LULU ] --- Running '%s'...", test.name, flush=false)
-    lulu_aux.load(L, test.name, test.input) or_return
+
+    lulu_aux.load(L, test.name, test.input, context.temp_allocator) or_return
     lulu.pcall(L, arg_count=0, ret_count=1) or_return
 
     #partial switch type := lulu.type(L, -1); type {
@@ -68,8 +71,11 @@ run_tests :: proc(t: ^testing.T) {
 
     // NOTE: Failures can prevent us from cleaning up properly.
     defer lulu.close(L)
-
     lulu_lib.open(L)
+
+    backing: [256]byte
+    fb_buffer := fb_buffer_make(backing[:])
+    context.temp_allocator = fb_buffer_allocator(&fb_buffer)
     for test, index in TESTS {
         lulu.set_top(L, 0)
         res := try_test(t, L, test)

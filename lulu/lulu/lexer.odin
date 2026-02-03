@@ -183,6 +183,8 @@ Reports a error message and throws a syntax error to the parent VM.
  */
 __error :: proc(x: ^Lexer, msg: string) -> ! {
     here := make_token(x, nil)
+    // Pinpoint the exact error, especially if in a multiline string.
+    here.col = x.col
     if len(here.lexeme) == 0 {
         here.lexeme = token_type_string(.EOF)
     }
@@ -468,7 +470,10 @@ make_token :: proc(x: ^Lexer, type: Token_Type) -> Token {
     t.type   = type
     t.lexeme = strings.to_string(x.builder^)
     t.line   = x.line
-    t.col    = i32(int(x.col) - strings.builder_len(x.builder^))
+
+    // NOTE(2026-02-03): Only works correctly for single-line tokens.
+    // Multi-line strings will be wrong here!
+    t.col = i32(int(x.col) - strings.builder_len(x.builder^))
     return t
 }
 
@@ -608,8 +613,10 @@ make_rune_token :: proc(x: ^Lexer, r: rune) -> Token {
         if save_match_rune(x, '[') {
             // Clear builder of the initial nesting.
             strings.builder_reset(x.builder)
+            col   := x.col
             count := consume_multi_sequence(x, nest_open, save=true)
             token := make_token(x, .String)
+            token.col    = col
             token.lexeme = token.lexeme[:len(token.lexeme) - count]
             token.string = ostring_new(x.L, token.lexeme)
             return token
