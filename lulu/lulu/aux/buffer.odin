@@ -2,11 +2,12 @@ package lulu_aux
 
 // standard
 import "core:unicode/utf8"
+import "core:mem"
 
 // local
 import lulu ".."
 
-BUFFER_SIZE :: #config(LULU_BUFFER_SIZE, 1024)
+BUFFER_SIZE :: #config(LULU_BUFFER_SIZE, mem.DEFAULT_PAGE_SIZE)
 
 Buffer :: struct {
     pushed: int,

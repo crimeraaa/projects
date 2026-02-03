@@ -4,25 +4,39 @@ package lulu_libs
 import lulu ".."
 import lulu_aux "../aux"
 
+@(private="package", rodata)
+libs := [?]lulu_aux.Library_Entry{
+    {"_G",      open_base},
+    {"math",    open_math},
+    {"string",  open_string},
+    {"utf8",    open_utf8},
+}
+
 open :: proc(L: ^lulu.State) {
-    open_base(L)
-    open_math(L)
-    open_string(L)
+    for lib in libs[:] {
+        lulu.push_api_proc(L, lib.procedure)
+        lulu.call(L, arg_count=0, ret_count=1)
+        lulu.set_global(L, lib.name)
+    }
 }
 
-open_base :: proc(L: ^lulu.State) {
+open_base :: proc(L: ^lulu.State) -> (ret_count: int) {
     lulu.push_value(L, lulu.GLOBALS_INDEX)
-    lulu.push_value(L, -1)   // _G = _G
-    lulu.set_global(L, "_G")
     lulu_aux.set_library(L, base_procs[:])
+    return 1
 }
 
-open_math :: proc(L: ^lulu.State) {
+open_math :: proc(L: ^lulu.State) -> (ret_count: int) {
     lulu_aux.new_library(L, math_procs[:])
-    lulu.set_global(L, "math")
+    return 1
 }
 
-open_string :: proc(L: ^lulu.State) {
+open_string :: proc(L: ^lulu.State) -> (ret_count: int) {
     lulu_aux.new_library(L, string_procs[:])
-    lulu.set_global(L, "string")
+    return 1
+}
+
+open_utf8 :: proc(L: ^lulu.State) -> (ret_count: int) {
+    lulu_aux.new_library(L, utf8_procs[:])
+    return 1
 }

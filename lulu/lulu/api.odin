@@ -479,6 +479,11 @@ set_field :: proc(L: ^State, table: int, field: string) {
     vm_pop(L, 2)
 }
 
+/*
+**Parameters**
+- allocator: Backing allocator for the token stream. You can supply an allocator
+with a fixed-size buffer to clamp the maximum length of tokens.
+ */
 load :: proc(L: ^State, name: string, reader_proc: Reader_Proc, reader_data: rawptr, allocator: mem.Allocator) -> Error {
     // Must be outside protected call to ensure that we can defer destroy.
     b, _ := strings.builder_make(allocator=allocator)
@@ -500,6 +505,11 @@ load :: proc(L: ^State, name: string, reader_proc: Reader_Proc, reader_data: raw
     }, &data)
 }
 
+/*
+**Side-effects**
+- push: ret_count
+- pop:  arg_count + 1
+ */
 call :: proc(L: ^State, arg_count, ret_count: int) {
     callee := _get_stack_index(L, -(arg_count + 1))
     run_call(L, callee, arg_count, ret_count)

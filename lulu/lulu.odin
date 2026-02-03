@@ -59,9 +59,16 @@ main :: proc() {
         data := cast(^Data)lulu.to_userdata(L, 1)
         lulu_lib.open(L)
         lulu.set_top(L, 0)
+
+        // Test if lexer can properly handle token stream memory errors.
+        backing: [mem.DEFAULT_PAGE_SIZE]byte
+        arena: mem.Arena
+        mem.arena_init(&arena, backing[:])
+
+        allocator := mem.arena_allocator(&arena)
         switch len(data.args) {
-        case 1: data.err = run_repl(L)
-        case 2: data.err = run_file(L, data.args[1])
+        case 1: data.err = run_repl(L, allocator)
+        case 2: data.err = run_file(L, data.args[1], allocator)
         case:
             fmt.eprintfln("Usage: %s [script]", data.args[0])
             data.err = .Invalid_Command
@@ -86,14 +93,14 @@ main :: proc() {
     }
 }
 
-run_repl :: proc(L: ^lulu.State) -> (err: os.Error) {
+run_repl :: proc(L: ^lulu.State, allocator := context.allocator) -> (err: os.Error) {
     for {
         fmt.print(">>> ")
         line_buf: [512]byte
         line_read := os.read(os.stdin, line_buf[:]) or_return
         // Skip the newline stored at `line_buf[line_read]`.
         line     := string(line_buf[:line_read - 1])
-        load_err := lulu_aux.load(L, "stdin", line)
+        load_err := lulu_aux.load(L, "stdin", line, allocator)
         check_no_error(L, load_err) or_continue
         run_input(L, "stdin")
     }
@@ -101,8 +108,8 @@ run_repl :: proc(L: ^lulu.State) -> (err: os.Error) {
 }
 
 
-run_file :: proc(L: ^lulu.State, name: string) -> (err: os.Error) {
-    load_err := lulu_aux.load(L, name)
+run_file :: proc(L: ^lulu.State, name: string, allocator := context.allocator) -> (err: os.Error) {
+    load_err := lulu_aux.load(L, name, allocator)
     if check_no_error(L, load_err) {
         run_input(L, name)
     }

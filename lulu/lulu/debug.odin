@@ -97,8 +97,9 @@ debug_syntax_error :: proc(x: ^Lexer, here: Token, msg: string) -> ! {
 debug_memory_error :: proc(L: ^State, format: string, args: ..any, loc := #caller_location) -> ! {
     file := loc.file_path
     line := loc.line
-    col  := loc.column
-    fmt.eprintf("%s:%i:%i: Failed to ", file, line, col, flush=false)
+
+    // TODO(2026-02-03): Can we push a formatted string in case of lexer errors?
+    fmt.eprintf("%s:%i: Failed to ", file, line, flush=false)
     fmt.eprintfln(format, ..args)
     throw_error(L, .Memory)
 }

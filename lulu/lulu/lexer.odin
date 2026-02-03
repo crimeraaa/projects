@@ -178,14 +178,10 @@ read_rune :: proc(x: ^Lexer) -> (r: rune) {
     return r
 }
 
-save_rune :: proc(x: ^Lexer, r: rune) {
-    strings.write_rune(x.builder, r)
-}
-
 /*
 Reports a error message and throws a syntax error to the parent VM.
  */
-error :: proc(x: ^Lexer, msg: string) -> ! {
+__error :: proc(x: ^Lexer, msg: string) -> ! {
     here := make_token(x, nil)
     if len(here.lexeme) == 0 {
         here.lexeme = token_type_string(.EOF)
@@ -300,7 +296,7 @@ expect_rune :: proc(x: ^Lexer, want: rune) {
     if !save_match_rune(x, want) {
         buf: [64]byte
         msg := fmt.bprintf(buf[:], "Expected '%c'", want)
-        error(x, msg)
+        __error(x, msg)
     }
 }
 
@@ -317,13 +313,46 @@ __advance_rune :: proc(x: ^Lexer, $save: bool) {
     if r == utf8.RUNE_ERROR {
         buf: [64]byte
         msg := fmt.bprintf(buf[:], "Invalid rune '%c' (%i)", r, r)
-        error(x, msg)
+        __error(x, msg)
     }
 
     when save {
-        save_rune(x, x.curr_rune)
+        save_rune(x, x.curr_rune, x.curr_size)
     }
     read_rune(x)
+}
+
+save_rune :: proc(x: ^Lexer, r: rune, size: int) {
+    __write(x, x.builder, r, size)
+}
+
+// Wrapper to help catch memory errors.
+__write :: proc(x: ^Lexer, b: ^strings.Builder, r: rune, size: int) {
+    n, err := strings.write_rune(b, r)
+
+    /*
+    **Note(2025-12-25)**
+
+    See the following functions:
+        - core/strings/builder.odin:write_rune()
+        - core/io/io.odin:write()
+        - core/io/io.odin:write_bytes()
+
+    This shows us that the underlying call can never return a non-nil
+    error (other than io.Error.EOF). At no point is reallocation failure
+    handled. We do, however, get the number of bytes actually written.
+    We can use that to check if we successfully wrote `r`.
+     */
+    if err != nil || n != size {
+        overflow_error(x, r)
+    }
+}
+
+
+overflow_error :: proc(x: ^Lexer, r: rune) -> ! {
+    // If lexer allocator is the same as the global state allocator,
+    // then the final error will be a memory one.
+    __error(x, "token stream overflow")
 }
 
 advance_rune :: proc(x: ^Lexer) {
@@ -360,7 +389,7 @@ consume_multi_sequence :: proc(x: ^Lexer, nest_open: int, $save: bool) -> int {
         }
         __advance_rune(x, save=save)
     }
-    error(x, "Unterminated multiline string" when save else "Unterminated multiline comment")
+    __error(x, "Unterminated multiline string" when save else "Unterminated multiline comment")
 }
 
 advance_line :: proc(x: ^Lexer) {
@@ -528,12 +557,12 @@ make_number_token :: proc(x: ^Lexer, leader: rune) -> Token {
             token := make_token(x, Token_Type.Number)
             i, ok := strconv.parse_uint(token.lexeme[2:], base)
             if !ok {
-                error(x, "Malformed integer")
+                __error(x, "Malformed integer")
             }
             f := f64(i)
             // `i` as an `f64` might not be accurately represented?
             if uint(f) != i {
-                error(x, "Invalid f64 integer")
+                __error(x, "Invalid f64 integer")
             }
             token.number = f
             return token
@@ -561,7 +590,7 @@ make_number_token :: proc(x: ^Lexer, leader: rune) -> Token {
     token := make_token(x, Token_Type.Number)
     n, ok := strconv.parse_f64(token.lexeme)
     if !ok {
-        error(x, "Malformed number")
+        __error(x, "Malformed number")
     }
     token.number = n
     return token
@@ -586,7 +615,7 @@ make_rune_token :: proc(x: ^Lexer, r: rune) -> Token {
             return token
         } else {
             if nest_open > 0 {
-                error(x, "Expected a multiline string")
+                __error(x, "Expected a multiline string")
             }
             type = .Bracket_Open
         }
@@ -628,34 +657,10 @@ make_rune_token :: proc(x: ^Lexer, r: rune) -> Token {
 }
 
 make_string_token :: proc(x: ^Lexer, q: rune) -> Token {
-    // Wrapper to help catch memory errors.
-    write :: proc(L: ^State, b: ^strings.Builder, r: rune, size: int) {
-        n, err := strings.write_rune(b, r)
-
-        /*
-        **Note(2025-12-25)**
-
-        See the following functions:
-            - core/strings/builder.odin:write_rune()
-            - core/io/io.odin:write()
-            - core/io/io.odin:write_bytes()
-
-        This shows us that the underlying call can never return a non-nil
-        error (other than io.Error.EOF). At no point is reallocation failure
-        handled. We do, however, get the number of bytes actually written.
-        We can use that to check if we successfully wrote `r`.
-         */
-        if err != nil || n != size {
-            debug_memory_error(L, "write rune '%c'", r)
-        }
-    }
-
-    L := x.L
     b := x.builder
-
     consume_loop: for {
         if is_eof(x) {
-            error(x, "Unfinished string")
+            __error(x, "Unfinished string")
         }
 
         r, r_size := peek_rune(x), peek_size(x)
@@ -681,21 +686,21 @@ make_string_token :: proc(x: ^Lexer, q: rune) -> Token {
             case:
                 buf: [size_of(rune)]byte
                 msg := fmt.bprintf(buf[:], "Unsupported escape sequence '%c'", esc)
-                error(x, msg)
+                __error(x, msg)
             }
-            write(L, b, esc, esc_size)
+            __write(x, b, esc, esc_size)
 
         // Unescaped newline. If explicitly escaped then it's valid.
         case '\n':
-            error(x, "Unfinished string")
+            __error(x, "Unfinished string")
         case:
-            write(L, b, r, r_size)
+            __write(x, b, r, r_size)
         }
     }
 
     token := make_token(x, Token_Type.String)
-    // Skip single quotes in the string.
+    // Skip the opening quote.
     token.lexeme = token.lexeme[1:]
-    token.string = ostring_new(L, token.lexeme)
+    token.string = ostring_new(x.L, token.lexeme)
     return token
 }
