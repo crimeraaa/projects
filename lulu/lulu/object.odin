@@ -56,7 +56,7 @@ recover to the first protected caller.
  */
 object_new :: proc($T: typeid, L: ^State, list: ^^Object, extra := 0) -> ^T
 where intrinsics.type_is_subtype_of(T, Object_Header) {
-    obj  := new_ptr(T, L, extra=extra)
+    obj  := new(T, L, extra=extra)
     base := cast(^Object)obj
 
     // Chain the new object.

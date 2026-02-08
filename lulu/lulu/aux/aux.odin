@@ -152,7 +152,7 @@ Errors:
 load_file :: proc(L: ^lulu.State, name: string, allocator := context.allocator) -> (err: lulu.Error) {
     File_Reader_Data :: struct {
         file: ^os.File,
-        buf:  [4096 - size_of(^os.File)]byte,
+        buf:  [BUFFER_SIZE]byte,
     }
 
     file_reader_proc :: proc(user_data: rawptr) -> (current: []byte) {

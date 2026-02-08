@@ -83,7 +83,7 @@ main :: proc() {
         return 0
     }, &data)
 
-    io.flush(io.to_flusher(os.to_stream(os.stdout)))
+    os.flush(os.stdout)
     if err != nil {
         os.exit(int(err))
     }
@@ -93,7 +93,7 @@ main :: proc() {
     }
 }
 
-run_repl :: proc(L: ^lulu.State, allocator := context.allocator) -> (err: os.Error) {
+run_repl :: proc(L: ^lulu.State, allocator: mem.Allocator) -> (err: os.Error) {
     for {
         fmt.print(">>> ")
         line_buf: [512]byte
@@ -108,7 +108,7 @@ run_repl :: proc(L: ^lulu.State, allocator := context.allocator) -> (err: os.Err
 }
 
 
-run_file :: proc(L: ^lulu.State, name: string, allocator := context.allocator) -> (err: os.Error) {
+run_file :: proc(L: ^lulu.State, name: string, allocator: mem.Allocator) -> (err: os.Error) {
     load_err := lulu_aux.load(L, name, allocator)
     if check_no_error(L, load_err) {
         run_input(L, name)

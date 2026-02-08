@@ -38,7 +38,7 @@ Allocates a new pointer of type `T` of `count` elements plus `extra` bytes.
 
 *Allocates using `L.global_state.backing_allocator`*.
  */
-new_ptr :: proc($T: typeid, L: ^State, extra := 0, loc := #caller_location) -> ^T {
+new :: proc($T: typeid, L: ^State, extra := 0, loc := #caller_location) -> ^T {
     g    := L.global_state
     size := size_of(T) + extra
     ptr, err := mem.alloc(size, align_of(T), allocator=g.backing_allocator)
@@ -58,7 +58,7 @@ Allocates a new slice of type `T` with `count` elements, zero-initialized.
 **Assumptions**
 - We are in a protected call, so we are able to catch out-of-memory errors.
  */
-make_slice :: proc($T: typeid, L: ^State, count: int, loc := #caller_location) -> []T {
+make :: proc($T: typeid, L: ^State, count: int, loc := #caller_location) -> []T {
     g := L.global_state
     array, err := mem.make_slice([]T, count, allocator=g.backing_allocator)
     size := count * size_of(T)
@@ -75,7 +75,7 @@ Frees a pointer of type `T` of `count` elements plus `extra` bytes.
 
 *Deallocates using `L.global_state.backing_allocator`.*
  */
-free_ptr :: proc(L: ^State, ptr: ^$T, extra := 0, loc := #caller_location) {
+free :: proc(L: ^State, ptr: ^$T, extra := 0, loc := #caller_location) {
     g    := L.global_state
     size := size_of(T) + extra
     gc_log_alloc(^T, ansi.FG_RED, "[FREE]", ptr, size, loc=loc)
@@ -91,7 +91,7 @@ Frees the memory used by the slice `array`.
 **Assumptions**
 - Freeing memory never fails.
  */
-delete_slice :: proc(L: ^State, array: $S/[]$T, loc := #caller_location) {
+delete :: proc(L: ^State, array: $S/[]$T, loc := #caller_location) {
     g    := L.global_state
     size := size_of(T) * len(array)
     gc_log_alloc([]T, ansi.FG_RED, "[FREE]", raw_data(array), size, loc=loc)
@@ -107,10 +107,10 @@ delete_slice :: proc(L: ^State, array: $S/[]$T, loc := #caller_location) {
 **Assumptions**
 - We are in a protected call, so we are able to catch out-of-memory errors.
 */
-insert_slice :: proc(L: ^State, array: ^$S/[]$T, #any_int index: int, value: T) {
+append :: proc(L: ^State, array: ^$S/[]$T, #any_int index: int, value: T) {
     if index >= len(array) {
         new_count := max(8, math.next_power_of_two(index + 1))
-        resize_slice(L, array, new_count)
+        resize(L, array, new_count)
     }
     array[index] = value
 }
@@ -124,15 +124,15 @@ that fit in the new slice.
 **Assumptions**
 - We are in a proected call, so we are able to catch out-of-memory errors.
  */
-resize_slice :: proc(L: ^State, array: ^$S/[]$T, count: int) {
+resize :: proc(L: ^State, array: ^$S/[]$T, count: int) {
     // Nothing to do?
     if count == len(array) {
         return
     }
     prev := array^
-    next := make_slice(T, L, count)
+    next := make(T, L, count)
     copy(next, prev)
-    delete_slice(L, prev)
+    delete(L, prev)
     array^ = next
 }
 

@@ -49,7 +49,7 @@ Key :: struct #raw_union {
 
 @(private="package")
 table_new :: proc(L: ^State, hash_count, array_count: int) -> (t: ^Table) {
-    t = object_new(Table, L, &L.global_state.objects)
+    t = object_new(Table, L, &G(L).objects)
 
     // Required so that `table_resize()` below sees the empty table rather
     // than attempting to dereference a nil entries array with 1 element.
@@ -71,9 +71,9 @@ referenced in other parts of the program.
 @(private="package")
 table_free :: proc(L: ^State, t: ^Table) {
     if t.entries != &_EMPTY_ENTRY {
-        delete_slice(L, _get_entries(t))
+        delete(L, _get_entries(t))
     }
-    free_ptr(L, t)
+    free(L, t)
 }
 
 _get_entries :: proc(t: ^Table) -> []Entry {
@@ -147,7 +147,7 @@ table_set :: proc(L: ^State, t: ^Table, k: Value) -> (v: ^Value) {
 _resize :: proc(L: ^State, t: ^Table, new_cap: int) {
     old_entries  := _get_entries(t)
     new_log2_cap := table_log2(new_cap)
-    new_entries  := make_slice(Entry, L, 1 << new_log2_cap)
+    new_entries  := make(Entry, L, 1 << new_log2_cap)
 
     // We may have nil keys in the old table so we need to ignore them.
     new_count := 0
@@ -164,7 +164,7 @@ _resize :: proc(L: ^State, t: ^Table, new_cap: int) {
 
     // We actually own our underlying array?
     if t.entries != &_EMPTY_ENTRY {
-        delete_slice(L, old_entries)
+        delete(L, old_entries)
     }
 
     t.log2_cap = new_log2_cap

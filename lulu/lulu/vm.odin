@@ -15,7 +15,7 @@ vm_init :: proc(L: ^State, g: ^Global_State, allocator: mem.Allocator) -> (ok: b
     // Don't use `run_raw_pcall()`, because we won't be able to push an
     // error object in case of memory errors.
     err := run_raw_call(L, proc(L: ^State, _: rawptr) {
-        g := L.global_state
+        g := G(L)
 
         // Ensure that, when we start interning strings, we already have
         // valid indexes.
@@ -186,11 +186,11 @@ vm_save_stack :: proc(L: ^State, value: ^Value) -> (index: int) {
 Works only for register-immediate encodings.
  */
 @(private="file")
-_arith_imm :: proc(L: ^State, pc: i32, ra: ^Value, procedure: $T, rb: ^Value, imm: u16) {
+__arith_imm :: proc(L: ^State, pc: i32, ra: ^Value, procedure: $T, rb: ^Value, imm: u16) {
     if left, ok := value_to_number(rb^); ok {
         ra^ = value_make(procedure(left, f64(imm)))
     } else {
-        _protect(L, pc)
+        __protect(L, pc)
         debug_arith_error(L, rb, rb)
     }
 }
@@ -199,19 +199,19 @@ _arith_imm :: proc(L: ^State, pc: i32, ra: ^Value, procedure: $T, rb: ^Value, im
 Works for both register-register and register-constant encodings.
 */
 @(private="file")
-_arith :: proc(L: ^State, pc: i32, ra: ^Value, procedure: $T, rb, rc: ^Value) {
+__arith :: proc(L: ^State, pc: i32, ra: ^Value, procedure: $T, rb, rc: ^Value) {
     try: {
         left   := value_to_number(rb^) or_break try
         right  := value_to_number(rc^) or_break try
         ra^     = value_make(procedure(left, right))
         return
     }
-    _protect(L, pc)
+    __protect(L, pc)
     debug_arith_error(L, rb, rc)
 }
 
 @(private="file")
-_compare :: proc(L: ^State, ip: ^[^]Instruction, pc: i32, procedure: $T, ra, rb: ^Value, cond: bool) {
+__compare :: proc(L: ^State, ip: ^[^]Instruction, pc: i32, procedure: $T, ra, rb: ^Value, cond: bool) {
     try: {
         left   := value_to_number(ra^) or_break try
         right  := value_to_number(rb^) or_break try
@@ -220,17 +220,17 @@ _compare :: proc(L: ^State, ip: ^[^]Instruction, pc: i32, procedure: $T, ra, rb:
         }
         return
     }
-    _protect(L, pc)
+    __protect(L, pc)
     debug_compare_error(L, ra, rb)
 }
 
 @(private="file")
-_protect :: proc(L: ^State, pc: i32) {
+__protect :: proc(L: ^State, pc: i32) {
     L.frame.saved_pc = pc
 }
 
 @(private="file", disabled=!DISASSEMBLE_INLINE)
-_print_stack :: proc(chunk: ^Chunk, i: Instruction, pc: i32, R: []Value) {
+__print_stack :: proc(chunk: ^Chunk, i: Instruction, pc: i32, R: []Value) {
     buf: [VALUE_TO_STRING_BUFFER_SIZE]byte
     for value, reg in R {
         repr := value_to_string(value, buf[:])
@@ -261,15 +261,15 @@ vm_set_table :: proc(L: ^State, t: ^Value, k, v: Value) {
 }
 
 @(private="file")
-_get_table :: proc(L: ^State, pc: i32, ra, t: ^Value, k: Value) {
-    _protect(L, pc)
+__get_table :: proc(L: ^State, pc: i32, ra, t: ^Value, k: Value) {
+    __protect(L, pc)
     v, _ := vm_get_table(L, t, k)
     ra^  = v
 }
 
 @(private="file")
-_set_table :: proc(L: ^State, pc: i32, t: ^Value, k, v: Value) {
-    _protect(L, pc)
+__set_table :: proc(L: ^State, pc: i32, t: ^Value, k, v: Value) {
+    __protect(L, pc)
     vm_set_table(L, t, k, v)
 }
 
@@ -295,7 +295,7 @@ vm_execute :: proc(L: ^State, ret_expect: int) {
         i  := ip[0] // *ip
         pc := i32(mem.ptr_sub(ip, code))
         ip = &ip[1] // ip++
-        _print_stack(chunk, i, pc, R)
+        __print_stack(chunk, i, pc, R)
 
         A  := i.A
         RA := &R[A]
@@ -313,7 +313,7 @@ vm_execute :: proc(L: ^State, ret_expect: int) {
 
         case .Get_Global:
             k := K[i.u.Bx]
-            _protect(L, pc)
+            __protect(L, pc)
             if v, ok := vm_get_table(L, _G, k); !ok {
                 what := value_get_string(k)
                 debug_runtime_error(L, "Attempt to read undefined global '%s'", what)
@@ -322,19 +322,19 @@ vm_execute :: proc(L: ^State, ret_expect: int) {
             }
 
         case .Set_Global:
-            _protect(L, pc)
+            __protect(L, pc)
             vm_set_table(L, _G, K[i.u.Bx], RA^)
 
         case .New_Table:
             hash_count  := 1 << (i.B - 1) if i.B != 0 else 0
             array_count := 1 << (i.C - 1) if i.C != 0 else 0
-            t := table_new(L, hash_count=hash_count, array_count=array_count)
+            t := table_new(L, hash_count, array_count)
             RA^ = value_make(t)
 
-        case .Get_Table: _get_table(L, pc, RA, &R[i.B], R[i.C])
-        case .Get_Field: _get_table(L, pc, RA, &R[i.B], K[i.C])
-        case .Set_Table: _set_table(L, pc, RA, R[i.B], (K if i.k.k else R)[i.k.C])
-        case .Set_Field: _set_table(L, pc, RA, K[i.B], (K if i.k.k else R)[i.k.C])
+        case .Get_Table: __get_table(L, pc, RA, &R[i.B], R[i.C])
+        case .Get_Field: __get_table(L, pc, RA, &R[i.B], K[i.C])
+        case .Set_Table: __set_table(L, pc, RA, R[i.B], (K if i.k.k else R)[i.k.C])
+        case .Set_Field: __set_table(L, pc, RA, K[i.B], (K if i.k.k else R)[i.k.C])
 
         // Unary
         case .Len:
@@ -347,7 +347,7 @@ vm_execute :: proc(L: ^State, ret_expect: int) {
                 n  := table_len(value_get_table(rb^))
                 RA^ = value_make(f64(n))
             case:
-                _protect(L, pc)
+                __protect(L, pc)
                 debug_type_error(L, "get length of", rb)
             }
 
@@ -357,29 +357,29 @@ vm_execute :: proc(L: ^State, ret_expect: int) {
             if n, ok := value_to_number(rb^); ok {
                 RA^ = value_make(number_unm(n))
             } else {
-                _protect(L, pc)
+                __protect(L, pc)
                 debug_arith_error(L, rb, rb)
             }
 
         // Arithmetic (register-immediate)
-        case .Add_Imm: _arith_imm(L, pc, RA, number_add, &R[i.B], i.C)
-        case .Sub_Imm: _arith_imm(L, pc, RA, number_sub, &R[i.B], i.C)
+        case .Add_Imm: __arith_imm(L, pc, RA, number_add, &R[i.B], i.C)
+        case .Sub_Imm: __arith_imm(L, pc, RA, number_sub, &R[i.B], i.C)
 
         // Arithmetic (register-constant)
-        case .Add_Const: _arith(L, pc, RA, number_add, &R[i.B], &K[i.C])
-        case .Sub_Const: _arith(L, pc, RA, number_sub, &R[i.B], &K[i.C])
-        case .Mul_Const: _arith(L, pc, RA, number_mul, &R[i.B], &K[i.C])
-        case .Div_Const: _arith(L, pc, RA, number_div, &R[i.B], &K[i.C])
-        case .Mod_Const: _arith(L, pc, RA, number_mod, &R[i.B], &K[i.C])
-        case .Pow_Const: _arith(L, pc, RA, number_pow, &R[i.B], &K[i.C])
+        case .Add_Const: __arith(L, pc, RA, number_add, &R[i.B], &K[i.C])
+        case .Sub_Const: __arith(L, pc, RA, number_sub, &R[i.B], &K[i.C])
+        case .Mul_Const: __arith(L, pc, RA, number_mul, &R[i.B], &K[i.C])
+        case .Div_Const: __arith(L, pc, RA, number_div, &R[i.B], &K[i.C])
+        case .Mod_Const: __arith(L, pc, RA, number_mod, &R[i.B], &K[i.C])
+        case .Pow_Const: __arith(L, pc, RA, number_pow, &R[i.B], &K[i.C])
 
         // Arithmetic (register-register)
-        case .Add: _arith(L, pc, RA, number_add, &R[i.B], &R[i.C])
-        case .Sub: _arith(L, pc, RA, number_sub, &R[i.B], &R[i.C])
-        case .Mul: _arith(L, pc, RA, number_mul, &R[i.B], &R[i.C])
-        case .Div: _arith(L, pc, RA, number_div, &R[i.B], &R[i.C])
-        case .Mod: _arith(L, pc, RA, number_mod, &R[i.B], &R[i.C])
-        case .Pow: _arith(L, pc, RA, number_pow, &R[i.B], &R[i.C])
+        case .Add: __arith(L, pc, RA, number_add, &R[i.B], &R[i.C])
+        case .Sub: __arith(L, pc, RA, number_sub, &R[i.B], &R[i.C])
+        case .Mul: __arith(L, pc, RA, number_mul, &R[i.B], &R[i.C])
+        case .Div: __arith(L, pc, RA, number_div, &R[i.B], &R[i.C])
+        case .Mod: __arith(L, pc, RA, number_mod, &R[i.B], &R[i.C])
+        case .Pow: __arith(L, pc, RA, number_pow, &R[i.B], &R[i.C])
 
         // Comparison
         case .Eq:
@@ -390,13 +390,13 @@ vm_execute :: proc(L: ^State, ret_expect: int) {
                 ip = &ip[1]
             }
 
-        case .Lt:  _compare(L, &ip, pc, number_lt,  RA, &R[i.B], bool(i.C))
-        case .Leq: _compare(L, &ip, pc, number_leq, RA, &R[i.B], bool(i.C))
+        case .Lt:  __compare(L, &ip, pc, number_lt,  RA, &R[i.B], bool(i.C))
+        case .Leq: __compare(L, &ip, pc, number_leq, RA, &R[i.B], bool(i.C))
 
         // Misc.
         case .Concat:
             args := R[i.B:i.C]
-            _protect(L, pc)
+            __protect(L, pc)
             vm_concat(L, RA, args)
 
         // Control flow
@@ -417,7 +417,7 @@ vm_execute :: proc(L: ^State, ret_expect: int) {
             if arg_count == VARIADIC {
                 arg_count = get_top(L) - arg_first
             }
-            _protect(L, pc)
+            __protect(L, pc)
             run_call(L, RA, arg_count, ret_count)
 
             // In case varargs pushed more than our current stack frame.

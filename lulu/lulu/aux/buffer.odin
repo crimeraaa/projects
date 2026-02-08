@@ -12,7 +12,7 @@ BUFFER_SIZE :: #config(LULU_BUFFER_SIZE, mem.DEFAULT_PAGE_SIZE)
 Buffer :: struct {
     pushed: int,
     index:  int,
-    data:   [BUFFER_SIZE - size_of(int) * 2]byte,
+    data:   [BUFFER_SIZE]byte,
 }
 
 @(private="file")

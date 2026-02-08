@@ -20,7 +20,7 @@ Chunk :: struct {
     // List of all instructions to be executed.
     code: []Instruction,
 
-    // Maps each index in `code` to its corresponding line and column.
+    // Maps each index in `code` to its corresponding line.
     loc: []Location,
 }
 
@@ -64,7 +64,7 @@ Creates a new blank chunk for use when parsing.
 within `object_new()`.
  */
 chunk_new :: proc(L: ^State, name: ^Ostring) -> ^Chunk {
-    c := object_new(Chunk, L, &L.global_state.objects)
+    c := object_new(Chunk, L, &G(L).objects)
     c.name = name
     // Minimum stack usage is 2 to allow all instructions to unconditionally
     // read r0 and r1.
@@ -80,10 +80,10 @@ array for example.
 *Allocates using `L.global_state.backing_allocator`.*
  */
 chunk_fix :: proc(L: ^State, c: ^Chunk, cl: ^Compiler) {
-    resize_slice(L, &c.code,      int(cl.pc))
-    resize_slice(L, &c.loc,       int(cl.pc))
-    resize_slice(L, &c.constants, int(cl.constants_count))
-    resize_slice(L, &c.locals,    int(cl.locals_count))
+    resize(L, &c.code,      int(cl.pc))
+    resize(L, &c.loc,       int(cl.pc))
+    resize(L, &c.constants, int(cl.constants_count))
+    resize(L, &c.locals,    int(cl.locals_count))
 }
 
 /*
@@ -92,11 +92,11 @@ Frees the chunk contents and the chunk pointer itself.
 *Deallocates using `L.global_state.backing_allocator`.*
  */
 chunk_free :: proc(L: ^State, c: ^Chunk) {
-    delete_slice(L, c.locals)
-    delete_slice(L, c.constants)
-    delete_slice(L, c.code)
-    delete_slice(L, c.loc)
-    free_ptr(L, c)
+    delete(L, c.locals)
+    delete(L, c.constants)
+    delete(L, c.code)
+    delete(L, c.loc)
+    free(L, c)
 }
 
 /*
@@ -109,8 +109,8 @@ Adds `i` to the end of the code array.
 and handled.
  */
 chunk_push_code :: proc(L: ^State, c: ^Chunk, pc: ^i32, i: Instruction, line, col: i32) -> i32 {
-    insert_slice(L, &c.code, pc^, i)
-    insert_slice(L, &c.loc, pc^, Location{line=line, col=col})
+    append(L, &c.code, pc^, i)
+    append(L, &c.loc, pc^, Location{line=line, col=col})
     pc^ += 1
     return pc^ - 1
 }
@@ -125,7 +125,7 @@ Adds `v` to the end of the constants array.
 and handled.
  */
 chunk_push_constant :: proc(L: ^State, c: ^Chunk, count: ^u32, v: Value) -> (index: u32) {
-    insert_slice(L, &c.constants, count^, v)
+    append(L, &c.constants, count^, v)
     count^ += 1
     return count^ - 1
 }
@@ -134,7 +134,7 @@ chunk_push_constant :: proc(L: ^State, c: ^Chunk, count: ^u32, v: Value) -> (ind
 Appends the local variable information `local` to the chunk's locals array.
  */
 chunk_push_local :: proc(L: ^State, c: ^Chunk, count: ^u16, local: Local_Info) -> (index: u16) {
-    insert_slice(L, &c.locals, count^, local)
+    append(L, &c.locals, count^, local)
     count^ += 1
     return count^ - 1
 }

@@ -122,7 +122,7 @@ strings, we allocated everything in one go and can thus free it in the same way.
 - Freeing memory never fails.
  */
 ostring_free :: proc(L: ^State, s: ^Ostring) {
-    free_ptr(L, s, extra=s.len + 1)
+    free(L, s, extra=s.len + 1)
 }
 
 /*
@@ -137,7 +137,7 @@ Resize the intern table to fit more strings.
  */
 intern_resize :: proc(L: ^State, intern: ^Intern, new_cap: int) {
     old_table   := intern.table
-    new_table   := make_slice(^Object, L, new_cap)
+    new_table   := make(^Object, L, new_cap)
     intern.table = new_table
 
     // Rehash all strings from the old table into the new table.
@@ -159,7 +159,7 @@ intern_resize :: proc(L: ^State, intern: ^Intern, new_cap: int) {
             this_node = next_node
         }
     }
-    delete_slice(L, old_table)
+    delete(L, old_table)
 }
 
 /*
@@ -171,5 +171,5 @@ intern_destroy :: proc(L: ^State, intern: ^Intern) {
     for list in intern.table {
         object_free_all(L, list)
     }
-    delete_slice(L, intern.table)
+    delete(L, intern.table)
 }

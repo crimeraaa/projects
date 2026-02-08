@@ -487,8 +487,9 @@ set_field :: proc(L: ^State, table: int, field: string) {
 with a fixed-size buffer to clamp the maximum length of tokens.
  */
 load :: proc(L: ^State, name: string, reader_proc: Reader_Proc, reader_data: rawptr, allocator: mem.Allocator) -> Error {
+    allocator := allocator if allocator.procedure != nil else G(L).backing_allocator
     // Must be outside protected call to ensure that we can defer destroy.
-    b, _ := strings.builder_make(allocator=allocator)
+    b := strings.builder_make(allocator=allocator)
     defer strings.builder_destroy(&b)
 
     Data :: struct {
@@ -544,8 +545,8 @@ and calls `p` with `user_data` as its sole argument.
 **Returns**
 - err: An API error code, if any, that was caught. May be `.Ok` (a.k.a. `nil`).
  */
-api_pcall :: proc(L: ^State, p: Api_Proc, user_data: rawptr) -> (err: Error) {
-    cl := closure_api_new(L, p, 0)
+api_pcall :: proc(L: ^State, procedure: Api_Proc, user_data: rawptr) -> (err: Error) {
+    cl := closure_api_new(L, procedure, 0)
     vm_push(L, cl)
     vm_push(L, value_make(user_data))
     return pcall(L, arg_count=1, ret_count=0)

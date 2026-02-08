@@ -28,10 +28,9 @@ Closure_Lua :: struct {
 closure_api_new :: proc(L: ^State, procedure: Api_Proc, upvalue_count: u8) -> ^Closure {
     assert(upvalue_count >= 0)
 
-    g     := L.global_state
     extra := size_of(Value) * int(upvalue_count)
 
-    cl := object_new(Closure_Api, L, &g.objects, extra)
+    cl := object_new(Closure_Api, L, &G(L).objects, extra)
     cl.is_lua        = false
     cl.upvalue_count = upvalue_count
     cl.procedure     = procedure
@@ -54,9 +53,9 @@ closure_lua_new :: proc(L: ^State, chunk: ^Chunk, upvalue_count: u8) -> ^Closure
 
 closure_free :: proc(L: ^State, cl: ^Closure) {
     if cl.is_lua {
-        free_ptr(L, &cl.lua)
+        free(L, &cl.lua)
     } else {
         extra := size_of(Value) * int(cl.upvalue_count)
-        free_ptr(L, &cl.api, extra=extra)
+        free(L, &cl.api, extra=extra)
     }
 }
