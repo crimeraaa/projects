@@ -183,8 +183,12 @@ Reports a error message and throws a syntax error to the parent VM.
  */
 __error :: proc(x: ^Lexer, msg: string) -> ! {
     here := make_token(x, nil)
-    // Pinpoint the exact error, especially if in a multiline string.
-    here.col = x.col
+
+    // Pinpoint the exact error location if in a multiline sequence.
+    if here.col <= 0 {
+        here.col = x.col
+    }
+
     if len(here.lexeme) == 0 {
         here.lexeme = token_type_string(.EOF)
     }
@@ -391,12 +395,13 @@ consume_multi_sequence :: proc(x: ^Lexer, nest_open: int, $save: bool) -> int {
         }
         __advance_rune(x, save=save)
     }
+    // Report error tokens properly.
     __error(x, "Unterminated multiline string" when save else "Unterminated multiline comment")
 }
 
 advance_line :: proc(x: ^Lexer) {
     x.line += 1
-    x.col = 0
+    x.col   = 0
 }
 
 skip_comment :: proc(x: ^Lexer) {
@@ -473,18 +478,17 @@ make_token :: proc(x: ^Lexer, type: Token_Type) -> Token {
 
     // NOTE(2026-02-03): Only works correctly for single-line tokens.
     // Multi-line strings will be wrong here!
-    t.col = i32(int(x.col) - strings.builder_len(x.builder^))
+    t.col = i32(int(x.col) - len(t.lexeme))
     return t
 }
 
 @(private="package")
 lexer_scan_token :: proc(x: ^Lexer) -> Token {
-    strings.builder_reset(x.builder)
-
     r := skip_whitespace(x)
     if is_eof(x) {
         return make_token(x, Token_Type.EOF)
     }
+    strings.builder_reset(x.builder)
 
     // Lexeme start is the first non-whitespace, non-comment character.
     save_advance_rune(x)
@@ -578,7 +582,7 @@ make_number_token :: proc(x: ^Lexer, leader: rune) -> Token {
 
     // The decimal (radix) point can only come after the integer portion,
     // or the number sequence.
-    if save_match_rune(x, '.') {
+    for save_match_rune(x, '.') {
         save_consume_proc(x, is_number)
     }
 
@@ -691,8 +695,8 @@ make_string_token :: proc(x: ^Lexer, q: rune) -> Token {
             case '\n', '\\', '\"', '\'', '[', ']':
                 break
             case:
-                buf: [size_of(rune)]byte
-                msg := fmt.bprintf(buf[:], "Unsupported escape sequence '%c'", esc)
+                buf: [64]byte
+                msg := fmt.bprintf(buf[:], "Unsupported escape sequence '%c%c'", r, esc)
                 __error(x, msg)
             }
             __write(x, b, esc, esc_size)

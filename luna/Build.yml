@@ -1,0 +1,38 @@
+# https://taskfile.dev
+
+version: '3'
+
+vars:
+  OUT: ./bin/luna
+  VET_FLAGS: -vet -vet-packages:luna -vet-unused-procedures -vet-using-param
+  FLAGS: >-
+    -debug
+    -sanitize=address
+
+  REPL_EXTRA_FLAGS: >-
+    -out:"{{.OUT}}"
+  # -define:LULU_DISASSEMBLE_CHUNK=true
+  # -define:LULU_DISASSEMBLE_INLINE=true
+
+tasks:
+  run:
+    desc: Build the `luna` executable and run it.
+    deps:
+      - task: build
+    cmds:
+      - '{{.OUT}} {{.CLI_ARGS}}'
+    interactive: true
+
+  build:
+    desc: Build the `luna` executable.
+    cmds:
+      - mkdir -p bin
+      - odin build {{.TASKFILE_DIR}}/ {{.FLAGS}} {{.REPL_EXTRA_FLAGS}}
+    sources:
+      - '{{.TASKFILE_DIR}}/*.odin'
+      # - '{{.TASKFILE_DIR}}/luna/**/*.odin'
+
+  test:
+    desc: Run `test.odin` unconditionally.
+    cmds:
+      - odin test {{.TASKFILE_DIR}}/ {{.FLAGS}}

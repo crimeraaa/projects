@@ -2,7 +2,6 @@ package lulu_repl
 
 // standard
 import "core:fmt"
-import "core:io"
 import os "core:os/os2"
 import "core:mem"
 

@@ -49,6 +49,10 @@ includes:
     taskfile: ./lulu/Build.yml
     dir: ./lulu
 
+  luna:
+    taskfile: ./luna/Build.yml
+    dir: ./luna
+
 tasks:
   fix-whitespace:
     desc: Remove trailing whitespace from all project files.
