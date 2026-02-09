@@ -14,5 +14,5 @@ package luna
 // }
 
 Value :: union {
-    int, f64,
+    bool, int, f64,
 }
