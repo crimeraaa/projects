@@ -205,12 +205,12 @@ compiler_pop_block :: proc(c: ^Compiler) {
 }
 
 compiler_add_string :: proc(c: ^Compiler, s: ^Ostring) -> (index: u32) {
-    index = _add_constant(c, value_make(s))
+    index = __add_constant(c, value_make(s))
     return index
 }
 
 @(private="file")
-_add_constant :: proc(c: ^Compiler, v: Value) -> (index: u32) {
+__add_constant :: proc(c: ^Compiler, v: Value) -> (index: u32) {
     L     := c.L
     chunk := c.chunk
     for constant, index in chunk.constants[:c.constants_count] {
@@ -231,7 +231,7 @@ Appends `i` to the current chunk's code array.
 - pc: The index of the instruction we just emitted.
  */
 @(private="file")
-_add_instruction :: proc(c: ^Compiler, i: Instruction) -> (pc: i32) {
+__add_instruction :: proc(c: ^Compiler, i: Instruction) -> (pc: i32) {
     L := c.L
     p := c.parser
 
@@ -244,14 +244,14 @@ compiler_code_ABC :: proc(cl: ^Compiler, op: Opcode, A, B, C: u16) -> (pc: i32) 
     compiler_assert(cl, OP_INFO[op].mode == .ABC)
 
     i := Instruction{base={op=op, A=A, B=B, C=C}}
-    return _add_instruction(cl, i)
+    return __add_instruction(cl, i)
 }
 
 compiler_code_ABCk :: proc(cl: ^Compiler, op: Opcode, A, B, C: u16, k: bool) -> (pc: i32) {
     compiler_assert(cl, OP_INFO[op].mode == .ABCk)
 
     i := Instruction{k={op=op, A=A, B=B, C=C, k=k}}
-    return _add_instruction(cl, i)
+    return __add_instruction(cl, i)
 }
 
 compiler_code_ABx :: proc(c: ^Compiler, op: Opcode, A: u16, Bx: u32) -> (pc: i32) {
@@ -260,7 +260,7 @@ compiler_code_ABx :: proc(c: ^Compiler, op: Opcode, A: u16, Bx: u32) -> (pc: i32
     compiler_assert(c, OP_INFO[op].c == nil)
 
     i := Instruction{u={op=op, A=A, Bx=Bx}}
-    return _add_instruction(c, i)
+    return __add_instruction(c, i)
 }
 
 compiler_code_AsBx :: proc(c: ^Compiler, op: Opcode, A: u16, sBx: i32) -> (pc: i32) {
@@ -270,7 +270,7 @@ compiler_code_AsBx :: proc(c: ^Compiler, op: Opcode, A: u16, sBx: i32) -> (pc: i
 
     i := Instruction{s={op=op, A=A, Bx=sBx}}
     // fmt.printfln(".code[%i] = %v", c.pc, i.s)
-    return _add_instruction(c, i)
+    return __add_instruction(c, i)
 }
 
 compiler_code_return :: proc(c: ^Compiler, reg, count: u16) {
@@ -301,7 +301,7 @@ compiler_add_jump_list :: proc(c: ^Compiler, list: ^i32) -> (next: i32) {
         // Jump lists are chained together in a series of negative offsets.
         // And yes, the reversed arguments are intentional.
         target := compiler_get_target(c)
-        offset = _get_offset(jump=target, target=jump)
+        offset = __get_offset(jump=target, target=jump)
     }
 
     next  = compiler_code_AsBx(c, .Jump, 0, offset)
@@ -314,28 +314,28 @@ compiler_patch_jump :: proc(c: ^Compiler, jump: i32, target := INVALID_PC) {
         return
     }
     target := target
-    target  = _get_target(c, target)
-    prev   := _patch_jump(c, jump, target)
+    target  = __get_target(c, target)
+    prev   := __patch_jump(c, jump, target)
     // `.Jump_If` can never be a jump list.
     compiler_assert(c, prev == NO_JUMP)
 }
 
 compiler_patch_jump_list :: proc(c: ^Compiler, list: i32, target := INVALID_PC) {
     target := target
-    target = _get_target(c, target)
+    target = __get_target(c, target)
     for jump := list; jump != NO_JUMP; {
-        prev := _patch_jump(c, jump, target)
+        prev := __patch_jump(c, jump, target)
         jump = prev
     }
 }
 
 @(private="file")
-_get_offset :: proc(jump, target: i32) -> (offset: i32) {
+__get_offset :: proc(jump, target: i32) -> (offset: i32) {
     return target - (jump + 1)
 }
 
 @(private="file")
-_get_target :: proc(c: ^Compiler, target: i32) -> i32 {
+__get_target :: proc(c: ^Compiler, target: i32) -> i32 {
     return target if target != NO_JUMP else compiler_get_target(c)
 }
 
@@ -349,8 +349,8 @@ compiler_get_target :: proc(c: ^Compiler) -> (target: i32) {
 }
 
 @(private="file")
-_patch_jump :: proc(c: ^Compiler, jump, target: i32) -> (prev: i32) {
-    offset := _get_offset(jump, target)
+__patch_jump :: proc(c: ^Compiler, jump, target: i32) -> (prev: i32) {
+    offset := __get_offset(jump, target)
     if offset < MIN_sBx || offset > MAX_sBx {
         parser_error(c.parser, "jump too large")
     }
@@ -384,7 +384,7 @@ compiler_discharge_returns :: proc(c: ^Compiler, call: ^Expr, ret_count: u16) {
 
 compiler_get_table :: proc(c: ^Compiler, #no_alias var, key: ^Expr) {
     var_reg      := compiler_push_expr_any(c, var)
-    key_rk, is_k := _push_expr_k(c, key, limit=MAX_C)
+    key_rk, is_k := __push_expr_k(c, key, limit=MAX_C)
 
     var.type       = .Table
     var.table.reg  = var_reg
@@ -393,12 +393,12 @@ compiler_get_table :: proc(c: ^Compiler, #no_alias var, key: ^Expr) {
 }
 
 compiler_set_table :: proc(c: ^Compiler, table_reg: u16, #no_alias key, value: ^Expr) {
-    key_rk,   key_is_k   := _push_expr_k(c, key,   limit=MAX_B)
-    value_rk, value_is_k := _push_expr_k(c, value, limit=MAX_Ck)
+    key_rk,   key_is_k   := __push_expr_k(c, key,   limit=MAX_B)
+    value_rk, value_is_k := __push_expr_k(c, value, limit=MAX_Ck)
     compiler_pop_expr(c, value)
     compiler_pop_expr(c, key)
 
-    op := _get_table_op(key_is_k)
+    op := __get_table_op(key_is_k)
     compiler_code_ABCk(c, op, table_reg, key_rk, value_rk, value_is_k)
 }
 
@@ -410,13 +410,13 @@ compiler_set_variable :: proc(c: ^Compiler, #no_alias variable, value: ^Expr) {
 
     case .Local:
         compiler_pop_expr(c, value)
-        _discharge_expr_to_reg(c, value, variable.reg)
+        __discharge_expr_to_reg(c, value, variable.reg)
         // Avoid the below pop.
         return
 
     case .Table:
-        value_reg, value_is_k := _push_expr_k(c, value, limit=MAX_Ck)
-        op := _get_table_op(variable.table.is_k)
+        value_reg, value_is_k := __push_expr_k(c, value, limit=MAX_Ck)
+        op := __get_table_op(variable.table.is_k)
         compiler_code_ABCk(c, op, variable.table.reg, variable.table.key, value_reg, value_is_k)
 
     case:
@@ -425,7 +425,7 @@ compiler_set_variable :: proc(c: ^Compiler, #no_alias variable, value: ^Expr) {
     compiler_pop_expr(c, value)
 }
 
-_get_table_op :: proc(key_is_k: bool) -> (op: Opcode) {
+__get_table_op :: proc(key_is_k: bool) -> (op: Opcode) {
     if key_is_k {
         return .Set_Field
     } else {
@@ -530,7 +530,7 @@ This is the 2nd simplest register allocation strategy.
  */
 compiler_push_expr_any :: proc(c: ^Compiler, e: ^Expr) -> (reg: u16) {
     // Convert `.Local` to `.Register`
-    _discharge_expr_variables(c, e)
+    __discharge_expr_variables(c, e)
     if e.type == .Register {
         return e.reg
     }
@@ -552,12 +552,12 @@ care should be taken to ensure needlessly redundant work is avoided.
 - `lcode.c:luaK_exp2nextreg(FuncState *fs, expdesc *e)` in Lua 5.1.5.
  */
 compiler_push_expr_next :: proc(c: ^Compiler, e: ^Expr) -> (reg: u16) {
-    _discharge_expr_variables(c, e)
+    __discharge_expr_variables(c, e)
     // If `e` is the current topmost register, reuse it.
     compiler_pop_expr(c, e)
 
     reg = compiler_push_reg(c)
-    _discharge_expr_to_reg(c, e, reg)
+    __discharge_expr_to_reg(c, e, reg)
     return reg
 }
 
@@ -569,7 +569,7 @@ Emits the bytecode needed to retrieve variables represented by `e`.
 to type `.Pc_Pending_Register`.
  */
 @(private="file")
-_discharge_expr_variables :: proc(c: ^Compiler, e: ^Expr) {
+__discharge_expr_variables :: proc(c: ^Compiler, e: ^Expr) {
     #partial switch e.type {
     case .Global:
         pc := compiler_code_ABx(c, .Get_Global, 0, e.index)
@@ -614,12 +614,21 @@ the destination, hence it is termed 'discharged' (i.e. finalized).
 - `lcode.c:discharge2reg(FuncState *fs, expdesc *e, int reg)` in Lua 5.1.5.
  */
 @(private="file")
-_discharge_expr_to_reg :: proc(c: ^Compiler, e: ^Expr, reg: u16, loc := #caller_location) {
-    _discharge_expr_variables(c, e)
+__discharge_expr_to_reg :: proc(c: ^Compiler, e: ^Expr, reg: u16, loc := #caller_location) {
+    __load_bool :: proc(c: ^Compiler, reg: u16, b, skip: bool) {
+        // These instructions may be jump targets by themselves, e.g. the
+        // condition of a loop.
+        compiler_get_target(c)
+        compiler_code_ABC(c, .Load_Bool, reg, u16(b), u16(skip))
+    }
+
+    __discharge_expr_variables(c, e)
     switch e.type {
     case .None:    unreachable()
     case .Nil:     compiler_load_nil(c, reg, 1)
-    case .Boolean: compiler_code_ABC(c, .Load_Bool, reg, u16(e.boolean), 0)
+    case .False:   compiler_code_ABC(c, .Load_Bool, reg, u16(false), 0)
+    case .True:    compiler_code_ABC(c, .Load_Bool, reg, u16(true),  0)
+    // case .Boolean: compiler_code_ABC(c, .Load_Bool, reg, u16(e.boolean), 0)
 
     case .Number:
         // Can we load it as a positive integer immediately from Bx?
@@ -629,7 +638,7 @@ _discharge_expr_to_reg :: proc(c: ^Compiler, e: ^Expr, reg: u16, loc := #caller_
             compiler_code_ABx(c, .Load_Imm, reg, imm)
         } // Otherwise, we need to load this number in a dedicated instruction.
         else {
-            i := _add_constant(c, value_make(n))
+            i := __add_constant(c, value_make(n))
             compiler_code_ABx(c, .Load_Const, reg, i)
         }
 
@@ -643,9 +652,8 @@ _discharge_expr_to_reg :: proc(c: ^Compiler, e: ^Expr, reg: u16, loc := #caller_
         c.chunk.code[e.pc].A = reg
 
     case .Compare:
-        // These instructions may be jump targets by themselves.
-        compiler_code_ABC(c, .Load_Bool, reg, u16(true),  1)
-        compiler_code_ABC(c, .Load_Bool, reg, u16(false), 0)
+        __load_bool(c, reg, b=false, skip=true)
+        __load_bool(c, reg, b=true,  skip=false)
 
     case .Register:
         // Differing registers, so we need to explicitly move?
@@ -677,13 +685,14 @@ the index of the constant fits in `limit`. Otherwise `false` if `e` could not
 be transformed to a constant or it was a constant not able to fit in `limit`.
  */
 @(private="file")
-_push_expr_k :: proc(c: ^Compiler, e: ^Expr, limit: u16) -> (rk: u16, is_k: bool) {
+__push_expr_k :: proc(c: ^Compiler, e: ^Expr, #any_int limit: u32) -> (rk: u16, is_k: bool) {
     switch e.type {
     case .None:     unreachable()
-    case .Nil:      return _push_k(c, e, value_make(), limit)
-    case .Boolean:  return _push_k(c, e, value_make(e.boolean), limit)
-    case .Number:   return _push_k(c, e, value_make(e.number), limit)
-    case .Constant: return _check_k(c, e, e.index, limit)
+    case .Nil:      return __push_k(c, e, value_make(), limit)
+    case .False:    return __push_k(c, e, value_make(false), limit)
+    case .True:     return __push_k(c, e, value_make(true), limit)
+    case .Number:   return __push_k(c, e, value_make(e.number), limit)
+    case .Constant: return __check_k(c, e, e.index, limit)
 
     // Nothing we can do.
     case .Global, .Local, .Table, .Pc_Pending_Register, .Call, .Compare, .Register:
@@ -694,16 +703,16 @@ _push_expr_k :: proc(c: ^Compiler, e: ^Expr, limit: u16) -> (rk: u16, is_k: bool
 }
 
 // Helper to transform constants into K.
-_push_k :: proc(c: ^Compiler, e: ^Expr, v: Value, limit: u16) -> (rk: u16, is_k: bool) {
-    index := _add_constant(c, v)
+__push_k :: proc(c: ^Compiler, e: ^Expr, v: Value, limit: u32) -> (rk: u16, is_k: bool) {
+    index := __add_constant(c, v)
     e^     = expr_make_index(.Constant, index)
-    return _check_k(c, e, index, limit)
+    return __check_k(c, e, index, limit)
 }
 
 // Constant index fits in a K register?
 // i.e. when it is masked t fit, we do not lose any of the original bits.
-_check_k :: proc(c: ^Compiler, e: ^Expr, index: u32, limit: u16) -> (rk: u16, is_k: bool) {
-    is_k = index <= u32(limit)
+__check_k :: proc(c: ^Compiler, e: ^Expr, index: u32, limit: u32) -> (rk: u16, is_k: bool) {
+    is_k = index <= limit
     rk   = u16(index) if is_k else compiler_push_expr_next(c, e)
     return rk, is_k
 }
@@ -730,24 +739,25 @@ register allocation for its result by the caller.
  */
 compiler_code_unary :: proc(c: ^Compiler, op: Opcode, e: ^Expr) {
     // Constant folding to avoid unnecessary work.
-    #partial switch e.type {
-    case .Nil:
-        if op == .Not {
+    #partial switch op {
+    case .Not:
+        #partial switch e.type {
+        case .Nil, .False:
             e^ = expr_make_boolean(true)
             return
-        }
-    case .Boolean:
-        if op == .Not {
-            e.boolean = !e.boolean
+        case .True, .Number, .Constant:
+            e^ = expr_make_boolean(false)
+            return
+        case .Compare:
+            ip := &c.chunk.code[e.pc]
+            ip.k.k = !ip.k.k
             return
         }
-    case .Number:
-        if op == .Unm {
+    case .Unm:
+        if e.type == .Number {
             e.number = number_unm(e.number)
             return
         }
-    case:
-        break
     }
 
     rb := compiler_push_expr_any(c, e)
@@ -765,7 +775,7 @@ compiler_code_unary :: proc(c: ^Compiler, op: Opcode, e: ^Expr) {
 - `left` is transformed to `.Pc_Pending_Register` and is waiting on register
 allocation for its result by the caller.
  */
-compiler_code_arith :: proc(c: ^Compiler, op: Opcode, #no_alias left, right: ^Expr) {
+compiler_code_arith :: proc(c: ^Compiler, binop: Binop, #no_alias left, right: ^Expr) {
     // Helper to avoid division or modulo by zero.
     check_nonzero :: proc(a: f64) -> (val: f64, ok: bool) {
         ok = a != 0
@@ -780,7 +790,7 @@ compiler_code_arith :: proc(c: ^Compiler, op: Opcode, #no_alias left, right: ^Ex
         a := left.number
         b := right.number
         res: f64
-        #partial switch op {
+        #partial switch binop {
         case .Add: res = number_add(a, b)
         case .Sub: res = number_sub(a, b)
         case .Mul: res = number_mul(a, b)
@@ -788,62 +798,75 @@ compiler_code_arith :: proc(c: ^Compiler, op: Opcode, #no_alias left, right: ^Ex
         case .Mod: res = number_mod(a, check_nonzero(b) or_break fold)
         case .Pow: res = number_pow(a, b)
         case:
-            unreachable("Invalid arithmetic opcode %v", op)
+            unreachable("Invalid binop %v", binop)
         }
         left.number = res
         return
     }
 
-    act_op, arg_b, arg_c := _arith(c, op, left, right)
+    op, arg_b, arg_c := __arith(c, binop, left, right)
 
     // For high precedence recursive calls, remember that we are the
     // right-hand-side of our parent expression. So in those cases, when we're
     // done, the parent's `right` is already of type `.Pc_Needs_Register`.
-    pc := compiler_code_ABC(c, act_op, 0, arg_b, arg_c)
+    pc := compiler_code_ABC(c, op, 0, arg_b, arg_c)
     left^ = expr_make_pc(.Pc_Pending_Register, pc)
 }
 
 @(private="file")
-_arith :: proc(c: ^Compiler, op: Opcode, #no_alias left, right: ^Expr) -> (act_op: Opcode, arg_b: u16, arg_c: u16) {
-    rb := compiler_push_expr_any(c, left)
+__arith :: proc(c: ^Compiler, binop: Binop, #no_alias left, right: ^Expr) -> (op: Opcode, arg_b: u16, arg_c: u16) {
+    compiler_assert(c, left.type == .Register)
+    rb := left.reg
 
     // First try register-immediate.
-    try: if imm, neg, ok := _check_imm(right); ok {
-        #partial switch op {
-        case .Add: act_op = .Add_Imm if !neg else .Sub_Imm
-        case .Sub: act_op = .Sub_Imm if !neg else .Add_Imm
+    try_imm: if imm, neg, ok := __check_imm(right); ok {
+        #partial switch binop {
+        case .Add: op = .Add_Imm if !neg else .Sub_Imm
+        case .Sub: op = .Sub_Imm if !neg else .Add_Imm
 
         // Have an immediate but we don't have a dedicated instruction for this
         // particular arithmetic operation.
         case .Mul..=.Pow:
-            break try
+            break try_imm
         case:
             unreachable()
         }
 
         compiler_pop_reg(c, rb)
-        return act_op, rb, imm
-    } else if expr_is_literal(right) {
+        return op, rb, imm
+    }
+
+    try_const: if expr_is_literal(right) {
         // Wasn't register-immediate, try register-constant next.
-        #partial switch op {
-        case .Add: act_op = .Add_Const
-        case .Sub: act_op = .Sub_Const
-        case .Mul: act_op = .Mul_Const
-        case .Div: act_op = .Div_Const
-        case .Mod: act_op = .Mod_Const
-        case .Pow: act_op = .Pow_Const
+        #partial switch binop {
+        case .Add: op = .Add_Const
+        case .Sub: op = .Sub_Const
+        case .Mul: op = .Mul_Const
+        case .Div: op = .Div_Const
+        case .Mod: op = .Mod_Const
+        case .Pow: op = .Pow_Const
         case:
             unreachable()
         }
 
         // If it doesn't fit in K[C], then we already emitted the instructions
         // needed to load a constant values from the constants table.
-        kc := _push_expr_k(c, right, limit=MAX_C) or_break try
+        kc := __push_expr_k(c, right, limit=MAX_C) or_break try_const
         compiler_pop_reg(c, rb)
-        return act_op, rb, u16(kc)
+        return op, rb, u16(kc)
     }
 
     // Neither register-immediate nor register-constant, do register-register.
+    #partial switch binop {
+    case .Add: op = .Add
+    case .Sub: op = .Sub
+    case .Mul: op = .Mul
+    case .Div: op = .Div
+    case .Mod: op = .Mod
+    case .Pow: op = .Pow
+    case:
+        unreachable()
+    }
     rc := compiler_push_expr_any(c, right)
 
     // Deallocate potenatially temporary registers in the correct order.
@@ -858,7 +881,7 @@ _arith :: proc(c: ^Compiler, op: Opcode, #no_alias left, right: ^Expr) -> (act_o
 }
 
 @(private="file")
-_check_imm :: proc(e: ^Expr) -> (imm: u16, neg, ok: bool) {
+__check_imm :: proc(e: ^Expr) -> (imm: u16, neg, ok: bool) {
     if e.type == .Number {
         n  := e.number
         neg = n < 0.0
@@ -870,25 +893,116 @@ _check_imm :: proc(e: ^Expr) -> (imm: u16, neg, ok: bool) {
     return imm, neg, ok
 }
 
-compiler_code_compare :: proc(c: ^Compiler, op: Opcode, invert: bool, #no_alias left, right: ^Expr) {
-    rb     := left.reg
-    rc     := compiler_push_expr_any(c, right)
-    invert := invert
+compiler_code_compare :: proc(c: ^Compiler, binop: Binop, #no_alias left, right: ^Expr) {
+    // Can constant fold?
+    if left.type == .Number && right.type == .Number {
+        a := left.number
+        b := right.number
+        res: bool
+        #partial switch binop {
+        case .Neq: res = a != b
+        case .Eq:  res = a == b
+        case .Gt:  res = a >  b
+        case .Lt:  res = a <  b
+        case .Geq: res = a >= b
+        case .Leq: res = a <= b
+        }
+        left^ = expr_make_boolean(res)
+        return
+    }
 
-    if rb > rc {
-        compiler_pop_reg(c, rb)
+    pc   := __compare(c, binop, left, right)
+    left^ = expr_make_pc(.Compare, pc)
+}
+
+@(private="file")
+__compare :: proc(c: ^Compiler, binop: Binop, #no_alias left, right: ^Expr) -> (pc: i32) {
+    compiler_assert(c, left.type == .Register)
+    ra := left.reg
+
+    op: Opcode
+    invert := binop == .Neq
+
+    // First try register-immediate.
+    try_imm: if imm, neg, ok := __check_imm(right); !neg && ok {
+        #partial switch binop {
+        case .Neq, .Eq:
+            op = .Eq_Imm
+
+        case .Gt:
+            invert = true
+            fallthrough
+        case .Lt:
+            op = .Lt_Imm
+
+        case .Geq:
+            invert = true
+            fallthrough
+        case .Leq:
+            op = .Leq_Imm
+
+        case:
+            break try_imm
+        }
+        pc = compiler_code_ABCk(c, op, ra, imm, 0, invert)
+        return
+    }
+
+    // Wasn't register-immediate, try register-constant next.
+    try_const: if expr_is_literal(right) {
+        #partial switch binop {
+        case .Neq, .Eq:
+            op = .Eq_Const
+
+        case .Gt:
+            invert = true
+            fallthrough
+        case .Lt:
+            op = .Lt_Const
+
+        case .Geq:
+            invert = true
+            fallthrough
+        case .Leq:
+            op = .Leq_Const
+        case:
+            unreachable()
+        }
+
+        // If it doesn't fit in K[B], then we already emitted the instructions
+        // needed to load a constant values from the constants table.
+        kb := __push_expr_k(c, right, limit=MAX_B) or_break try_const
+        compiler_pop_reg(c, ra)
+        pc = compiler_code_ABCk(c, op, ra, kb, 0, invert)
+        return
+    }
+
+    // Wasn't register-immediate nor register-constant, try register-register.
+    rc := compiler_push_expr_any(c, right)
+    if ra > rc {
+        compiler_pop_reg(c, ra)
         compiler_pop_reg(c, rc)
     } else {
         compiler_pop_reg(c, rc)
-        compiler_pop_reg(c, rb)
+        compiler_pop_reg(c, ra)
     }
 
-    if op != .Eq && invert {
-        rb, rc = rc, rb
-        invert = !invert
+    #partial switch binop {
+    // ~= ==
+    case .Neq, .Eq: op = .Eq
+
+    // x > y <=> y < x
+    case .Gt:  ra, rc = rc, ra; fallthrough
+    case .Lt:  op = .Lt
+
+    // x >= y <=> y <= x
+    case .Geq: ra, rc = rc, ra; fallthrough
+    case .Leq: op = .Leq
+    case:
+        unreachable()
     }
-    pc := compiler_code_ABC(c, op, rb, rc, u16(!invert))
-    left^ = expr_make_pc(.Compare, pc)
+    pc = compiler_code_ABCk(c, op, ra, rc, 0, invert)
+    return
 }
 
 compiler_code_concat :: proc(c: ^Compiler, #no_alias left, right: ^Expr) {

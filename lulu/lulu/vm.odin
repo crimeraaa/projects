@@ -211,6 +211,29 @@ __arith :: proc(L: ^State, pc: i32, ra: ^Value, procedure: $T, rb, rc: ^Value) {
 }
 
 @(private="file")
+__compare_imm :: proc(L: ^State, ip: ^[^]Instruction, pc: i32, procedure: $T, ra: ^Value, imm: u16, cond: bool) {
+    try: {
+        left  := value_to_number(ra^) or_break try
+        right := f64(imm)
+        if procedure(left, right) != cond {
+            ip^ = &ip[1]
+        }
+        return
+    }
+    __protect(L, pc)
+    tmp := value_make(0.0)
+    debug_compare_error(L, ra, &tmp)
+}
+
+@(private="file")
+__compare_eq :: proc(ip: ^[^]Instruction, ra, rb: Value, cond: bool) {
+    res := value_eq(ra, rb)
+    if res != cond {
+        ip^ = &ip[1]
+    }
+}
+
+@(private="file")
 __compare :: proc(L: ^State, ip: ^[^]Instruction, pc: i32, procedure: $T, ra, rb: ^Value, cond: bool) {
     try: {
         left   := value_to_number(ra^) or_break try
@@ -382,16 +405,16 @@ vm_execute :: proc(L: ^State, ret_expect: int) {
         case .Pow: __arith(L, pc, RA, number_pow, &R[i.B], &R[i.C])
 
         // Comparison
-        case .Eq:
-            rb   := R[i.B]
-            cond := bool(i.C)
-            res  := value_eq(RA^, rb)
-            if res != cond {
-                ip = &ip[1]
-            }
+        case .Eq_Imm:    __compare_eq(&ip, RA^, value_make(f64(i.B)), i.k.k)
+        case .Lt_Imm:    __compare_imm(L, &ip, pc, number_lt,  RA, i.B, i.k.k)
+        case .Leq_Imm:   __compare_imm(L, &ip, pc, number_leq, RA, i.B, i.k.k)
+        case .Eq_Const:  __compare_eq(&ip, RA^, K[i.B], i.k.k)
+        case .Lt_Const:  __compare(L, &ip, pc, number_lt,  RA, &K[i.B], i.k.k)
+        case .Leq_Const: __compare(L, &ip, pc, number_leq, RA, &K[i.B], i.k.k)
+        case .Eq:        __compare_eq(&ip, RA^, R[i.B], i.k.k)
+        case .Lt:        __compare(L, &ip, pc, number_lt,  RA, &R[i.B], i.k.k)
+        case .Leq:       __compare(L, &ip, pc, number_leq, RA, &R[i.B], i.k.k)
 
-        case .Lt:  __compare(L, &ip, pc, number_lt,  RA, &R[i.B], bool(i.C))
-        case .Leq: __compare(L, &ip, pc, number_leq, RA, &R[i.B], bool(i.C))
 
         // Misc.
         case .Concat:

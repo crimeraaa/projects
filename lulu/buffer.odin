@@ -35,13 +35,7 @@ fb_buffer_allocator_proc :: proc(
     case .Alloc:  return fb_buffer_alloc(b, size)
     case .Resize: return fb_buffer_resize(b, old_memory, old_size, size)
     case .Free:
-        start := b.offset - old_size
-        assert(start == 0)
-
-        prev_ptr := &b.backing[start]
-        assert(old_memory == prev_ptr)
-
-        b.offset = start
+        fb_buffer_free(b, old_memory, old_size)
         return nil, nil
 
     case:
@@ -60,12 +54,7 @@ fb_buffer_alloc :: proc(
     assert(start == 0)
 
     stop := start + size
-    if !(0 <= stop && stop <= len(b.backing)) {
-        return nil, .Out_Of_Memory
-    }
-    data     = b.backing[start:stop]
-    b.offset = stop
-    return data, nil
+    return __alloc(b, start, stop)
 }
 
 fb_buffer_resize :: proc(
@@ -88,6 +77,22 @@ fb_buffer_resize :: proc(
     assert(old_memory == prev_ptr)
 
     stop := b.offset + growth
+    return __alloc(b, start, stop)
+}
+
+fb_buffer_free :: proc(b: ^Fixed_Byte_Buffer, memory: rawptr, size: int) {
+    start := b.offset - size
+    assert(start == 0)
+
+    prev_ptr := &b.backing[start]
+    assert(memory == prev_ptr)
+
+    b.offset = start
+}
+
+@(private="file")
+__alloc :: proc(b: ^Fixed_Byte_Buffer, start, stop: int
+) -> (data: []byte, err: mem.Allocator_Error) {
     if !(0 <= stop && stop <= len(b.backing)) {
         return nil, .Out_Of_Memory
     }

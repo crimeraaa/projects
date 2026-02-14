@@ -41,10 +41,20 @@ Div,        //  A B C   | R[A] := R[B] / R[C]
 Mod,        //  A B C   | R[A] := R[B] % R[C]
 Pow,        //  A B C   | R[A] := R[B] ^ R[C]
 
-// Comparison
-Eq,         //  A B C   | ip += 1 if (R[A] == R[B]) != Bool(C)
-Lt,         //  A B C   | ip += 1 if (R[A] <  R[B]) != Bool(C)
-Leq,        //  A B C   | ip += 1 if (R[A] <= R[B]) != Bool(C)
+// Comparison (register-immediate)
+Eq_Imm,     //  A B   k | ip += 1 if ( R[A] == (Number)B ) != k
+Lt_Imm,     //  A B   k | ip += 1 if ( R[A] <  (Number)B ) != k
+Leq_Imm,    //  A B   k | ip += 1 if ( R[A] <= (Number)B ) != k
+
+// Comparison (register-constant)
+Eq_Const,   //  A B   k | ip += 1 if (R[A] == K[B]) != k
+Lt_Const,   //  A B   k | ip += 1 if (R[A] <  K[B]) != k
+Leq_Const,  //  A B   k | ip += 1 if (R[A] <= K[B]) != k
+
+// Comparison (register-register)
+Eq,         //  A B   k | ip += 1 if (R[A] == R[B]) != k
+Lt,         //  A B   k | ip += 1 if (R[A] <  R[B]) != k
+Leq,        //  A B   k | ip += 1 if (R[A] <= R[B]) != k
 
 // Misc.
 Concat,     //  A B C   | R[A] := concat( R[B:C] )
@@ -63,6 +73,7 @@ Instruction format inspired by Lua 5.4 and 5.5:
 tens    | 3 3 2 2 2 2 2 2 2 2 2 2 1 1 1 1 1 1 1 1 1 1 0 0 0 0 0 0 0 0 0 0 |
 ones    | 1 0 9 8 7 6 5 4 3 2 1 0 9 8 7 6 5 4 3 2 1 0 9 8 7 6 5 4 3 2 1 0 |
 A B C   |       B(8)     |        C(10)      |      A(8)     |    Op(6)   |
+A B C k |       B(8)     |k|      C(9)       |      A(8)     |    Op(6)   |
 A Bx    |                Bx(18)              |      A(8)     |    Op(6)   |
 A sBx   |               sBx(18)              |      A(8)     |    Op(6)   |
 ```
@@ -192,8 +203,14 @@ OP_INFO := [Opcode]Op_Info{
     // Arithmetic (register-register)
     .Add..=.Pow = {mode=.ABC, a=true, b=.Reg, c=.Reg},
 
-    // Comparison
-    .Eq..=.Leq  = {mode=.ABC, a=false, b=.Reg, c=.Imm},
+    // Comparison (register-immediate)
+    .Eq_Imm..=.Leq_Imm = {mode=.ABCk, a=false, b=.Imm},
+
+    // Comparison (register-constant)
+    .Eq_Const..=.Leq_Const = {mode=.ABCk, a=false, b=.Const},
+
+    // Comparison (register-register)
+    .Eq..=.Leq  = {mode=.ABCk, a=false, b=.Reg, c=.Imm},
 
     // Misc.
     .Concat     = {mode=.ABC, a=true, b=.Reg, c=.Reg},

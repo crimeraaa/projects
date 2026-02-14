@@ -88,18 +88,18 @@ value_type :: #force_inline proc "contextless" (v: Value) -> Value_Type {
 }
 
 @(private="file")
-_check_type :: #force_inline proc(v: Value, t: Value_Type) {
+__check_type :: #force_inline proc(v: Value, t: Value_Type) {
     fmt.assertf(value_type(v) == t, "Expected '%s' but got '%s'",
         value_type_string(t), value_type_name(v))
 }
 
 value_get_bool :: #force_inline proc(v: Value) -> (b: bool) {
-    _check_type(v, .Boolean)
+    __check_type(v, .Boolean)
     return v.boolean
 }
 
 value_get_number :: #force_inline proc(v: Value) -> (f: f64) {
-    _check_type(v, .Number)
+    __check_type(v, .Number)
     return v.number
 }
 
@@ -110,7 +110,7 @@ value_get_pointer :: #force_inline proc(v: Value) -> (p: rawptr) {
 value_get_object :: #force_inline proc(v: Value) -> (o: ^Object) {
     o = v.object
     // Ensure consistency.
-    _check_type(v, o.type)
+    __check_type(v, o.type)
     return o
 }
 
@@ -236,17 +236,17 @@ value_is_falsy :: #force_inline proc(v: Value) -> bool {
 }
 
 value_get_ostring :: #force_inline proc(v: Value) -> ^Ostring {
-    _check_type(v, .String)
+    __check_type(v, .String)
     return &value_get_object(v).string
 }
 
 value_get_function :: #force_inline proc(v: Value) -> ^Closure {
-    _check_type(v, .Function)
+    __check_type(v, .Function)
     return &value_get_object(v).closure
 }
 
 value_get_table :: #force_inline proc(v: Value) -> ^Table {
-    _check_type(v, .Table)
+    __check_type(v, .Table)
     return &value_get_object(v).table
 }
 

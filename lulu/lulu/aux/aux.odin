@@ -168,7 +168,7 @@ load_file :: proc(L: ^lulu.State, name: string, allocator := context.allocator) 
 
     file, file_err := os.open(name)
     if file_err != nil {
-        lulu.push(L, os.error_string(file_err))
+        lulu.push_fstring(L, "%s: %s", name, os.error_string(file_err))
         return .Runtime
     }
     defer os.close(file)

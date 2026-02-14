@@ -7,9 +7,6 @@ Expr :: struct {
         // Number literal. Useful for constant folding.
         number: f64,
 
-        // Boolean literal.
-        boolean: bool,
-
         // Index of the value in the current chunk's constants array.
         // Must fit in SIZE_Bx bits.
         index: u32,
@@ -40,7 +37,7 @@ Expr_Type :: enum {
     None,
 
     // Value literals.
-    Nil, Boolean, Number,
+    Nil, False, True, Number,
 
     // Expression is the index of a constant value as found in the current
     // chunk's constants array? See `Expr.index`.
@@ -75,6 +72,19 @@ Expr_Type :: enum {
     Register,
 }
 
+Binop :: enum u8 {
+    None,
+
+    // Arithmetic
+    Add, Sub, Mul, Div, Mod, Pow,
+
+    // Comparison
+    Neq, Eq, Gt, Lt, Geq, Leq,
+
+    // Misc.
+    Concat,
+}
+
 expr_make_reg :: #force_inline proc(t: Expr_Type, reg: u16) -> (e: Expr) {
     e.type = t
     e.reg  = reg
@@ -99,8 +109,7 @@ expr_make_nil :: #force_inline proc() -> (e: Expr) {
 }
 
 expr_make_boolean :: #force_inline proc(b: bool) -> (e: Expr) {
-    e.type    = .Boolean
-    e.boolean = b
+    e.type = .True if b else .False
     return e
 }
 
@@ -111,14 +120,13 @@ expr_make_number :: #force_inline proc(n: f64) -> (e: Expr) {
 }
 
 expr_is_literal :: #force_inline proc(e: ^Expr) -> bool {
-    LITERAL_TYPES :: bit_set[Expr_Type]{.Nil, .Boolean, .Number, .Constant}
+    LITERAL_TYPES :: bit_set[Expr_Type]{.Nil, .False, .True, .Number, .Constant}
     return e.type in LITERAL_TYPES
 }
 
 expr_is_truthy :: #force_inline proc(e: ^Expr) -> bool {
     #partial switch e.type {
-    case .Boolean:           return e.boolean
-    case .Number, .Constant: return true
+    case .True, .Number, .Constant: return true
     case:
         break
     }

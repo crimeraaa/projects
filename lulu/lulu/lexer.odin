@@ -334,7 +334,7 @@ save_rune :: proc(x: ^Lexer, r: rune, size: int) {
 
 // Wrapper to help catch memory errors.
 __write :: proc(x: ^Lexer, b: ^strings.Builder, r: rune, size: int) {
-    n, err := strings.write_rune(b, r)
+    n, _ := strings.write_rune(b, r)
 
     /*
     **Note(2025-12-25)**
@@ -349,7 +349,7 @@ __write :: proc(x: ^Lexer, b: ^strings.Builder, r: rune, size: int) {
     handled. We do, however, get the number of bytes actually written.
     We can use that to check if we successfully wrote `r`.
      */
-    if err != nil || n != size {
+    if n != size {
         overflow_error(x, r)
     }
 }
@@ -396,7 +396,8 @@ consume_multi_sequence :: proc(x: ^Lexer, nest_open: int, $save: bool) -> int {
         __advance_rune(x, save=save)
     }
     // Report error tokens properly.
-    __error(x, "Unterminated multiline string" when save else "Unterminated multiline comment")
+    what := "Unterminated multiline " + ("string" when save else "comment")
+    __error(x, what)
 }
 
 advance_line :: proc(x: ^Lexer) {
@@ -615,6 +616,9 @@ make_rune_token :: proc(x: ^Lexer, r: rune) -> Token {
         // Save so that we can report errors, just in case.
         nest_open := consume_rune_multi(x, '=', save=true)
         if save_match_rune(x, '[') {
+            // If we have a leading newline, skip it without saving.
+            match_rune(x, '\n')
+
             // Clear builder of the initial nesting.
             strings.builder_reset(x.builder)
             col   := x.col
@@ -624,12 +628,11 @@ make_rune_token :: proc(x: ^Lexer, r: rune) -> Token {
             token.lexeme = token.lexeme[:len(token.lexeme) - count]
             token.string = ostring_new(x.L, token.lexeme)
             return token
-        } else {
-            if nest_open > 0 {
-                __error(x, "Expected a multiline string")
-            }
-            type = .Bracket_Open
         }
+        if nest_open > 0 {
+            __error(x, "Expected a multiline string")
+        }
+        type = .Bracket_Open
     case ']': type = .Bracket_Close
     case '{': type = .Curly_Open
     case '}': type = .Curly_Close

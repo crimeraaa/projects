@@ -3,7 +3,6 @@ package lulu_repl
 // standard
 import "core:fmt"
 import "core:testing"
-import "core:mem"
 
 // local
 import "lulu"

@@ -41,7 +41,7 @@ Precedence :: enum u8 {
 Rule :: struct {
     // Knowing the opcode already helps us dispatch to more specific
     // infix expression parsers.
-    op: Opcode,
+    binop: Binop,
 
     // Left-hand-side precedence. Helps determine when we should terminate
     // recursion in the face of higher-precedence parent expressions.
@@ -50,8 +50,6 @@ Rule :: struct {
     // Right-hand-side precedence. Helps determine when we should recursively
     // parse higher-precedence child expressions.
     right: Precedence,
-
-    invert: bool,
 }
 
 parser_make :: proc(L: ^State, builder: ^strings.Builder, consumed_buf: []byte, name: ^Ostring, input: Reader) -> Parser {
@@ -550,11 +548,6 @@ condition :: proc(p: ^Parser, c: ^Compiler) -> (jump: i32) {
         compiler_pop_reg(c, reg)
         return compiler_code_jump(c, .Jump_Not, reg)
     }
-
-    // Invert the condition because we want to skip the jump when the
-    // intended comparison succeeds.
-    ip   := &c.chunk.code[expr.pc]
-    ip.C  = u16(!bool(ip.C))
     return compiler_code_jump(c, .Jump, 0)
 }
 
@@ -761,7 +754,7 @@ function_call :: proc(p: ^Parser, c: ^Compiler, func: ^Expr) {
         error_current(p, "Ambiguous function call")
     }
     advance_token(p)
-    #partial switch peek_consumed(p) {
+    #partial switch t := peek_consumed(p); t {
     case .Paren_Open:
         if !check_token(p, .Paren_Close) {
             arg_last: Expr
@@ -775,13 +768,8 @@ function_call :: proc(p: ^Parser, c: ^Compiler, func: ^Expr) {
         }
         expect_token(p, .Paren_Close)
 
-    case .String:
-        arg := string_expression(p, c)
-        compiler_push_expr_next(c, &arg)
-        arg_count = 1
-
-    case .Curly_Open:
-        arg := constructor(p, c)
+    case .String, .Curly_Open:
+        arg := string_expression(p, c) if t == .String else constructor(p, c)
         compiler_push_expr_next(c, &arg)
         arg_count = 1
 
@@ -906,47 +894,55 @@ __set_array :: proc(p: ^Parser, c: ^Compiler, ct: ^Constructor) {
 
 infix :: proc(p: ^Parser, c: ^Compiler, left: ^Expr, prec: Precedence = nil) {
     for {
-        rule := get_rule(p.token.type)
+        rule  := get_rule(p.token.type)
+        binop := rule.binop
         // No binary operation OR parent caller is of a higher precedence?
-        if rule.op == nil || prec > rule.left {
+        if binop == nil || prec > rule.left {
             break
         }
 
         // Don't advance here, we need the correct line/col info for `left`.
-        #partial switch rule.op {
+        #partial switch binop {
         case .Add..=.Pow:
-            arith(p, c, rule.op, left, rule.right)
-        case .Eq..=.Leq:
-            compare(p, c, rule.op, rule.invert, left, rule.right)
+            arith(p, c, binop, left, rule.right)
+        case .Neq..=.Leq:
+            compare(p, c, binop, left, rule.right)
         case .Concat:
             __concat(p, c, left, rule.right)
         case:
-            unreachable()
+            unreachable("Invalid binop %v", binop)
         }
     }
 }
 
 get_rule  :: proc(type: Token_Type) -> Rule {
+    left :: #force_inline proc(binop: Binop, prec: Precedence) -> Rule {
+        return Rule{binop, prec, prec + Precedence(1)}
+    }
+
+    right :: #force_inline proc(binop: Binop, prec: Precedence) -> Rule {
+        return Rule{binop, prec, prec}
+    }
+
     #partial switch type {
-    // right = left + 0: Enforce right-associativity for exponentiation.
-    // right = left + 1: Enforce left-associativity for all other operators.
-    case .Plus:         return Rule{.Add, .Terminal, .Factor,   false}
-    case .Minus:        return Rule{.Sub, .Terminal, .Factor,   false}
-    case .Asterisk:     return Rule{.Mul, .Factor,   .Exponent, false}
-    case .Slash:        return Rule{.Div, .Factor,   .Exponent, false}
-    case .Percent:      return Rule{.Mod, .Factor,   .Exponent, false}
-    case .Caret:        return Rule{.Pow, .Exponent, .Exponent, false}
+    // Arithmetic
+    case .Plus:          return left(.Add, .Terminal)
+    case .Minus:         return left(.Sub, .Terminal)
+    case .Asterisk:      return left(.Mul, .Factor)
+    case .Slash:         return left(.Div, .Factor)
+    case .Percent:       return left(.Mod, .Factor)
+    case .Caret:         return right(.Pow, .Exponent)
 
     // Comparison
-    case .Equal_To:      return Rule{.Eq,   .Equality,   .Comparison,  false}
-    case .Less_Than:     return Rule{.Lt,   .Comparison, .Concat,      false}
-    case .Less_Equal:    return Rule{.Leq,  .Comparison, .Concat,      false}
-    case .Not_Equal:     return Rule{.Eq,   .Equality,   .Comparison,  true}
-    case .Greater_Than:  return Rule{.Lt,   .Comparison, .Concat,      true}
-    case .Greater_Equal: return Rule{.Leq,  .Comparison, .Concat,      true}
+    case .Not_Equal:     return left(.Neq,  .Equality)
+    case .Equal_To:      return left(.Eq,   .Equality)
+    case .Greater_Than:  return left(.Gt,   .Comparison)
+    case .Less_Than:     return left(.Lt,   .Comparison)
+    case .Greater_Equal: return left(.Geq,  .Comparison)
+    case .Less_Equal:    return left(.Leq,  .Comparison)
 
     // Misc.
-    case .Ellipsis2:     return Rule{.Concat, .Concat, .Concat, false}
+    case .Ellipsis2:     return right(.Concat, .Concat)
     }
     return Rule{}
 }
@@ -955,7 +951,7 @@ get_rule  :: proc(type: Token_Type) -> Rule {
 **Parameters**
 - prec: Parent expression right-hand-side precedence.
  */
-arith :: proc(p: ^Parser, c: ^Compiler, op: Opcode, left: ^Expr, prec: Precedence) {
+arith :: proc(p: ^Parser, c: ^Compiler, binop: Binop, left: ^Expr, prec: Precedence) {
     // If we absolutely cannot fold this, then left MUST be pushed BEFORE
     // parsing the right side to ensure correct register ordering and thus
     // correct operations. We cannot assume that `a op b` is equal to `b op a`
@@ -967,14 +963,16 @@ arith :: proc(p: ^Parser, c: ^Compiler, op: Opcode, left: ^Expr, prec: Precedenc
     // Advance only now so that the above push has the correct line/col info.
     advance_token(p)
     right := expression(p, c, prec)
-    compiler_code_arith(c, op, left, &right)
+    compiler_code_arith(c, binop, left, &right)
 }
 
-compare :: proc(p: ^Parser, c: ^Compiler, op: Opcode, invert: bool, left: ^Expr, prec: Precedence) {
-    compiler_push_expr_any(c, left)
+compare :: proc(p: ^Parser, c: ^Compiler, binop: Binop, left: ^Expr, prec: Precedence) {
+    if left.type != .Number {
+        compiler_push_expr_any(c, left)
+    }
     advance_token(p)
     right := expression(p, c, prec)
-    compiler_code_compare(c, op, invert, left, &right)
+    compiler_code_compare(c, binop, left, &right)
 }
 
 __concat :: proc(p: ^Parser, c: ^Compiler, left: ^Expr, prec: Precedence) {

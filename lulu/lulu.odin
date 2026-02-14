@@ -61,7 +61,7 @@ main :: proc() {
         lulu.set_top(L, 0)
 
         // Test if lexer can properly handle token stream memory errors.
-        backing: [256]byte
+        backing: [64]byte
         fb_buffer := fb_buffer_make(backing[:])
         allocator := fb_buffer_allocator(&fb_buffer)
         switch len(data.args) {
