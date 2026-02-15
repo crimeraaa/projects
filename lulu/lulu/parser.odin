@@ -903,12 +903,9 @@ infix :: proc(p: ^Parser, c: ^Compiler, left: ^Expr, prec: Precedence = nil) {
 
         // Don't advance here, we need the correct line/col info for `left`.
         #partial switch binop {
-        case .Add..=.Pow:
-            arith(p, c, binop, left, rule.right)
-        case .Neq..=.Leq:
-            compare(p, c, binop, left, rule.right)
-        case .Concat:
-            __concat(p, c, left, rule.right)
+        case .Add..=.Pow: arith(p, c, binop, left, rule.right)
+        case .Neq..=.Leq: compare(p, c, binop, left, rule.right)
+        case .Concat:     __concat(p, c, left, rule.right)
         case:
             unreachable("Invalid binop %v", binop)
         }

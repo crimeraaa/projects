@@ -195,6 +195,8 @@ disassemble_at :: proc(chunk: ^Chunk, i: Instruction, pc: i32, pad := 0) {
     case .ABCk:  fmt.printf("% -3i % -3i %i ; ", i.B, i.k.C, int(i.k.k))
     case .ABx:   fmt.printf("% -9i ; ", i.u.Bx)
     case .AsBx:  fmt.printf("% -9i ; ", i.s.Bx)
+    case .vABx:  fmt.printf("% -7i %i ; ", i.vu.Bx, int(i.vu.k))
+    case .vAsBx: fmt.printf("% -7i %i ; ", i.vs.Bx, int(i.vs.k))
     }
 
     ra := __get_reg(chunk, i.A, pc, buf1[:])
@@ -270,13 +272,13 @@ disassemble_at :: proc(chunk: ^Chunk, i: Instruction, pc: i32, pad := 0) {
         fmt.printf("%s %s %s", rb, __op_string(op), rc)
 
     case .Eq_Imm..=.Leq_Imm:
-        imm := i.k.B
-        k := "not " if i.k.k else ""
+        imm := i.vs.Bx
+        k   := "not " if i.vs.k else ""
         fmt.printf("goto .code[%i] if %s(%s %s %i)", pc + 1 + 1, k, ra, __op_string(op), imm)
 
     case .Eq_Const..=.Leq_Const:
-        rb := __get_const(chunk, i.k.B, buf2[:])
-        k  := "not " if i.k.k else ""
+        rb := __get_const(chunk, i.vu.Bx, buf2[:])
+        k  := "not " if i.vu.k else ""
         fmt.printf("goto .code[%i] if %s(%s %s %s)", pc + 1 + 1, k, ra, __op_string(op), rb)
 
     case .Eq..=.Leq:

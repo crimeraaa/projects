@@ -683,7 +683,7 @@ make_string_token :: proc(x: ^Lexer, q: rune) -> Token {
         case q: break consume_loop
         case '\\':
             esc, esc_size := peek_rune(x), peek_size(x)
-            save_advance_rune(x)
+            advance_rune(x)
             // We assume the escaped part of escape sequences are all ASCII.
             // https://odin-lang.org/docs/overview/
             // https://www.lua.org/pil/2.4.html

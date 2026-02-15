@@ -211,7 +211,7 @@ __arith :: proc(L: ^State, pc: i32, ra: ^Value, procedure: $T, rb, rc: ^Value) {
 }
 
 @(private="file")
-__compare_imm :: proc(L: ^State, ip: ^[^]Instruction, pc: i32, procedure: $T, ra: ^Value, imm: u16, cond: bool) {
+__compare_imm :: proc(L: ^State, ip: ^[^]Instruction, pc: i32, procedure: $T, ra: ^Value, imm: i32, cond: bool) {
     try: {
         left  := value_to_number(ra^) or_break try
         right := f64(imm)
@@ -404,16 +404,20 @@ vm_execute :: proc(L: ^State, ret_expect: int) {
         case .Mod: __arith(L, pc, RA, number_mod, &R[i.B], &R[i.C])
         case .Pow: __arith(L, pc, RA, number_pow, &R[i.B], &R[i.C])
 
-        // Comparison
-        case .Eq_Imm:    __compare_eq(&ip, RA^, value_make(f64(i.B)), i.k.k)
-        case .Lt_Imm:    __compare_imm(L, &ip, pc, number_lt,  RA, i.B, i.k.k)
-        case .Leq_Imm:   __compare_imm(L, &ip, pc, number_leq, RA, i.B, i.k.k)
-        case .Eq_Const:  __compare_eq(&ip, RA^, K[i.B], i.k.k)
-        case .Lt_Const:  __compare(L, &ip, pc, number_lt,  RA, &K[i.B], i.k.k)
-        case .Leq_Const: __compare(L, &ip, pc, number_leq, RA, &K[i.B], i.k.k)
-        case .Eq:        __compare_eq(&ip, RA^, R[i.B], i.k.k)
-        case .Lt:        __compare(L, &ip, pc, number_lt,  RA, &R[i.B], i.k.k)
-        case .Leq:       __compare(L, &ip, pc, number_leq, RA, &R[i.B], i.k.k)
+        // Comparison (register-immedate)
+        case .Eq_Imm:    __compare_eq(&ip, RA^, value_make(f64(i.vs.Bx)), i.vs.k)
+        case .Lt_Imm:    __compare_imm(L, &ip, pc, number_lt,  RA, i.vs.Bx, i.vs.k)
+        case .Leq_Imm:   __compare_imm(L, &ip, pc, number_leq, RA, i.vs.Bx, i.vs.k)
+
+        // Comparison (register-constant)
+        case .Eq_Const:  __compare_eq(&ip, RA^, K[i.vu.Bx], i.vu.k)
+        case .Lt_Const:  __compare(L, &ip, pc, number_lt,  RA, &K[i.vu.Bx], i.vu.k)
+        case .Leq_Const: __compare(L, &ip, pc, number_leq, RA, &K[i.vu.Bx], i.vu.k)
+
+        // Comparison (register-register)
+        case .Eq:  __compare_eq(&ip, RA^, R[i.B], i.k.k)
+        case .Lt:  __compare(L, &ip, pc, number_lt,  RA, &R[i.B], i.k.k)
+        case .Leq: __compare(L, &ip, pc, number_leq, RA, &R[i.B], i.k.k)
 
 
         // Misc.

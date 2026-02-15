@@ -50,6 +50,7 @@ Global_State :: struct {
     bytes_allocated: int,
 }
 
+@(private="package")
 G :: proc(L: ^State) -> ^Global_State {
     return L.global_state
 }

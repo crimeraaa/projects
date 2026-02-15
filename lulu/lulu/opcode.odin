@@ -2,59 +2,59 @@
 package lulu
 
 Opcode :: enum u8 {
-// Op               Args    | Side-effects
-Move,           //  A B     | R[A] := R[B]
-Load_Nil,       //  A B     | R[A:B] := nil
-Load_Bool,      //  A B C   | R[A] := (Bool)B; if Bool(C) then ip += 1
-Load_Imm,       //  A Bx    | R[A] := (Number)Bx
-Load_Const,     //  A Bx    | R[A] := K[Bx]
-Get_Global,     //  A Bx    | R[A] := _G[K[Bx]]
-Get_Table,      //  A B C   | R[A] := R[B][R[C]]
-Get_Field,      //  A B C   | R[A] := R[B][K[C]]
-Set_Global,     //  A Bx    | _G[K[Bx]]  := R[A]
-Set_Table,      //  A B C k | R[A][R[B]] := (K if k else R)[C]
-Set_Field,      //  A B C k | R[A][K[B]] := (K if k else R)[C]
-New_Table,      //  A B C   | R[A] := {} ; #hash=B, #array=C
+// Op          Args     | Side-effects
+Move,       // A B      | R[A] := R[B]
+Load_Nil,   // A B      | R[A:B] := nil
+Load_Bool,  // A B C    | R[A] := (Bool)B; if Bool(C) then ip += 1
+Load_Imm,   // A Bx     | R[A] := (Number)Bx
+Load_Const, // A Bx     | R[A] := K[Bx]
+Get_Global, // A Bx     | R[A] := _G[K[Bx]]
+Get_Table,  // A B C    | R[A] := R[B][R[C]]
+Get_Field,  // A B C    | R[A] := R[B][K[C]]
+Set_Global, // A Bx     | _G[K[Bx]]  := R[A]
+Set_Table,  // A B C k  | R[A][R[B]] := (K if k else R)[C]
+Set_Field,  // A B C k  | R[A][K[B]] := (K if k else R)[C]
+New_Table,  // A B C    | R[A] := {} ; #hash=B, #array=C
 
 // Unary
-Len,    //  A B     | R[A] := #R[B]
-Not,    //  A B     | R[A] := not R[B]
-Unm,    //  A B     | R[A] := -R[B]
+Len,        // A B      | R[A] := #R[B]
+Not,        // A B      | R[A] := not R[B]
+Unm,        // A B      | R[A] := -R[B]
 
 // Arithmetic (register-immediate)
-Add_Imm,    //  A B C   | R[A] := R[B] + (Number)C
-Sub_Imm,    //  A B C   | R[A] := R[B] - (Number)C
+Add_Imm,    // A B C    | R[A] := R[B] + (Number)C
+Sub_Imm,    // A B C    | R[A] := R[B] - (Number)C
 
 // Arithmetic (register-constant)
-Add_Const,  //  A B C   | R[A] := R[B] + K[C]
-Sub_Const,  //  A B C   | R[A] := R[B] - K[C]
-Mul_Const,  //  A B C   | R[A] := R[B] * K[C]
-Div_Const,  //  A B C   | R[A] := R[B] / K[C]
-Mod_Const,  //  A B C   | R[A] := R[B] % K[C]
-Pow_Const,  //  A B C   | R[A] := R[B] ^ K[C]
+Add_Const,  // A B C    | R[A] := R[B] + K[C]
+Sub_Const,  // A B C    | R[A] := R[B] - K[C]
+Mul_Const,  // A B C    | R[A] := R[B] * K[C]
+Div_Const,  // A B C    | R[A] := R[B] / K[C]
+Mod_Const,  // A B C    | R[A] := R[B] % K[C]
+Pow_Const,  // A B C    | R[A] := R[B] ^ K[C]
 
 // Arithmetic (register-register)
-Add,        //  A B C   | R[A] := R[B] + R[C]
-Sub,        //  A B C   | R[A] := R[B] - R[C]
-Mul,        //  A B C   | R[A] := R[B] * R[C]
-Div,        //  A B C   | R[A] := R[B] / R[C]
-Mod,        //  A B C   | R[A] := R[B] % R[C]
-Pow,        //  A B C   | R[A] := R[B] ^ R[C]
+Add,        // A B C    | R[A] := R[B] + R[C]
+Sub,        // A B C    | R[A] := R[B] - R[C]
+Mul,        // A B C    | R[A] := R[B] * R[C]
+Div,        // A B C    | R[A] := R[B] / R[C]
+Mod,        // A B C    | R[A] := R[B] % R[C]
+Pow,        // A B C    | R[A] := R[B] ^ R[C]
 
 // Comparison (register-immediate)
-Eq_Imm,     //  A B   k | ip += 1 if ( R[A] == (Number)B ) != k
-Lt_Imm,     //  A B   k | ip += 1 if ( R[A] <  (Number)B ) != k
-Leq_Imm,    //  A B   k | ip += 1 if ( R[A] <= (Number)B ) != k
+Eq_Imm,     // A vsBx k | ip += 1 if ( R[A] == (Number)sBx ) != k
+Lt_Imm,     // A vsBx k | ip += 1 if ( R[A] <  (Number)sBx ) != k
+Leq_Imm,    // A vsBx k | ip += 1 if ( R[A] <= (Number)sBx ) != k
 
 // Comparison (register-constant)
-Eq_Const,   //  A B   k | ip += 1 if (R[A] == K[B]) != k
-Lt_Const,   //  A B   k | ip += 1 if (R[A] <  K[B]) != k
-Leq_Const,  //  A B   k | ip += 1 if (R[A] <= K[B]) != k
+Eq_Const,   // A vBx  k | ip += 1 if (R[A] == K[vBx]) != k
+Lt_Const,   // A vBx  k | ip += 1 if (R[A] <  K[vBx]) != k
+Leq_Const,  // A vBx  k | ip += 1 if (R[A] <= K[vBx]) != k
 
 // Comparison (register-register)
-Eq,         //  A B   k | ip += 1 if (R[A] == R[B]) != k
-Lt,         //  A B   k | ip += 1 if (R[A] <  R[B]) != k
-Leq,        //  A B   k | ip += 1 if (R[A] <= R[B]) != k
+Eq,         // A B    k | ip += 1 if (R[A] == R[B]) != k
+Lt,         // A B    k | ip += 1 if (R[A] <  R[B]) != k
+Leq,        // A B    k | ip += 1 if (R[A] <= R[B]) != k
 
 // Misc.
 Concat,     //  A B C   | R[A] := concat( R[B:C] )
@@ -73,12 +73,14 @@ Instruction format inspired by Lua 5.4 and 5.5:
 tens    | 3 3 2 2 2 2 2 2 2 2 2 2 1 1 1 1 1 1 1 1 1 1 0 0 0 0 0 0 0 0 0 0 |
 ones    | 1 0 9 8 7 6 5 4 3 2 1 0 9 8 7 6 5 4 3 2 1 0 9 8 7 6 5 4 3 2 1 0 |
 A B C   |       B(8)     |        C(10)      |      A(8)     |    Op(6)   |
-A B C k |       B(8)     |k|      C(9)       |      A(8)     |    Op(6)   |
+A B C k |       B(8)     |        C(9)     |k|      A(8)     |    Op(6)   |
 A Bx    |                Bx(18)              |      A(8)     |    Op(6)   |
 A sBx   |               sBx(18)              |      A(8)     |    Op(6)   |
+A Bx  k |              v:Bx(17)            |k|      A(8)     |    Op(6)   |
+A sBx k |             v:sBx(17)            |k|      A(8)     |    Op(6)   |
 ```
 
-'s' stands for "signed", 'x' stands for "extended".
+'s' stands for "signed", 'x' stands for "extended", 'v' stands for "variant".
 
 Unlike Lua 5.1, we do not, for the most part, make use of RK registers in
 order to simplify instruction decoding. So we follow Lua 5.4 and 5.5 in
@@ -110,6 +112,12 @@ Instruction :: struct #raw_union {
 
     // Extended, signed.
     s: Instruction_AsBx,
+
+    // ABx but we remove 1 bit of `Bx` to fit a `k` flag.
+    vu: Instruction_vABx,
+
+    // AsBx but we remove 1 bit of `Bx` to fit a `k` flag.
+    vs: Instruction_vAsBx,
 }
 
 Instruction_ABC :: bit_field u32 {
@@ -122,8 +130,8 @@ Instruction_ABC :: bit_field u32 {
 Instruction_ABCk :: bit_field u32 {
     op: Opcode | SIZE_OP,
     A:  u16    | SIZE_A,
+    k:  bool   | 1, // May indicate if `C` is a K register.
     C:  u16    | SIZE_C - 1,
-    k:  bool   | 1,
     B:  u16    | SIZE_B,
 }
 
@@ -139,6 +147,20 @@ Instruction_AsBx :: bit_field u32 {
     Bx: i32    | SIZE_Bx,
 }
 
+Instruction_vABx :: bit_field u32 {
+    op: Opcode | SIZE_OP,
+    A:  u16    | SIZE_A,
+    k:  bool   | 1,
+    Bx: u32    | SIZE_Bx - 1,
+}
+
+Instruction_vAsBx :: bit_field u32 {
+    op: Opcode | SIZE_OP,
+    A:  u16    | SIZE_A,
+    k:  bool   | 1,
+    Bx: i32    | SIZE_Bx - 1,
+}
+
 SIZE_OP  :: 6
 SIZE_A   :: 8
 SIZE_C   :: 10
@@ -151,22 +173,25 @@ MAX_B   :: (1 << SIZE_B)  - 1
 MAX_C   :: (1 << SIZE_C)  - 1
 MAX_Ck  :: MAX_C >> 1
 MAX_Bx  :: (1 << SIZE_Bx) - 1
+MAX_vBx :: MAX_Bx >> 1
 MAX_sBx :: MAX_Bx >> 1
 MIN_sBx :: 0 - MAX_Bx
 
-MAX_REG     :: MAX_A
-MAX_IMM_C   :: MAX_C
-MAX_IMM_Bx  :: MAX_Bx
+MAX_REG      :: MAX_A
+MAX_IMM_C    :: MAX_C
+MAX_IMM_Bx   :: MAX_Bx
+MAX_IMM_vsBx :: MAX_sBx >> 1
+MIN_IMM_vsBx :: 0 - MAX_IMM_vsBx
 
 Op_Info :: bit_field u8 {
-    mode: Op_Format | 2, // What operands are we using?
+    mode: Op_Format | 3, // What operands are we using?
     a:    bool      | 1, // Operand A: `true` iff used as destination register
     c:    Op_Mode   | 2,
     b:    Op_Mode   | 2,
 }
 
 Op_Format :: enum u8 {
-    ABC, ABCk, ABx, AsBx,
+    ABC, ABCk, ABx, AsBx, vABx, vAsBx,
 }
 
 Op_Mode :: enum u8 {
@@ -204,10 +229,10 @@ OP_INFO := [Opcode]Op_Info{
     .Add..=.Pow = {mode=.ABC, a=true, b=.Reg, c=.Reg},
 
     // Comparison (register-immediate)
-    .Eq_Imm..=.Leq_Imm = {mode=.ABCk, a=false, b=.Imm},
+    .Eq_Imm..=.Leq_Imm = {mode=.vAsBx, a=false, b=.Imm},
 
     // Comparison (register-constant)
-    .Eq_Const..=.Leq_Const = {mode=.ABCk, a=false, b=.Const},
+    .Eq_Const..=.Leq_Const = {mode=.vABx, a=false, b=.Const},
 
     // Comparison (register-register)
     .Eq..=.Leq  = {mode=.ABCk, a=false, b=.Reg, c=.Imm},
