@@ -2,7 +2,6 @@ package luna
 
 import "core:fmt"
 import os "core:os/os2"
-import "core:strings"
 
 line_reader :: proc(user_data: rawptr) -> []byte {
     input := cast(^[]byte)user_data

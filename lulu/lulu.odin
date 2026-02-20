@@ -95,7 +95,7 @@ main :: proc() {
 run_repl :: proc(L: ^lulu.State, allocator: mem.Allocator) -> (err: os.Error) {
     for {
         fmt.print(">>> ")
-        line_buf: [512]byte
+        line_buf: [256]byte
         line_read := os.read(os.stdin, line_buf[:]) or_return
         // Skip the newline stored at `line_buf[line_read]`.
         line     := string(line_buf[:line_read - 1])
@@ -108,9 +108,12 @@ run_repl :: proc(L: ^lulu.State, allocator: mem.Allocator) -> (err: os.Error) {
 
 
 run_file :: proc(L: ^lulu.State, name: string, allocator: mem.Allocator) -> (err: os.Error) {
-    load_err := lulu_aux.load(L, name, allocator)
+    is_stdin  := name == "-"
+    load_name := name if !is_stdin else ""
+    run_name  := name if !is_stdin else "stdin"
+    load_err  := lulu_aux.load(L, load_name, allocator)
     if check_no_error(L, load_err) {
-        run_input(L, name)
+        run_input(L, run_name)
     } else if load_err == .Memory {
         return .Out_Of_Memory
     }

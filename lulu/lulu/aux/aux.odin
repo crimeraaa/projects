@@ -141,10 +141,17 @@ load_line :: proc(L: ^lulu.State, name, line: string, allocator := context.alloc
     }
 
     line := transmute([]byte)line
-    return lulu.load(L, "stdin", line_reader_proc, &line, allocator)
+    return lulu.load(L, name, line_reader_proc, &line, allocator)
 }
 
 /*
+Read the file given by `name` fully until EOF or an error is reached.
+That is, newlines do not terminate the input.
+
+Parameters:
+name: As a special behavior, the empty string `""` represents `os.stdin`.
+This is useful if you want to read stdin as an EOF-terminated file.
+
 Errors:
 - .Runtime: We failed to load the file for some reason.
 - .Syntax
@@ -166,12 +173,23 @@ load_file :: proc(L: ^lulu.State, name: string, allocator := context.allocator) 
         return
     }
 
-    file, file_err := os.open(name)
-    if file_err != nil {
-        lulu.push_fstring(L, "%s: %s", name, os.error_string(file_err))
-        return .Runtime
+    file: ^os.File
+    name := name
+    if name == "" {
+        file = os.stdin
+        name = "stdin"
+    } else {
+        open_err: os.Error
+        file, open_err = os.open(name)
+        if open_err != nil {
+            lulu.push_fstring(L, "%s: %s", name, os.error_string(open_err))
+            return .Runtime
+        }
     }
-    defer os.close(file)
+    // Don't close stdin!
+    defer if file != os.stdin {
+        os.close(file)
+    }
 
     data := File_Reader_Data{file=file}
     return lulu.load(L, name, file_reader_proc, &data, allocator)
