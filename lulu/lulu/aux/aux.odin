@@ -191,6 +191,7 @@ load_file :: proc(L: ^lulu.State, name: string, allocator := context.allocator) 
         os.close(file)
     }
 
-    data := File_Reader_Data{file=file}
+    data: File_Reader_Data = ---
+    data.file = file
     return lulu.load(L, name, file_reader_proc, &data, allocator)
 }

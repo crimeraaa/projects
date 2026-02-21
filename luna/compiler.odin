@@ -8,8 +8,6 @@ Compiler :: struct {
     // All compilers for the current file share the same parser.
     parser: ^Parser,
     chunk:  ^Chunk,
-    // nodes:   Ast_Node,
-
     // pc: i32,
     free_reg: u16,
 }
@@ -18,24 +16,14 @@ Compiler :: struct {
 compile :: proc(c: ^Compiler, root: ^Ast_Node) {
     visit(c, root)
     code_ABC(c, .Return, 0, 1, 0)
+    ast_destroy(root)
 }
 
 visit :: proc(c: ^Compiler, node: ^Ast_Node) {
     switch data in node {
-    case Literal:
-        expr_push_next(c, node)
-
-    case ^Unary:
-        visit(c, &data.arg)
-        unary(c, data.op, &data.arg)
-        free(data)
-
-    case ^Binary:
-        visit(c, &data.left)
-        visit(c, &data.right)
-        type, pc := binary(c, data.op, &data.left, &data.right)
-        node^ = Pending{type, pc}
-        free(data)
+    case Literal:   expr_push_next(c, node)
+    case ^Unary:    unary(c, node, data)  // free(data)
+    case ^Binary:   binary(c, node, data) // free(data)
     case Register, Pending:
         unreachable()
     }
@@ -59,35 +47,8 @@ code_AsBx :: proc(c: ^Compiler, op: Opcode, A: u16, sBx: i32) -> (pc: i32) {
     return
 }
 
-unary :: proc(c: ^Compiler, op: Ast_Op, expr: ^Ast_Node) {
-    #partial switch op {
-    case .Not, .Len:
-        unimplemented()
-    case .Unm:
-        if lit, ok := &expr.(Literal); ok {
-            #partial switch v in lit {
-            case int: lit^ = -v; return
-            case f64: lit^ = -v; return
-            case:
-                break
-            }
-        }
-        p := c.parser
-        parser_error(p, p.consumed, "Cannot negate a non-number")
-    case .Bnot:
-        if lit, ok := &expr.(Literal); ok {
-            if i, ok2 := &lit.(int); ok2 {
-                i^ = ~i^
-                return
-            }
-        }
-        p := c.parser
-        parser_error(p, p.consumed, "Cannot bitwise-not a non-integer")
-    }
-}
-
 expr_push_next :: proc(c: ^Compiler, expr: ^Ast_Node) -> (reg: u16) {
-    reg = reg_push(c, 1)
+    reg = reg_push(c)
     discharge_to_reg(c, expr, reg)
     return reg
 }
@@ -121,8 +82,9 @@ discharge_to_reg :: proc(c: ^Compiler, expr: ^Ast_Node, reg: u16) {
     case Literal:
         switch value in node {
         case bool:
-            code_ABC(c, .Load_Bool, reg, u16(value), 0)
             type = .Boolean
+            code_ABC(c, .Load_Bool, reg, u16(value), 0)
+
         case int:
             type = .Integer
             index := chunk_add_constant(c.chunk, value)
@@ -151,57 +113,94 @@ discharge_to_reg :: proc(c: ^Compiler, expr: ^Ast_Node, reg: u16) {
     expr^ = Register{type, reg}
 }
 
-binary :: proc(c: ^Compiler, op: Ast_Op, #no_alias left, right: ^Ast_Node) -> (type: Value_Type, pc: i32) {
-    is_integer :: proc(expr: ^Ast_Node) -> bool {
-        #partial switch node in expr {
-        case Literal:  _, ok := node.(int); return ok
-        case Register: return node.type == .Integer
-        case Pending:  return node.type == .Integer
-        }
-        return false
+unary :: proc(c: ^Compiler, node: ^Ast_Node, expr: ^Unary) {
+    error :: proc(c: ^Compiler, $action, $object: string) -> ! {
+        p := c.parser
+        parser_error(p, p.consumed, "Cannot " + action + " a non-" + object)
     }
 
-    is_number :: proc(expr: ^Ast_Node) -> bool {
-        #partial switch node in expr {
-        case Literal:  _, ok := node.(f64); return ok
-        case Register: return node.type == .Number
-        case Pending:  return node.type == .Number
-        }
-        return false
+    error_unm :: proc(c: ^Compiler) -> ! {
+        error(c, "negate", "(integer|number)")
     }
 
+    visit(c, &expr.arg)
+    #partial switch expr.op {
+    case .Not, .Len:
+        unimplemented()
+
+    case .Unm:
+        switch arg in expr.arg {
+        case Literal:
+            #partial switch value in arg {
+            case int: expr.arg = Literal(-value); return
+            case f64: expr.arg = Literal(-value); return
+            case:
+                error_unm(c)
+            }
+
+        case ^Unary, ^Binary, Pending: unreachable()
+        case Register:
+            pc: i32
+            #partial switch arg.type {
+            case .Integer: pc = code_ABC(c, .Unm_int, 0, arg.reg, 0)
+            case .Number:  pc = code_ABC(c, .Unm_f64, 0, arg.reg, 0)
+            case:
+                error_unm(c)
+            }
+            node^ = Pending{arg.type, pc}
+        }
+
+    case .Bnot:
+        if lit, ok := &expr.arg.(Literal); ok {
+            if i, ok2 := &lit.(int); ok2 {
+                i^ = ~i^
+                return
+            }
+        }
+        p := c.parser
+        parser_error(p, p.consumed, "Cannot bitwise-not a non-integer")
+    }
+    expr_push_any(c, node)
+}
+
+binary :: proc(c: ^Compiler, node: ^Ast_Node, expr: ^Binary) {
+    visit(c, &expr.left)
+    visit(c, &expr.right)
+
+    type: Value_Type
     act_op: Opcode
-    #partial switch op {
+    #partial switch expr.op {
     // number-number OR integer-integer
     case .Eq..=.Geq:
         unimplemented()
 
     case .Add..=.Div:
-        if is_integer(left) && is_integer(right) {
+        if ast_is_integer(&expr.left) && ast_is_integer(&expr.right) {
             type   = .Integer
-            act_op = .Add_int + Opcode(op - .Add)
-        } else if is_number(left) && is_number(right) {
+            act_op = .Add_int + Opcode(expr.op - .Add)
+        } else if ast_is_number(&expr.left) && ast_is_number(&expr.right) {
             type   = .Number
-            act_op = .Add_f64 + Opcode(op - .Add)
+            act_op = .Add_f64 + Opcode(expr.op - .Add)
         } else {
             parser_error(c.parser, c.parser.current, "operands must both be numbers/integers")
         }
 
     // integer-integer
     case .Mod, .Band..=.Bxor:
-        if !is_integer(left) || !is_integer(right) {
+        if !ast_is_integer(&expr.left) || !ast_is_integer(&expr.right) {
             parser_error(c.parser, c.parser.current, "operands must both be integers")
         }
 
         type = .Integer
-        if op == .Mod {
+        if expr.op == .Mod {
             act_op = .Mod_int
         } else {
-            act_op = .Band + Opcode(op - .Band)
+            act_op = .Band + Opcode(expr.op - .Band)
         }
     }
-    rb := expr_push_any(c, left)
-    rc := expr_push_any(c, right)
+
+    rb := expr_push_any(c, &expr.left)
+    rc := expr_push_any(c, &expr.right)
     if rb > rc {
         reg_pop(c, rb)
         reg_pop(c, rc)
@@ -209,6 +208,8 @@ binary :: proc(c: ^Compiler, op: Ast_Op, #no_alias left, right: ^Ast_Node) -> (t
         reg_pop(c, rc)
         reg_pop(c, rb)
     }
-    pc = code_ABC(c, act_op, 0, rb, rc)
-    return type, pc
+
+    pc := code_ABC(c, act_op, 0, rb, rc)
+    node^ = Pending{type, pc}
+    expr_push_any(c, node)
 }

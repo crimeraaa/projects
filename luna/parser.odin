@@ -94,7 +94,7 @@ parser_error :: proc(p: ^Parser, t: Token, message: string) -> ! {
     here := token_string(t)
     fmt.eprintfln("%s:%i:%i: %s at '%s'", file, t.line, t.col, message, here)
     chunk_destroy(p.compiler.chunk)
-    ast_destroy(p.nodes)
+    ast_destroy(&p.nodes)
     run_throw_error(p.L, .Syntax)
 }
 
@@ -156,7 +156,7 @@ unary :: proc(p: ^Parser, c: ^Compiler, op: Ast_Op) -> Ast_Node {
 }
 
 binary :: proc(p: ^Parser, c: ^Compiler, op: Ast_Op, left: ^Ast_Node, prec: Precedence) {
-    right := expression(p, c)
+    right := expression(p, c, prec)
     node  := ast_make(p, op, left^, right)
     left^ = node
 }

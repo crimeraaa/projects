@@ -1,4 +1,4 @@
-#+private package
+#+private
 package lulu
 
 import "core:fmt"
@@ -433,9 +433,11 @@ compiler_set_variable :: proc(c: ^Compiler, #no_alias variable, value: ^Expr) {
         return
 
     case .Table:
+        table_reg := variable.table.reg
+        key_reg   := variable.table.key
         value_reg, value_is_k := _push_expr_k(c, value, limit=MAX_Ck)
         op := _get_table_op(variable.table.is_k)
-        compiler_code_ABCk(c, op, variable.table.reg, variable.table.key, u16(value_reg), value_is_k)
+        compiler_code_ABCk(c, op, table_reg, key_reg, u16(value_reg), value_is_k)
 
     case:
         unreachable()
@@ -531,108 +533,108 @@ compiler_load_nil :: proc(c: ^Compiler, reg, count: u16) {
 }
 
 /*
-Pushes `e` to the first free register if it is not already in a register.
+Pushes `expr` to the first free register if it is not already in a register.
 This is the 2nd simplest register allocation strategy.
 
 **Parameters**
-- e: The expression to be pushed to a register.
+- expr: The expression to be pushed to a register.
 
 **Returns**
-- reg: The index of the register where `e` is found in.
+- reg: The index of the register where `expr` is found in.
 
 **Guarantees**
-- `e` is transformed to type `.Register` if it was not already in one.
+- `expr` is transformed to type `.Register` if it was not already in one.
 
 **Analogous to**
 - `lcode.c:luaK_exp2anyreg(FuncState *fs, expdesc *e)` in Lua 5.1.5.
  */
-compiler_push_expr_any :: proc(c: ^Compiler, e: ^Expr) -> (reg: u16) {
+compiler_push_expr_any :: proc(c: ^Compiler, expr: ^Expr) -> (reg: u16) {
     // Convert `.Local` to `.Register`
-    _discharge_expr_variables(c, e)
-    if e.type == .Register {
-        return e.reg
+    _discharge_expr_variables(c, expr)
+    if expr.type == .Register {
+        return expr.reg
     }
-    return compiler_push_expr_next(c, e)
+    return compiler_push_expr_next(c, expr)
 }
 
 /*
-Unconditionally pushes `e` to the first free register even if it already
+Unconditionally pushes `expr` to the first free register even if it already
 residing in one. This is the simplest register alloocation strategy, although
 care should be taken to ensure needlessly redundant work is avoided.
 
 **Returns**
-- reg: The register which `e` now resides in.
+- reg: The register which `expr` now resides in.
 
 **Guarantees**
-- `e` is transformed to type `.Register`.
+- `expr` is transformed to type `.Register`.
 
 **Analogous to**
 - `lcode.c:luaK_exp2nextreg(FuncState *fs, expdesc *e)` in Lua 5.1.5.
  */
-compiler_push_expr_next :: proc(c: ^Compiler, e: ^Expr) -> (reg: u16) {
-    _discharge_expr_variables(c, e)
-    // If `e` is the current topmost register, reuse it.
-    compiler_pop_expr(c, e)
+compiler_push_expr_next :: proc(c: ^Compiler, expr: ^Expr) -> (reg: u16) {
+    _discharge_expr_variables(c, expr)
+    // If `expr` is the current topmost register, reuse it.
+    compiler_pop_expr(c, expr)
 
     reg = compiler_push_reg(c)
-    _discharge_expr_to_reg(c, e, reg)
+    _discharge_expr_to_reg(c, expr, reg)
     return reg
 }
 
 /*
-Emits the bytecode needed to retrieve variables represented by `e`.
+Emits the bytecode needed to retrieve variables represented by `expr`.
 
 **Guarantees**
-- If `e` did indeed represent a variable of some kind, then it is transformed
+- If `expr` did indeed represent a variable of some kind, then it is transformed
 to type `.Pc_Pending_Register`.
  */
 @(private="file")
-_discharge_expr_variables :: proc(c: ^Compiler, e: ^Expr) {
-    #partial switch e.type {
+_discharge_expr_variables :: proc(c: ^Compiler, expr: ^Expr) {
+    #partial switch expr.type {
     case .Global:
-        pc := compiler_code_ABx(c, .Get_Global, 0, e.index)
-        e^  = expr_make_pc(.Pc_Pending_Register, pc)
+        pc := compiler_code_ABx(c, .Get_Global, 0, expr.index)
+        expr^  = expr_make_pc(.Pc_Pending_Register, pc)
 
     // Already in a register, no need to emit any bytecode yet. We don't know
     // if an explicit move operation is appropriate. This is because we have
     // no information on the register allocation state here.
     case .Local:
-        e.type = .Register
+        expr.type = .Register
 
     case .Table:
         op: Opcode
-        if e.table.is_k {
+        if expr.table.is_k {
             op = .Get_Field
         } else {
-            compiler_pop_reg(c, e.table.key)
+            compiler_pop_reg(c, expr.table.key)
             op = .Get_Table
         }
 
-        compiler_pop_reg(c, e.table.reg)
+        compiler_pop_reg(c, expr.table.reg)
 
-        pc := compiler_code_ABC(c, op, 0, e.table.reg, e.table.key)
-        e^  = expr_make_pc(.Pc_Pending_Register, pc)
+        pc := compiler_code_ABC(c, op, 0, expr.table.reg, expr.table.key)
+        expr^  = expr_make_pc(.Pc_Pending_Register, pc)
 
     case .Call:
-        compiler_discharge_returns(c, e, 1)
+        compiler_discharge_returns(c, expr, 1)
     }
 }
 
 
 /*
-Emits the bytecode necessary to load the value represented by `e` into
+Emits the bytecode necessary to load the value represented by `expr` into
 the register `reg`. This function is mainly used to help implement actual
 register allocation strategies.
 
 **Guarantees**
-- `e` is transformed to type `.Register`. This is its register allocation for
+- `expr` is transformed to type `.Register`. This is its register allocation for
 the destination, hence it is termed 'discharged' (i.e. finalized).
 
 **Analogous to**
 - `lcode.c:discharge2reg(FuncState *fs, expdesc *e, int reg)` in Lua 5.1.5.
  */
 @(private="file")
-_discharge_expr_to_reg :: proc(c: ^Compiler, e: ^Expr, reg: u16, loc := #caller_location) {
+_discharge_expr_to_reg :: proc(c: ^Compiler, expr: ^Expr, reg: u16, loc := #caller_location) {
     __load_bool :: proc(c: ^Compiler, reg: u16, b, skip: bool) {
         // These instructions may be jump targets by themselves, e.g. the
         // condition of a loop.
@@ -640,15 +642,15 @@ _discharge_expr_to_reg :: proc(c: ^Compiler, e: ^Expr, reg: u16, loc := #caller_
         compiler_code_ABC(c, .Load_Bool, reg, u16(b), u16(skip))
     }
 
-    _discharge_expr_variables(c, e)
-    switch e.type {
+    _discharge_expr_variables(c, expr)
+    switch expr.type {
     case .None:    unreachable()
     case .Nil:     compiler_load_nil(c, reg, 1)
     case .False:   compiler_code_ABC(c, .Load_Bool, reg, u16(false), 0)
     case .True:    compiler_code_ABC(c, .Load_Bool, reg, u16(true),  0)
     case .Number:
         // Can we load it as a positive integer immediately from Bx?
-        n := e.number
+        n := expr.number
         if 0.0 <= n && n <= MAX_IMM_Bx && n == math.floor(n) {
             imm := u32(n)
             compiler_code_ABx(c, .Load_Imm, reg, imm)
@@ -659,13 +661,13 @@ _discharge_expr_to_reg :: proc(c: ^Compiler, e: ^Expr, reg: u16, loc := #caller_
         }
 
     case .Constant:
-        compiler_code_ABx(c, .Load_Const, reg, e.index)
+        compiler_code_ABx(c, .Load_Const, reg, expr.index)
 
     case .Global, .Local, .Table, .Call:
-        unreachable("Invalid expr to discharge: %v", e.type, loc=loc)
+        unreachable("Invalid expr to discharge: %v", expr.type, loc=loc)
 
     case .Pc_Pending_Register:
-        c.chunk.code[e.pc].A = reg
+        c.chunk.code[expr.pc].A = reg
 
     case .Compare:
         __load_bool(c, reg, b=false, skip=true)
@@ -675,67 +677,67 @@ _discharge_expr_to_reg :: proc(c: ^Compiler, e: ^Expr, reg: u16, loc := #caller_
         // Differing registers, so we need to explicitly move?
         // Otherwise, they are the same so we don't do anything as that would
         // be redundant.
-        if reg != e.reg {
-            compiler_code_ABC(c, .Move, reg, e.reg, 0)
+        if reg != expr.reg {
+            compiler_code_ABC(c, .Move, reg, expr.reg, 0)
         }
     }
-    e^ = expr_make_reg(.Register, reg)
+    expr^ = expr_make_reg(.Register, reg)
 }
 
 /*
-Pushes `e` to K register if possible. That is, if it is a constant value
+Pushes `expr` to K register if possible. That is, if it is a constant value
 then we try to directly encode the load of said constant into the opcode
-arguments. Otherwise, `e` is pushed to the next available register.
+arguments. Otherwise, `expr` is pushed to the next available register.
 
 **Guarantees**
-- If `e` represents a literal value then it is first transformed to
+- If `expr` represents a literal value then it is first transformed to
 `.Constant` no matter what.
-- Then, if `e` fits in a K register, it remains as-is.
+- Then, if `expr` fits in a K register, it remains as-is.
 - Otherwise, we explicitly load the constant in the next avaiable register,
-transforming `e` to `.Register`.
+transforming `expr` to `.Register`.
 
 **Returns**
 - rk: The index of the constant or the register of the loaded value.
-- is_k: `true` if `e` could be transformed to or already was `.Constant` and
-the index of the constant fits in `limit`. Otherwise `false` if `e` could not
+- is_k: `true` if `expr` could be transformed to or already was `.Constant` and
+the index of the constant fits in `limit`. Otherwise `false` if `expr` could not
 be transformed to a constant or it was a constant not able to fit in `limit`.
  */
 @(private="file")
-_push_expr_k :: proc(c: ^Compiler, e: ^Expr, limit: u32) -> (rk: u32, is_k: bool) {
-    switch e.type {
+_push_expr_k :: proc(c: ^Compiler, expr: ^Expr, limit: u32) -> (rk: u32, is_k: bool) {
+    switch expr.type {
     case .None:     unreachable()
-    case .Nil:      return _push_k(c, e, value_make(), limit)
-    case .False:    return _push_k(c, e, value_make(false), limit)
-    case .True:     return _push_k(c, e, value_make(true), limit)
-    case .Number:   return _push_k(c, e, value_make(e.number), limit)
-    case .Constant: return _check_k(c, e, e.index, limit)
+    case .Nil:      return _push_k(c, expr, value_make(), limit)
+    case .False:    return _push_k(c, expr, value_make(false), limit)
+    case .True:     return _push_k(c, expr, value_make(true), limit)
+    case .Number:   return _push_k(c, expr, value_make(expr.number), limit)
+    case .Constant: return _check_k(c, expr, expr.index, limit)
 
     // Nothing we can do.
     case .Global, .Local, .Table, .Pc_Pending_Register, .Call, .Compare, .Register:
         break
     }
-    rk = u32(compiler_push_expr_any(c, e))
+    rk = u32(compiler_push_expr_any(c, expr))
     return rk, false
 }
 
 // Helper to transform constants into K.
-_push_k :: proc(c: ^Compiler, e: ^Expr, v: Value, limit: u32) -> (rk: u32, is_k: bool) {
+_push_k :: proc(c: ^Compiler, expr: ^Expr, v: Value, limit: u32) -> (rk: u32, is_k: bool) {
     index := _add_constant(c, v)
-    e^     = expr_make_index(.Constant, index)
-    return _check_k(c, e, index, limit)
+    expr^  = expr_make_index(.Constant, index)
+    return _check_k(c, expr, index, limit)
 }
 
 // Constant index fits in a K register?
 // i.e. when it is masked t fit, we do not lose any of the original bits.
-_check_k :: proc(c: ^Compiler, e: ^Expr, index: u32, limit: u32) -> (rk: u32, is_k: bool) {
+_check_k :: proc(c: ^Compiler, expr: ^Expr, index: u32, limit: u32) -> (rk: u32, is_k: bool) {
     is_k = index <= limit
-    rk   = index if is_k else u32(compiler_push_expr_next(c, e))
+    rk   = index if is_k else u32(compiler_push_expr_next(c, expr))
     return rk, is_k
 }
 
-compiler_pop_expr :: proc(c: ^Compiler, e: ^Expr, loc := #caller_location) {
-    if e.type == .Register {
-        compiler_pop_reg(c, e.reg, loc=loc)
+compiler_pop_expr :: proc(c: ^Compiler, expr: ^Expr, loc := #caller_location) {
+    if expr.type == .Register {
+        compiler_pop_reg(c, expr.reg, loc=loc)
     }
 }
 
@@ -747,41 +749,41 @@ compiler_pop_expr :: proc(c: ^Compiler, e: ^Expr, loc := #caller_location) {
 - e: The argument operand which does not need to be in a register yet.
 
 **Guarantees**
-- If `e` is of type `.Number` and we are doing unary minus, then it is negated
+- If `expr` is of type `.Number` and we are doing unary minus, then it is negated
 in-place. No bytecode is emitted nor does any register allocation occur.
 
-- Otherwise, `e` is transformed to `.Pc_Pending_Register` and is waiting on
+- Otherwise, `expr` is transformed to `.Pc_Pending_Register` and is waiting on
 register allocation for its result by the caller.
  */
-compiler_code_unary :: proc(c: ^Compiler, op: Opcode, e: ^Expr) {
+compiler_code_unary :: proc(c: ^Compiler, op: Opcode, expr: ^Expr) {
     // Constant folding to avoid unnecessary work.
     #partial switch op {
     case .Not:
-        #partial switch e.type {
+        #partial switch expr.type {
         case .Nil, .False:
-            e^ = expr_make_boolean(true)
+            expr^ = expr_make_boolean(true)
             return
         case .True, .Number, .Constant:
-            e^ = expr_make_boolean(false)
+            expr^ = expr_make_boolean(false)
             return
         case .Compare:
             // NOTE(2026-02-15): Assumes bit `k` is in the same location for
             // all comparisons!
-            ip := &c.chunk.code[e.pc]
+            ip := &c.chunk.code[expr.pc]
             ip.vu.k = !ip.vu.k
             return
         }
     case .Unm:
-        if e.type == .Number {
-            e.number = number_unm(e.number)
+        if expr.type == .Number {
+            expr.number = number_unm(expr.number)
             return
         }
     }
 
-    rb := compiler_push_expr_any(c, e)
+    rb := compiler_push_expr_any(c, expr)
     pc := compiler_code_ABC(c, op, 0, rb, 0)
     compiler_pop_reg(c, rb)
-    e^ = expr_make_pc(.Pc_Pending_Register, pc)
+    expr^ = expr_make_pc(.Pc_Pending_Register, pc)
 }
 
 /*
@@ -899,9 +901,9 @@ _arith :: proc(c: ^Compiler, binop: Binop, #no_alias left, right: ^Expr) -> (op:
 }
 
 @(private="file")
-_arith_check_imm :: proc(e: ^Expr) -> (imm: u16, neg, ok: bool) {
-    if e.type == .Number {
-        n  := e.number
+_arith_check_imm :: proc(expr: ^Expr) -> (imm: u16, neg, ok: bool) {
+    if expr.type == .Number {
+        n  := expr.number
         neg = n < 0.0
         n   = abs(n)
         // Is an integer in range of the immediate operand?

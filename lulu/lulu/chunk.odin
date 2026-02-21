@@ -1,4 +1,4 @@
-#+private package
+#+private
 package lulu
 
 Chunk :: struct {

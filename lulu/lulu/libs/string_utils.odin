@@ -12,12 +12,13 @@ import lulu ".."
 import lulu_aux "../aux"
 
 string_char :: proc(L: ^lulu.State, $T: typeid) -> (ret_count: int) {
-    b: lulu_aux.Buffer
+    b: lulu_aux.Buffer = ---
+    lulu_aux.buffer_init(L, &b)
     for i in 1..=lulu.get_top(L) {
         r := T(lulu_aux.check_integer(L, i))
-        lulu_aux.write(L, &b, r)
+        lulu_aux.write(&b, r)
     }
-    lulu_aux.push_result(L, &b)
+    lulu_aux.push_result(&b)
     return 1
 }
 
@@ -32,25 +33,28 @@ string_upper :: proc(L: ^lulu.State, $is_utf8: bool) -> (ret_count: int) {
 @(private="file")
 __convert :: proc(L: ^lulu.State, $procedure: $T, $is_utf8: bool) -> (ret_count: int) {
     s := lulu_aux.check_string(L, 1)
-    b: lulu_aux.Buffer
+    b: lulu_aux.Buffer = ---
+    lulu_aux.buffer_init(L, &b)
+
 
     // Odin's string iteration is already UTF-8 aware, however the Lua
     // `string` library treats strings as byte sequences.
     for r in s when is_utf8 else transmute([]byte)s {
         converted := procedure(r when is_utf8 else rune(r))
-        lulu_aux.write(L, &b, converted)
+        lulu_aux.write(&b, converted)
     }
-    lulu_aux.push_result(L, &b)
+    lulu_aux.push_result(&b)
     return 1
 }
 
 string_reverse :: proc(L: ^lulu.State, $is_utf8: bool) -> (ret_count: int) {
     s := lulu_aux.check_string(L, 1)
-    b: lulu_aux.Buffer
+    b: lulu_aux.Buffer = ---
+    lulu_aux.buffer_init(L, &b)
     #reverse for r in s when is_utf8 else transmute([]byte)s {
-        lulu_aux.write(L, &b, r)
+        lulu_aux.write(&b, r)
     }
-    lulu_aux.push_result(L, &b)
+    lulu_aux.push_result(&b)
     return 1
 }
 

@@ -111,6 +111,10 @@ run_file :: proc(L: ^lulu.State, name: string, allocator: mem.Allocator) -> (err
     is_stdin  := name == "-"
     load_name := name if !is_stdin else ""
     run_name  := name if !is_stdin else "stdin"
+    if is_stdin {
+        fmt.println("-- Running stdin as a file. Enter CTRL-D to terminate.")
+    }
+
     load_err  := lulu_aux.load(L, load_name, allocator)
     if check_no_error(L, load_err) {
         run_input(L, run_name)

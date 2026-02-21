@@ -52,10 +52,10 @@ Rule :: struct {
     right: Precedence,
 }
 
-parser_make :: proc(L: ^State, builder: ^strings.Builder, consumed_buf: []byte, name: ^Ostring, input: Reader) -> Parser {
+parser_make :: proc(L: ^State, builder: ^strings.Builder, buf: []byte, name: ^Ostring, input: Reader) -> Parser {
     p: Parser
     p.lexer            = lexer_make(L, builder, name, input)
-    p.consumed_builder = strings.builder_from_bytes(consumed_buf[:])
+    p.consumed_builder = strings.builder_from_bytes(buf[:])
     advance_token(&p)
     return p
 }
@@ -266,7 +266,7 @@ statement :: proc(p: ^Parser, c: ^Compiler)  {
 block :: proc(p: ^Parser, c: ^Compiler) {
     // Breakable blocks must only exist outside of this call because
     // there may be context for break lists.
-    b: Block
+    b: Block = ---
     compiler_push_block(c, &b, breakable=false)
     for block_continue(p) {
         statement(p, c)
@@ -565,7 +565,7 @@ while_statement :: proc(p: ^Parser, c: ^Compiler) {
 
     // Must be outside of `block()` so that we can patch the break list
     // AFTER the unconditional jump has been emitted.
-    b: Block
+    b: Block = ---
     compiler_push_block(c, &b, breakable=true)
     block(p, c)
     expect_token(p, .End, "to close 'while' loop")
@@ -628,20 +628,20 @@ expression :: proc(p: ^Parser, c: ^Compiler, prec: Precedence = nil) -> Expr {
 // PREFIX EXPRESSIONS ====================================================== {{{
 
 
-prefix :: proc(p: ^Parser, c: ^Compiler) -> (e: Expr) {
+prefix :: proc(p: ^Parser, c: ^Compiler) -> (expr: Expr) {
     // The 3 unary expressions are parsed in the exact same ways.
-    unary :: proc(p: ^Parser, c: ^Compiler, op: Opcode) -> (e: Expr) {
-        e = expression(p, c, .Unary)
-        compiler_code_unary(c, op, &e)
-        return e
+    unary :: proc(p: ^Parser, c: ^Compiler, op: Opcode) -> (expr: Expr) {
+        expr = expression(p, c, .Unary)
+        compiler_code_unary(c, op, &expr)
+        return expr
     }
 
     #partial switch peek_consumed(p) {
     // Grouping
     case .Paren_Open:
-        e = expression(p, c)
+        expr = expression(p, c)
         expect_token(p, .Paren_Close, "after expression")
-        return e
+        return expr
 
     case .Curly_Open: return constructor(p, c)
 
@@ -791,17 +791,6 @@ function_call :: proc(p: ^Parser, c: ^Compiler, func: ^Expr) {
     func^ = expr_make_pc(.Call, pc)
 }
 
-Constructor :: struct {
-    // Counters for the table's hash and array segments, respectively.
-    hash_count, array_count: int,
-
-    // Index of the `.New_Table` instruction.
-    pc: i32,
-
-    // R[A] of the destination table in the `.New_Table` instruction.
-    reg: u16,
-}
-
 /*
 **Grammar**
 ```
@@ -814,12 +803,41 @@ Constructor :: struct {
     | '[' <expression> ']'
 ```
  */
-constructor :: proc(p: ^Parser, c: ^Compiler) -> (e: Expr) {
-    ct: Constructor
+constructor :: proc(p: ^Parser, c: ^Compiler) -> (expr: Expr) {
+    Constructor :: struct {
+        // Counters for the table's hash and array segments, respectively.
+        hash_count, array_count: int,
+
+        // Index of the `.New_Table` instruction.
+        pc: i32,
+
+        // R[A] of the destination table in the `.New_Table` instruction.
+        reg: u16,
+    }
+
+    set_field :: proc(p: ^Parser, c: ^Compiler, ctor: ^Constructor, key: ^Expr) {
+        // Explicit field also works as a continuous array index?
+        if key.type == .Number && key.number == f64(ctor.array_count + 1) {
+            set_array(p, c, ctor)
+        } else {
+            value := expression(p, c)
+            compiler_set_table(c, ctor.reg, key, &value)
+            ctor.hash_count += 1
+        }
+    }
+
+    set_array :: proc(p: ^Parser, c: ^Compiler, ctor: ^Constructor) {
+        key   := expr_make_number(f64(ctor.array_count + 1))
+        value := expression(p, c)
+        compiler_set_table(c, ctor.reg, &key, &value)
+        ctor.array_count += 1
+    }
+
+    ctor: Constructor
     // Use a temporary register so set instructions know where to look.
-    ct.reg  = compiler_push_reg(c)
-    ct.pc   = compiler_code_ABC(c, .New_Table, ct.reg, 0, 0)
-    e       = expr_make_pc(.Pc_Pending_Register, ct.pc)
+    ctor.reg = compiler_push_reg(c)
+    ctor.pc  = compiler_code_ABC(c, .New_Table, ctor.reg, 0, 0)
+    expr     = expr_make_pc(.Pc_Pending_Register, ctor.pc)
 
     for !check_token(p, .Curly_Close) {
         // Don't advance immediately because expressions representing array
@@ -833,9 +851,9 @@ constructor :: proc(p: ^Parser, c: ^Compiler) -> (e: Expr) {
 
                 // skip <identifier>. itself.
                 advance_token(p)
-                __set_field(p, c, &ct, &key)
+                set_field(p, c, &ctor, &key)
             } else {
-                __set_array(p, c, &ct)
+                set_array(p, c, &ctor)
             }
 
         case .Bracket_Open:
@@ -843,10 +861,10 @@ constructor :: proc(p: ^Parser, c: ^Compiler) -> (e: Expr) {
             key := expression(p, c)
             expect_token(p, .Bracket_Close)
             expect_token(p, .Assign)
-            __set_field(p, c, &ct, &key)
+            set_field(p, c, &ctor, &key)
 
         case:
-            __set_array(p, c, &ct)
+            set_array(p, c, &ctor)
         }
 
         if !match_token(p, .Comma) {
@@ -855,35 +873,17 @@ constructor :: proc(p: ^Parser, c: ^Compiler) -> (e: Expr) {
     }
     expect_token(p, .Curly_Close)
     // Pop the temporary table register.
-    compiler_pop_reg(c, ct.reg)
+    compiler_pop_reg(c, ctor.reg)
 
-    ip := &c.chunk.code[ct.pc]
-    if ct.hash_count > 0 {
-        ip.B = u16(table_log2(ct.hash_count) + 1)
+    ip := &c.chunk.code[ctor.pc]
+    if ctor.hash_count > 0 {
+        ip.B = u16(table_log2(ctor.hash_count) + 1)
     }
 
-    if ct.array_count > 0 {
-        ip.C = u16(table_log2(ct.array_count) + 1)
+    if ctor.array_count > 0 {
+        ip.C = u16(table_log2(ctor.array_count) + 1)
     }
-    return e
-}
-
-__set_field :: proc(p: ^Parser, c: ^Compiler, ct: ^Constructor, key: ^Expr) {
-    // Explicit field also works as a continuous array index?
-    if key.type == .Number && key.number == f64(ct.array_count + 1) {
-        __set_array(p, c, ct)
-    } else {
-        value := expression(p, c)
-        compiler_set_table(c, ct.reg, key, &value)
-        ct.hash_count += 1
-    }
-}
-
-__set_array :: proc(p: ^Parser, c: ^Compiler, ct: ^Constructor) {
-    key   := expr_make_number(f64(ct.array_count + 1))
-    value := expression(p, c)
-    compiler_set_table(c, ct.reg, &key, &value)
-    ct.array_count += 1
+    return expr
 }
 
 
@@ -905,7 +905,7 @@ infix :: proc(p: ^Parser, c: ^Compiler, left: ^Expr, prec: Precedence = nil) {
         #partial switch binop {
         case .Add..=.Pow: arith(p, c, binop, left, rule.right)
         case .Neq..=.Leq: compare(p, c, binop, left, rule.right)
-        case .Concat:     __concat(p, c, left, rule.right)
+        case .Concat:     _concat(p, c, left, rule.right)
         case:
             unreachable("Invalid binop %v", binop)
         }
@@ -972,7 +972,7 @@ compare :: proc(p: ^Parser, c: ^Compiler, binop: Binop, left: ^Expr, prec: Prece
     compiler_code_compare(c, binop, left, &right)
 }
 
-__concat :: proc(p: ^Parser, c: ^Compiler, left: ^Expr, prec: Precedence) {
+_concat :: proc(p: ^Parser, c: ^Compiler, left: ^Expr, prec: Precedence) {
     compiler_push_expr_next(c, left)
 
     // Advance only now so that the above push has the correct line/col info.

@@ -6,6 +6,7 @@ import "core:c/libc"
 
 State :: struct {
     handler: ^Error_Handler,
+    objects: ^Object,
     stack: [16]Value,
 }
 

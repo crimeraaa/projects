@@ -85,50 +85,46 @@ Binop :: enum u8 {
     Concat,
 }
 
-expr_make_reg :: #force_inline proc(t: Expr_Type, reg: u16) -> (e: Expr) {
-    e.type = t
-    e.reg  = reg
-    return e
+expr_make_reg :: #force_inline proc(t: Expr_Type, reg: u16) -> (expr: Expr) {
+    expr.type = t
+    expr.reg  = reg
+    return expr
 }
 
-expr_make_pc :: #force_inline proc(t: Expr_Type, pc: i32) -> (e: Expr) {
-    e.type = t
-    e.pc   = pc
-    return e
+expr_make_pc :: #force_inline proc(t: Expr_Type, pc: i32) -> (expr: Expr) {
+    expr.type = t
+    expr.pc   = pc
+    return expr
 }
 
-expr_make_index :: #force_inline proc(t: Expr_Type, index: u32) -> (e: Expr) {
-    e.type  = t
-    e.index = index
-    return e
+expr_make_index :: #force_inline proc(t: Expr_Type, index: u32) -> (expr: Expr) {
+    expr.type  = t
+    expr.index = index
+    return expr
 }
 
-expr_make_nil :: #force_inline proc() -> (e: Expr) {
-    e.type = .Nil
-    return e
+expr_make_nil :: #force_inline proc() -> (expr: Expr) {
+    expr.type = .Nil
+    return expr
 }
 
-expr_make_boolean :: #force_inline proc(b: bool) -> (e: Expr) {
-    e.type = .True if b else .False
-    return e
+expr_make_boolean :: #force_inline proc(b: bool) -> (expr: Expr) {
+    expr.type = .True if b else .False
+    return expr
 }
 
-expr_make_number :: #force_inline proc(n: f64) -> (e: Expr) {
-    e.type   = .Number
-    e.number = n
-    return e
+expr_make_number :: #force_inline proc(n: f64) -> (expr: Expr) {
+    expr.type   = .Number
+    expr.number = n
+    return expr
 }
 
-expr_is_literal :: #force_inline proc(e: ^Expr) -> bool {
+expr_is_literal :: #force_inline proc(expr: ^Expr) -> bool {
     LITERAL_TYPES :: bit_set[Expr_Type]{.Nil, .False, .True, .Number, .Constant}
-    return e.type in LITERAL_TYPES
+    return expr.type in LITERAL_TYPES
 }
 
-expr_is_truthy :: #force_inline proc(e: ^Expr) -> bool {
-    #partial switch e.type {
-    case .True, .Number, .Constant: return true
-    case:
-        break
-    }
-    return false
+expr_is_truthy :: #force_inline proc(expr: ^Expr) -> bool {
+    TRUTHY_TYPES :: bit_set[Expr_Type]{.True, .Number, .Constant}
+    return expr.type in TRUTHY_TYPES
 }

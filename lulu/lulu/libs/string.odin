@@ -34,11 +34,12 @@ __rep :: proc(L: ^lulu.State) -> (ret_count: int) {
     s := lulu_aux.check_string(L, 1)
     n := lulu_aux.check_integer(L, 2)
 
-    b: lulu_aux.Buffer
+    b: lulu_aux.Buffer = ---
+    lulu_aux.buffer_init(L, &b)
     for _ in 0..<n {
-        lulu_aux.write(L, &b, s)
+        lulu_aux.write(&b, s)
     }
-    lulu_aux.push_result(L, &b)
+    lulu_aux.push_result(&b)
     return 1
 }
 

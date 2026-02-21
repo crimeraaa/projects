@@ -1,4 +1,4 @@
-#+private package
+#+private
 package lulu
 
 import "core:fmt"
@@ -34,12 +34,12 @@ gc_log_alloc :: proc(
 }
 
 /*
-Allocates a new pointer of type `T` of `count` elements plus `extra` bytes.
+Allocates a new pointer of type `T` plus `extra` bytes.
 
 *Allocates using `L.global_state.backing_allocator`*.
  */
 new :: proc($T: typeid, L: ^State, extra := 0, loc := #caller_location) -> ^T {
-    g    := L.global_state
+    g    := G(L)
     size := size_of(T) + extra
     ptr, err := mem.alloc(size, align_of(T), allocator=g.backing_allocator)
     if err != nil {
@@ -59,7 +59,7 @@ Allocates a new slice of type `T` with `count` elements, zero-initialized.
 - We are in a protected call, so we are able to catch out-of-memory errors.
  */
 make :: proc($T: typeid, L: ^State, count: int, loc := #caller_location) -> []T {
-    g := L.global_state
+    g := G(L)
     array, err := mem.make_slice([]T, count, allocator=g.backing_allocator)
     size := count * size_of(T)
     if err != nil {
@@ -76,7 +76,7 @@ Frees a pointer of type `T` of `count` elements plus `extra` bytes.
 *Deallocates using `L.global_state.backing_allocator`.*
  */
 free :: proc(L: ^State, ptr: ^$T, extra := 0, loc := #caller_location) {
-    g    := L.global_state
+    g    := G(L)
     size := size_of(T) + extra
     gc_log_alloc(^T, ansi.FG_RED, "[FREE]", ptr, size, loc=loc)
     g.bytes_allocated -= size
@@ -92,7 +92,7 @@ Frees the memory used by the slice `array`.
 - Freeing memory never fails.
  */
 delete :: proc(L: ^State, array: $S/[]$T, loc := #caller_location) {
-    g    := L.global_state
+    g    := G(L)
     size := size_of(T) * len(array)
     gc_log_alloc([]T, ansi.FG_RED, "[FREE]", raw_data(array), size, loc=loc)
     g.bytes_allocated -= size
