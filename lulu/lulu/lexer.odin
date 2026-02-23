@@ -25,6 +25,9 @@ Lexer :: struct {
     // Parent state which will catch any errors we throw.
     L: ^State,
 
+    // Used for string interning for the current chunk.
+    compiler: ^Compiler,
+
     // Used to build string literals with escape characters.
     // Also helps in string interning.
     builder: ^strings.Builder,
@@ -142,13 +145,14 @@ to construct string literals with escape sequences.
 - input: The actual text data to be lexed.
  */
 @(private="package")
-lexer_make :: proc(L: ^State, builder: ^strings.Builder, name: ^Ostring, input: Reader) -> Lexer {
+lexer_make :: proc(L: ^State, compiler: ^Compiler, builder: ^strings.Builder, name: ^Ostring, input: Reader) -> Lexer {
     x: Lexer
-    x.L       = L
-    x.builder = builder
-    x.name    = name
-    x.reader  = input
-    x.line    = 1
+    x.L        = L
+    x.compiler = compiler
+    x.builder  = builder
+    x.name     = name
+    x.reader   = input
+    x.line     = 1
     // Read first char so first `lexer_scan_token()` call is valid.
     read_rune(&x)
     return x
@@ -181,7 +185,7 @@ read_rune :: proc(x: ^Lexer) -> (r: rune) {
 /*
 Reports a error message and throws a syntax error to the parent VM.
  */
-__error :: proc(x: ^Lexer, msg: string) -> ! {
+_error :: proc(x: ^Lexer, msg: string) -> ! {
     here := make_token(x, nil)
 
     // Pinpoint the exact error location if in a multiline sequence.
@@ -222,17 +226,17 @@ Advances only if the current character matches `want`.
 **Assumptions**
 - `read_rune()` was called beforehand.
  */
-__match_rune :: proc(x: ^Lexer, want: rune, $save: bool) -> (found: bool) {
+_match_rune :: proc(x: ^Lexer, want: rune, $save: bool) -> (found: bool) {
     r := peek_rune(x)
     found = r == want
     if found {
-        __advance_rune(x, save=save)
+        _advance_rune(x, save=save)
     }
     return found
 }
 
 match_rune :: proc(x: ^Lexer, want: rune) -> (found: bool) {
-    return __match_rune(x, want, save=false)
+    return _match_rune(x, want, save=false)
 }
 
 
@@ -247,7 +251,7 @@ the character is saved.
 - `read_rune()` was called beforehand.
  */
 save_match_rune :: proc(x: ^Lexer, want: rune) -> (found: bool) {
-    return __match_rune(x, want, save=true)
+    return _match_rune(x, want, save=true)
 }
 
 
@@ -302,7 +306,7 @@ expect_rune :: proc(x: ^Lexer, want: rune) {
     if !save_match_rune(x, want) {
         buf: [64]byte
         msg := fmt.bprintf(buf[:], "Expected '%c'", want)
-        __error(x, msg)
+        _error(x, msg)
     }
 }
 
@@ -314,12 +318,12 @@ expect_rune :: proc(x: ^Lexer, want: rune) {
 - The next character is read in. `peek_rune()` can thus be called to save on
 UTF-8 decoding calls.
  */
-__advance_rune :: proc(x: ^Lexer, $save: bool) {
+_advance_rune :: proc(x: ^Lexer, $save: bool) {
     r := x.curr_rune
     if r == utf8.RUNE_ERROR {
         buf: [64]byte
         msg := fmt.bprintf(buf[:], "Invalid rune '%c' (%i)", r, r)
-        __error(x, msg)
+        _error(x, msg)
     }
 
     when save {
@@ -329,11 +333,11 @@ __advance_rune :: proc(x: ^Lexer, $save: bool) {
 }
 
 save_rune :: proc(x: ^Lexer, r: rune, size: int) {
-    __write(x, x.builder, r, size)
+    _write(x, x.builder, r, size)
 }
 
 // Wrapper to help catch memory errors.
-__write :: proc(x: ^Lexer, b: ^strings.Builder, r: rune, size: int) {
+_write :: proc(x: ^Lexer, b: ^strings.Builder, r: rune, size: int) {
     n, _ := strings.write_rune(b, r)
 
     /*
@@ -358,11 +362,11 @@ __write :: proc(x: ^Lexer, b: ^strings.Builder, r: rune, size: int) {
 overflow_error :: proc(x: ^Lexer, r: rune) -> ! {
     // If lexer allocator is the same as the global state allocator,
     // then the final error will be a memory one.
-    __error(x, "token stream overflow")
+    _error(x, "token stream overflow")
 }
 
 advance_rune :: proc(x: ^Lexer) {
-    __advance_rune(x, save=false)
+    _advance_rune(x, save=false)
 }
 
 /*
@@ -371,7 +375,7 @@ advance_rune :: proc(x: ^Lexer) {
 called to save on UTF-8 decoding calls.
  */
 save_advance_rune :: proc(x: ^Lexer) {
-    __advance_rune(x, save=true)
+    _advance_rune(x, save=true)
 }
 
 consume_multi_sequence :: proc(x: ^Lexer, nest_open: int, $save: bool) -> int {
@@ -380,9 +384,9 @@ consume_multi_sequence :: proc(x: ^Lexer, nest_open: int, $save: bool) -> int {
         switch r {
         case ']':
             // Skip the first ']' so we can see the '=' or the second ']'.
-            __advance_rune(x, save=save)
+            _advance_rune(x, save=save)
             nest_close := consume_rune_multi(x, '=', save=save)
-            terminated := __match_rune(x, ']', save=save)
+            terminated := _match_rune(x, ']', save=save)
             if terminated && nest_open == nest_close {
                 return nest_close + 2
             }
@@ -393,11 +397,11 @@ consume_multi_sequence :: proc(x: ^Lexer, nest_open: int, $save: bool) -> int {
         case '\n':
             advance_line(x)
         }
-        __advance_rune(x, save=save)
+        _advance_rune(x, save=save)
     }
     // Report error tokens properly.
     what := "Unterminated multiline " + ("string" when save else "comment")
-    __error(x, what)
+    _error(x, what)
 }
 
 advance_line :: proc(x: ^Lexer) {
@@ -498,14 +502,22 @@ lexer_scan_token :: proc(x: ^Lexer) -> Token {
         token := make_token(x, Token_Type.Identifier)
         // Keywords were interned on startup, so we can already check for their
         // types.
-        s := ostring_new(x.L, token.lexeme)
-        token.string = s
-        token.type   = .Identifier if s.kw_type == nil else s.kw_type
+        ostring := lexer_new_ostring(x, token.lexeme)
+        token.string = ostring
+        token.type   = .Identifier if ostring.kw_type == nil else ostring.kw_type
         return token
     } else if is_number(r) {
         return make_number_token(x, r)
     }
     return make_rune_token(x, r)
+}
+
+lexer_new_ostring :: proc(x: ^Lexer, text: string) -> ^Ostring {
+    L := x.L
+    c := x.compiler
+    ostring := ostring_new(L, text)
+    compiler_add_string(c, ostring)
+    return ostring
 }
 
 /*
@@ -521,7 +533,7 @@ consume_rune_multi :: proc(x: ^Lexer, r: rune, $save: bool) -> (n: int) {
     for !is_eof(x) {
         r2 := peek_rune(x)
         if r == r2 {
-            __advance_rune(x, save=save)
+            _advance_rune(x, save=save)
             n += 1
         } else {
             break
@@ -567,12 +579,12 @@ make_number_token :: proc(x: ^Lexer, leader: rune) -> Token {
             token := make_token(x, Token_Type.Number)
             i, ok := strconv.parse_uint(token.lexeme[2:], base)
             if !ok {
-                __error(x, "Malformed integer")
+                _error(x, "Malformed integer")
             }
             f := f64(i)
             // `i` as an `f64` might not be accurately represented?
             if uint(f) != i {
-                __error(x, "Invalid f64 integer")
+                _error(x, "Invalid f64 integer")
             }
             token.number = f
             return token
@@ -600,7 +612,7 @@ make_number_token :: proc(x: ^Lexer, leader: rune) -> Token {
     token := make_token(x, Token_Type.Number)
     n, ok := strconv.parse_f64(token.lexeme)
     if !ok {
-        __error(x, "Malformed number")
+        _error(x, "Malformed number")
     }
     token.number = n
     return token
@@ -626,11 +638,11 @@ make_rune_token :: proc(x: ^Lexer, r: rune) -> Token {
             token := make_token(x, .String)
             token.col    = col
             token.lexeme = token.lexeme[:len(token.lexeme) - count]
-            token.string = ostring_new(x.L, token.lexeme)
+            token.string = lexer_new_ostring(x, token.lexeme)
             return token
         }
         if nest_open > 0 {
-            __error(x, "Expected a multiline string")
+            _error(x, "Expected a multiline string")
         }
         type = .Bracket_Open
     case ']': type = .Bracket_Close
@@ -674,7 +686,7 @@ make_string_token :: proc(x: ^Lexer, q: rune) -> Token {
     b := x.builder
     consume_loop: for {
         if is_eof(x) {
-            __error(x, "Unfinished string")
+            _error(x, "Unfinished string")
         }
 
         r, r_size := peek_rune(x), peek_size(x)
@@ -700,21 +712,21 @@ make_string_token :: proc(x: ^Lexer, q: rune) -> Token {
             case:
                 buf: [64]byte
                 msg := fmt.bprintf(buf[:], "Unsupported escape sequence '%c%c'", r, esc)
-                __error(x, msg)
+                _error(x, msg)
             }
-            __write(x, b, esc, esc_size)
+            _write(x, b, esc, esc_size)
 
         // Unescaped newline. If explicitly escaped then it's valid.
         case '\n':
-            __error(x, "Unfinished string")
+            _error(x, "Unfinished string")
         case:
-            __write(x, b, r, r_size)
+            _write(x, b, r, r_size)
         }
     }
 
     token := make_token(x, Token_Type.String)
     // Skip the opening quote.
     token.lexeme = token.lexeme[1:]
-    token.string = ostring_new(x.L, token.lexeme)
+    token.string = lexer_new_ostring(x, token.lexeme)
     return token
 }

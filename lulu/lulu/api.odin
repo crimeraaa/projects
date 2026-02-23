@@ -70,17 +70,17 @@ Main_State :: struct {
 }
 
 new_state :: proc(ms: ^Main_State, allocator: mem.Allocator) -> (L: ^State, ok: bool) {
-    ok = vm_init(&ms.main_state, &ms.global_state, allocator)
+    ok = state_init(&ms.main_state, &ms.global_state, allocator)
     if ok {
         L = &ms.main_state
     } else {
-        vm_destroy(&ms.main_state)
+        state_destroy(&ms.main_state)
     }
     return L, ok
 }
 
 close :: proc(L: ^State) {
-    vm_destroy(L)
+    state_destroy(L)
 }
 
 get_top :: proc(L: ^State) -> int {
@@ -105,7 +105,7 @@ set_top :: proc(L: ^State, index: int) {
         }
         L.registers = values
     } else {
-        vm_pop(L, -index)
+        state_pop(L, -index)
     }
 }
 
@@ -282,7 +282,7 @@ Push `R[index]` to the top of the stack.
  */
 push_value :: proc(L: ^State, index: int) {
     v := __get_any_ptr(L, index)^
-    vm_push(L, v)
+    state_push(L, v)
 }
 
 
@@ -305,7 +305,7 @@ insert :: proc(L: ^State, index: int) {
 
 push_nil :: proc(L: ^State, count := 1) {
     for _ in 1..=count {
-        vm_push(L, value_make())
+        state_push(L, value_make())
     }
 }
 
@@ -320,12 +320,12 @@ push :: proc {
 
 push_boolean :: proc(L: ^State, b: bool) {
     v := value_make(b)
-    vm_push(L, v)
+    state_push(L, v)
 }
 
 push_number :: proc(L: ^State, n: f64) {
     v := value_make(n)
-    vm_push(L, v)
+    state_push(L, v)
 }
 
 push_integer :: proc(L: ^State, i: int) {
@@ -334,7 +334,7 @@ push_integer :: proc(L: ^State, i: int) {
 
 push_lightuserdata :: proc(L: ^State, p: rawptr) {
     v := value_make(p)
-    vm_push(L, v)
+    state_push(L, v)
 }
 
 /*
@@ -351,17 +351,17 @@ push_api_proc :: proc(L: ^State, procedure: Api_Proc, upvalue_count: u8 = 0) {
         dst := cl.api.upvalues[:upvalue_count]
         copy(dst, src)
     }
-    vm_pop(L,  int(upvalue_count))
-    vm_push(L, cl)
+    state_pop(L,  int(upvalue_count))
+    state_push(L, cl)
 }
 
 push_string :: proc(L: ^State, s: string) {
     v := value_make(ostring_new(L, s))
-    vm_push(L, v)
+    state_push(L, v)
 }
 
 push_fstring :: proc(L: ^State, format: string, args: ..any) -> string {
-    return vm_push_fstring(L, format, ..args)
+    return state_push_fstring(L, format, ..args)
 }
 
 /*
@@ -390,7 +390,7 @@ reserved.
  */
 new_table :: proc(L: ^State, hash_count := 0, array_count := 0) {
     t := table_new(L, hash_count, array_count)
-    vm_push(L, value_make(t))
+    state_push(L, value_make(t))
 }
 
 /*
@@ -415,7 +415,7 @@ get_table :: proc(L: ^State, table, key: int) {
     t := __get_any_ptr(L, table)
     k := __get_stack_ptr(L, key)^
     v := vm_get_table(L, t, k)
-    vm_push(L, v)
+    state_push(L, v)
 }
 
 /*
@@ -429,7 +429,7 @@ get_field :: proc(L: ^State, table: int, field: string) {
     t := __get_any_ptr(L, table)
     k := value_make(ostring_new(L, field))
     v := vm_get_table(L, t, k)
-    vm_push(L, v)
+    state_push(L, v)
 }
 
 /*
@@ -458,7 +458,7 @@ set_table :: proc(L: ^State, table, key: int) {
     vm_set_table(L, t, k, v)
 
     // Pop only the value.
-    vm_pop(L, 1)
+    state_pop(L, 1)
 }
 
 /*
@@ -474,11 +474,11 @@ set_field :: proc(L: ^State, table: int, field: string) {
     v := __get_stack_ptr(L, -1)^
 
     // Prevent key from being collected.
-    vm_push(L, k)
+    state_push(L, k)
     vm_set_table(L, t, k, v)
 
     // Pop both key and value.
-    vm_pop(L, 2)
+    state_pop(L, 2)
 }
 
 /*
@@ -547,8 +547,8 @@ and calls `p` with `user_data` as its sole argument.
  */
 api_pcall :: proc(L: ^State, procedure: Api_Proc, user_data: rawptr) -> (err: Error) {
     cl := closure_api_new(L, procedure, 0)
-    vm_push(L, cl)
-    vm_push(L, value_make(user_data))
+    state_push(L, cl)
+    state_push(L, value_make(user_data))
     return pcall(L, arg_count=1, ret_count=0)
 }
 

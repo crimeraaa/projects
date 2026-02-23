@@ -38,44 +38,60 @@ class Object_Printer:
         self.__value = ensure_pointer(v)
 
     def to_string(self):
-        v = self.__value
-        if not v:
+        value = self.__value
+        if not value:
             return "(null)"
-        t = str(v["base"]["type"])
-        if t == "string":
-            return v["string"].address
 
-        p = v.cast(base.VOID_POINTER)
-        return f"{t.lower()}: {p}"
+        type_name = str(value["base"]["type"]).lower()
+        member    = "closure" if type_name == "function" else type_name
+        pointer   = value[member].address
+        return pointer if type_name == "string" else f"{type_name}: {pointer}"
+
+    # def children(self):
+    #     actual, type = object_actual(self.__value)
+    #     if actual:
+    #         for field in type.fields():
+    #             yield field.name, actual[field.name]
+
+
+# def object_actual(node: gdb.Value):
+#     if not node:
+#         return
+
+#     type_name = str(node["base"]["type"]).lower()
+#     if type_name == "function":
+#         closure = node["closure"]
+#         pointer = closure["lua" if closure["base"]["is_lua"] else "api"].address
+#     else:
+#         pointer = node[type_name].address
+#     return pointer, pointer.dereference().type
 
 
 # In:  Object *
 # Out: Ostring * | Table * | Chunk * | Closure * | Upvalue * | None
-def object_get_data(node: gdb.Value):
+def object_iterator_next(node: gdb.Value):
     if not node:
         return None
 
     # Don't call the type() method; may crash
-    t = str(node["base"]["type"]).lower()
+    type_name = str(node["base"]["type"]).lower()
+
     # p.type, if p is a pointer, returns None, annoyingly enough
-    p = node[t].address
-    if t == "function":
-        kind = 'c' if p["c"]["is_c"] else "lua"
-        p = p[kind].address
-    return p
+    if type_name == "function":
+        pointer = node["closure"]["base"].address
+    else:
+        pointer = node[type_name].address
+    return pointer
 
 def object_iterator(node: gdb.Value, field = "next"):
     i = 0
-    data = object_get_data(node)
+    data = object_iterator_next(node)
     while node:
         yield str(i), data
 
         i += 1
-        # field is "gc_list", this is assumed to be safe because only
-        # objects with this member get linked into the gray list.
-        # Otherwise it's "next" which is always safe.
-        node = data[field]
-        data = object_get_data(node)
+        node = data[field] if field == "gc_list" else data["base"][field]
+        data = object_iterator_next(node)
 
 
 class Object_List_Printer:
@@ -92,7 +108,7 @@ class Object_List_Printer:
         return "array"
 
 
-class GC_List_Printer:
+class Gc_List_Printer:
     __value: gdb.Value
 
     def __init__(self, v: gdb.Value):
@@ -128,8 +144,8 @@ class Value_Printer:
         "nil":      lambda _: "nil",
         "boolean":  lambda v: str(bool(v["boolean"])),
         "number":   lambda v: str(float(v["number"])),
-        "string":   lambda v: str(v["object"]["string"].address),
         "integer":  lambda v: str(int(v["integer"])),
+        "pointer":  lambda v: "userdata: " + str(v["pointer"]),
     }
 
     def __init__(self, val: gdb.Value):
@@ -140,9 +156,6 @@ class Value_Printer:
     def to_string(self) -> str:
         if self.__type in self.__TOSTRING:
             return self.__TOSTRING[self.__type](self.__data)
-
-        # Assumes data.pointer == (void *)data.object
-        p = self.__data["pointer"]
-        return f"{self.__type}: {p}"
+        return str(self.__data["object"])
 
 

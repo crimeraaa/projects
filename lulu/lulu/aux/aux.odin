@@ -157,13 +157,13 @@ Errors:
 - .Syntax
  */
 load_file :: proc(L: ^lulu.State, name: string, allocator := context.allocator) -> (err: lulu.Error) {
-    File_Reader_Data :: struct {
+    File_Reader :: struct {
         file: ^os.File,
         buf:  [BUFFER_SIZE]byte,
     }
 
     file_reader_proc :: proc(user_data: rawptr) -> (current: []byte) {
-        data := cast(^File_Reader_Data)user_data
+        data := cast(^File_Reader)user_data
         n, err := os.read(data.file, data.buf[:])
 
         // EOF was not reached and nothing bad happened?
@@ -191,7 +191,7 @@ load_file :: proc(L: ^lulu.State, name: string, allocator := context.allocator) 
         os.close(file)
     }
 
-    data: File_Reader_Data = ---
+    data: File_Reader = ---
     data.file = file
     return lulu.load(L, name, file_reader_proc, &data, allocator)
 }

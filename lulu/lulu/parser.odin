@@ -52,9 +52,16 @@ Rule :: struct {
     right: Precedence,
 }
 
-parser_make :: proc(L: ^State, builder: ^strings.Builder, buf: []byte, name: ^Ostring, input: Reader) -> Parser {
+parser_make :: proc(
+    L: ^State,
+    compiler: ^Compiler,
+    builder: ^strings.Builder,
+    buf: []byte,
+    name: ^Ostring,
+    input: Reader
+) -> Parser {
     p: Parser
-    p.lexer            = lexer_make(L, builder, name, input)
+    p.lexer            = lexer_make(L, compiler, builder, name, input)
     p.consumed_builder = strings.builder_from_bytes(buf[:])
     advance_token(&p)
     return p
@@ -77,12 +84,15 @@ parser_assert :: proc(p: ^Parser, cond: bool, msg := #caller_expression(cond), a
 program :: proc(L: ^State, builder: ^strings.Builder, name: ^Ostring, input: Reader) {
     main_chunk := chunk_new(L, name)
     // Ensure `main_chunk` cannot be collected.
-    vm_push(L, value_make(cast(^Object)main_chunk, .Chunk))
+    state_push(L, value_make(cast(^Object)main_chunk, .Chunk))
 
     // Any more is probably overkill. We really only need this to report errors.
     buf: [16]byte
-    p := parser_make(L, builder, buf[:], name, input)
-    c := compiler_make(L, &p, main_chunk)
+    c: Compiler
+    p: Parser
+    // MUST be initialized before the parser.
+    c = compiler_make(L, &p, main_chunk)
+    p = parser_make(L, &c, builder, buf[:], name, input)
 
     // Block for file scope (outermost scope).
     block(&p, &c)
@@ -92,8 +102,8 @@ program :: proc(L: ^State, builder: ^strings.Builder, name: ^Ostring, input: Rea
     // Make the closure BEFORE popping the chunk in order to prevent the chunk
     // from being collected in case GC is run during the closure's creation.
     main_closure := closure_lua_new(L, main_chunk, 0)
-    vm_pop(L)
-    vm_push(L, main_closure)
+    state_pop(L)
+    state_push(L, main_closure)
 }
 
 /*

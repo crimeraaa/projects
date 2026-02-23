@@ -113,8 +113,10 @@ compiler_declare_local :: proc(c: ^Compiler, name: ^Ostring, count: u16) {
         parser_error(c.parser, "Shadowing of local variable")
     }
 
+    state_push(c.L, name)
     info  := Local_Info{name, INVALID_PC, INVALID_PC}
     index := chunk_push_local(c.L, c.chunk, &c.locals_count, info)
+    state_pop(c.L)
 
     // Don't push (reserve) registers yet, because we don't want to 'see' this
     // local if we use the same name in the assigning expression.
@@ -204,13 +206,16 @@ compiler_pop_block :: proc(c: ^Compiler) {
     c.active_count = prev_count
 }
 
-compiler_add_string :: proc(c: ^Compiler, s: ^Ostring) -> (index: u32) {
-    index = _add_constant(c, value_make(s))
+compiler_add_string :: proc(c: ^Compiler, ostring: ^Ostring) -> (index: u32) {
+    L := c.L
+    state_push(L, ostring)
+    index = _add_constant(c, value_make(ostring))
+    state_pop(L)
     return index
 }
 
 @(private="file")
-_add_constant :: proc(c: ^Compiler, v: Value) -> (index: u32) {
+_add_constant :: proc(c: ^Compiler, v: Value, loc := #caller_location) -> (index: u32) {
     L     := c.L
     chunk := c.chunk
     for constant, index in chunk.constants[:c.constants_count] {
@@ -218,7 +223,7 @@ _add_constant :: proc(c: ^Compiler, v: Value) -> (index: u32) {
             return u32(index)
         }
     }
-    return chunk_push_constant(L, chunk, &c.constants_count, v)
+    return chunk_push_constant(L, chunk, &c.constants_count, v, loc=loc)
 }
 
 // === BYTECODE ============================================================ {{{
@@ -486,7 +491,7 @@ upon done popping.
 - If we are popping registers out of order then we panic, because that is a
 compiler bug that needs to be addressed at the soonest.
  */
-compiler_pop_reg :: proc(c: ^Compiler, reg: u16, count: u16 = 1, loc := #caller_location) {
+compiler_pop_reg :: proc(c: ^Compiler, reg: u16, count: u16 = 1) {
     // Don't pop existing locals.
     if reg < c.active_count {
         return
@@ -496,7 +501,7 @@ compiler_pop_reg :: proc(c: ^Compiler, reg: u16, count: u16 = 1, loc := #caller_
     prev := c.free_reg - count
     compiler_assert(c, reg == prev,
         "Bad pop order, expected reg(%i) but got reg(%i)",
-        prev, reg, loc=loc)
+        prev, reg)
 
     c.free_reg = prev
 }
@@ -634,8 +639,8 @@ the destination, hence it is termed 'discharged' (i.e. finalized).
 - `lcode.c:discharge2reg(FuncState *fs, expdesc *e, int reg)` in Lua 5.1.5.
  */
 @(private="file")
-_discharge_expr_to_reg :: proc(c: ^Compiler, expr: ^Expr, reg: u16, loc := #caller_location) {
-    __load_bool :: proc(c: ^Compiler, reg: u16, b, skip: bool) {
+_discharge_expr_to_reg :: proc(c: ^Compiler, expr: ^Expr, reg: u16) {
+    load_bool :: proc(c: ^Compiler, reg: u16, b, skip: bool) {
         // These instructions may be jump targets by themselves, e.g. the
         // condition of a loop.
         compiler_get_target(c)
@@ -664,14 +669,14 @@ _discharge_expr_to_reg :: proc(c: ^Compiler, expr: ^Expr, reg: u16, loc := #call
         compiler_code_ABx(c, .Load_Const, reg, expr.index)
 
     case .Global, .Local, .Table, .Call:
-        unreachable("Invalid expr to discharge: %v", expr.type, loc=loc)
+        unreachable("Invalid expr to discharge: %v", expr.type)
 
     case .Pc_Pending_Register:
         c.chunk.code[expr.pc].A = reg
 
     case .Compare:
-        __load_bool(c, reg, b=false, skip=true)
-        __load_bool(c, reg, b=true,  skip=false)
+        load_bool(c, reg, b=false, skip=true)
+        load_bool(c, reg, b=true,  skip=false)
 
     case .Register:
         // Differing registers, so we need to explicitly move?
@@ -735,9 +740,9 @@ _check_k :: proc(c: ^Compiler, expr: ^Expr, index: u32, limit: u32) -> (rk: u32,
     return rk, is_k
 }
 
-compiler_pop_expr :: proc(c: ^Compiler, expr: ^Expr, loc := #caller_location) {
+compiler_pop_expr :: proc(c: ^Compiler, expr: ^Expr) {
     if expr.type == .Register {
-        compiler_pop_reg(c, expr.reg, loc=loc)
+        compiler_pop_reg(c, expr.reg)
     }
 }
 

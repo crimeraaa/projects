@@ -16,6 +16,12 @@ Table :: struct {
     // equivalent to `2 ** log2_cap`) to help reduce padding.
     log2_cap: u8,
 
+    // Only using during the Mark and Traverse phases of the garbage collector.
+    //
+    // This object is always independent, so it can be root during
+    // garbage collection.
+    gc_list: ^Gc_List,
+
     // List of all key-value pairs ('entries').
     entries: [^]Entry,
 
@@ -41,22 +47,24 @@ Key :: struct #raw_union {
 
         // Saving the result of `hash_value()` is useful because it helps us
         // do quick comparisons for early-outs. It also allows to avoid
-        // redundant work in `table_resize()`.
+        // redundant work in `_resize()`.
         hash: u32,
         data: Value_Data,
     }
 }
 
 @(private="package")
-table_new :: proc(L: ^State, hash_count, array_count: int) -> (t: ^Table) {
-    t = object_new(Table, L, &G(L).objects)
+table_new :: proc(L: ^State, hash_count, array_count: int, loc := #caller_location) -> (t: ^Table) {
+    t = object_new(Table, L, &G(L).objects, loc=loc)
 
     // Required so that `table_resize()` below sees the empty table rather
     // than attempting to dereference a nil entries array with 1 element.
     t.entries = &_EMPTY_ENTRY
     cap := hash_count + array_count
     if cap > 0 {
-        _resize(L, t, max(cap, 8))
+        object_set_fixed(t)
+        _resize(L, t, max(cap, 8), loc=loc)
+        object_clear_fixed(t)
     }
     return t
 }
@@ -69,14 +77,15 @@ referenced in other parts of the program.
 **Deallocates using `L.global_state.backing_allocator`.*
  */
 @(private="package")
-table_free :: proc(L: ^State, t: ^Table) {
+table_free :: proc(L: ^State, t: ^Table, loc := #caller_location) {
     if t.entries != &_EMPTY_ENTRY {
-        delete(L, _get_entries(t))
+        delete(L, table_get_entries(t), loc=loc)
     }
-    free(L, t)
+    free(L, t, loc=loc)
 }
 
-_get_entries :: proc(t: ^Table) -> []Entry {
+@(private="package")
+table_get_entries :: proc(t: ^Table) -> []Entry {
     return t.entries[:_get_cap(t)]
 }
 
@@ -109,7 +118,7 @@ beforehand (i.e. it was non-nil) else `false`.
 table_get :: proc(t: ^Table, k: Value) -> (v: Value, ok: bool) #optional_ok {
     hash := _hash_value(k)
     entry: ^Entry
-    entry, ok = _find_entry(_get_entries(t), k, hash)
+    entry, ok = _find_entry(table_get_entries(t), k, hash)
     return entry.value, ok
 }
 
@@ -134,7 +143,7 @@ table_set :: proc(L: ^State, t: ^Table, k: Value) -> (v: ^Value) {
     }
 
     hash := _hash_value(k)
-    entry, ok := _find_entry(_get_entries(t), k, hash)
+    entry, ok := _find_entry(table_get_entries(t), k, hash)
     if !ok {
         t.count += 1
     }
@@ -144,10 +153,10 @@ table_set :: proc(L: ^State, t: ^Table, k: Value) -> (v: ^Value) {
     return &entry.value
 }
 
-_resize :: proc(L: ^State, t: ^Table, new_cap: int) {
-    old_entries  := _get_entries(t)
+_resize :: proc(L: ^State, t: ^Table, new_cap: int, loc := #caller_location) {
+    old_entries  := table_get_entries(t)
     new_log2_cap := table_log2(new_cap)
-    new_entries  := make(Entry, L, 1 << new_log2_cap)
+    new_entries  := make(Entry, L, 1 << new_log2_cap, loc=loc)
 
     // We may have nil keys in the old table so we need to ignore them.
     new_count := 0
@@ -164,7 +173,7 @@ _resize :: proc(L: ^State, t: ^Table, new_cap: int) {
 
     // We actually own our underlying array?
     if t.entries != &_EMPTY_ENTRY {
-        delete(L, old_entries)
+        delete(L, old_entries, loc=loc)
     }
 
     t.log2_cap = new_log2_cap

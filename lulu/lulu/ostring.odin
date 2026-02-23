@@ -78,7 +78,7 @@ Reuse an existing interned copy of `text`, or creates a new one.
 **Returns**
 - A pointer to the interned string.
  */
-ostring_new :: proc(L: ^State, text: string) -> ^Ostring {
+ostring_new :: proc(L: ^State, text: string, loc := #caller_location) -> ^Ostring {
     intern    := &L.global_state.intern
     table     := intern.table
     table_cap := len(table)
@@ -93,23 +93,29 @@ ostring_new :: proc(L: ^State, text: string) -> ^Ostring {
         }
     }
 
-    s := object_new(Ostring, L, &table[index], len(text) + 1)
-    s.len  = len(text)
-    s.hash = hash
+    ostring := object_new(Ostring, L, &table[index], len(text) + 1, loc=loc)
+    ostring.len  = len(text)
+    ostring.hash = hash
     #no_bounds_check {
-        data := s.data[:s.len]
+        data := ostring.data[:ostring.len]
         copy(data, text)
-        data[s.len] = 0
+        data[ostring.len] = 0
     }
 
     // Count refers to the total number of linked list nodes, including chains,
     // rather than occupied array slots. Even so we probably want to rehash
     // anyway to reduce clustering.
     if intern.count + 1 > table_cap {
-        intern_resize(L, intern, table_cap * 2)
+        state_push(L, ostring)
+        intern_resize(L, intern, table_cap * 2, loc=loc)
+        state_pop(L)
     }
     intern.count += 1
-    return s
+    return ostring
+}
+
+ostring_size :: proc(ostring: ^Ostring) -> int {
+    return size_of(ostring^) + ostring.len + 1
 }
 
 /*
@@ -121,8 +127,8 @@ strings, we allocated everything in one go and can thus free it in the same way.
 **Assumptions**
 - Freeing memory never fails.
  */
-ostring_free :: proc(L: ^State, s: ^Ostring) {
-    free(L, s, extra=s.len + 1)
+ostring_free :: proc(L: ^State, s: ^Ostring, loc := #caller_location) {
+    free(L, s, extra=s.len + 1, loc=loc)
 }
 
 /*
@@ -135,9 +141,9 @@ Resize the intern table to fit more strings.
 - This is first called upon VM startup to ensure that subsequent calls to
 `ostring_new` never see a zero-length table.
  */
-intern_resize :: proc(L: ^State, intern: ^Intern, new_cap: int) {
+intern_resize :: proc(L: ^State, intern: ^Intern, new_cap: int, loc := #caller_location) {
     old_table   := intern.table
-    new_table   := make(^Object, L, new_cap)
+    new_table   := make(^Object, L, new_cap, loc=loc)
     intern.table = new_table
 
     // Rehash all strings from the old table into the new table.
@@ -159,7 +165,7 @@ intern_resize :: proc(L: ^State, intern: ^Intern, new_cap: int) {
             this_node = next_node
         }
     }
-    delete(L, old_table)
+    delete(L, old_table, loc=loc)
 }
 
 /*

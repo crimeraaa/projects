@@ -93,6 +93,7 @@ main :: proc() {
 }
 
 run_repl :: proc(L: ^lulu.State, allocator: mem.Allocator) -> (err: os.Error) {
+    defer fmt.println()
     for {
         fmt.print(">>> ")
         line_buf: [256]byte
@@ -103,7 +104,7 @@ run_repl :: proc(L: ^lulu.State, allocator: mem.Allocator) -> (err: os.Error) {
         check_no_error(L, load_err) or_continue
         run_input(L, "stdin")
     }
-    unreachable()
+    return
 }
 
 

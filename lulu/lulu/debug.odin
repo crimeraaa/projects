@@ -61,7 +61,7 @@ Throws a runtime error and reports an error message.
 - `L.frame.saved_pc` was set beforehand so we know where to look.
  */
 debug_runtime_error :: proc(L: ^State, format := "", args: ..any) -> ! {
-    msg     := vm_push_fstring(L, format, ..args)
+    msg     := state_push_fstring(L, format, ..args)
     frame   := L.frame
     closure := value_get_function(frame.callee^)
     if closure.is_lua {
@@ -71,9 +71,9 @@ debug_runtime_error :: proc(L: ^State, format := "", args: ..any) -> ! {
         loc  := chunk.loc[frame.saved_pc]
         line := loc.line
         col  := loc.col
-        vm_push_fstring(L, "%s:%i:%i: %s", file, line, col, msg)
+        state_push_fstring(L, "%s:%i:%i: %s", file, line, col, msg)
     } else {
-        vm_push_fstring(L, "[Odin] %s", msg)
+        state_push_fstring(L, "[Odin] %s", msg)
     }
     throw_error(L, .Runtime)
 }
@@ -90,7 +90,7 @@ debug_syntax_error :: proc(x: ^Lexer, here: Token, msg: string) -> ! {
     line := here.line
     col  := here.col
     loc  := token_string(here)
-    vm_push_fstring(L, "%s:%i:%i: %s near '%s'", file, line, col, msg, loc)
+    state_push_fstring(L, "%s:%i:%i: %s near '%s'", file, line, col, msg, loc)
     throw_error(L, .Syntax)
 }
 

@@ -10,12 +10,12 @@ import lulu_aux "../aux"
 
 @(private="package", rodata)
 math_procs := [?]lulu_aux.Library_Entry{
-    {"abs",     _abs},
-    {"ceil",    _ceil},
-    {"floor",   _floor},
-    {"log",     _log},
-    {"log2",    _log2},
-    {"log10",   _log10},
+    // {"abs",     _abs},
+    // {"ceil",    _ceil},
+    // {"floor",   _floor},
+    // {"log",     _log},
+    // {"log2",    _log2},
+    // {"log10",   _log10},
     {"modf",    _modf},
     {"sqrt",    _sqrt},
 }

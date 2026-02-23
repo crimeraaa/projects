@@ -8,16 +8,18 @@ import lulu_aux "../aux"
 libs := [?]lulu_aux.Library_Entry{
     {"_G",      open_base},
     {"math",    open_math},
-    {"string",  open_string},
-    {"utf8",    open_utf8},
+    // {"string",  open_string},
+    // {"utf8",    open_utf8},
 }
 
 open :: proc(L: ^lulu.State) {
+    L.global_state.gc_state = .Paused
     for lib in libs[:] {
         lulu.push_api_proc(L, lib.procedure)
         lulu.call(L, arg_count=0, ret_count=1)
         lulu.set_global(L, lib.name)
     }
+    L.global_state.gc_state = .None
 }
 
 open_base :: proc(L: ^lulu.State) -> (ret_count: int) {

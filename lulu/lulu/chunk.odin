@@ -8,6 +8,13 @@ Chunk :: struct {
     // Must be able to hold the range `[0, MAX_REG]`.
     stack_used: u8,
 
+    // Only using during the Mark and Traverse phases of the garbage collector.
+    //
+    // This object is only independent during compilation (i.e. it lives on
+    // the stack), so it can be root during garbage collection then. However
+    // beyond that it is always dependent on its parent closure.
+    gc_list: ^Gc_List,
+
     // File name or stream name.
     name: ^Ostring,
 
@@ -64,11 +71,14 @@ Creates a new blank chunk for use when parsing.
 within `object_new()`.
  */
 chunk_new :: proc(L: ^State, name: ^Ostring) -> ^Chunk {
+    // Ensure `name` cannot be collected.
+    state_push(L, name)
     c := object_new(Chunk, L, &G(L).objects)
     c.name = name
     // Minimum stack usage is 2 to allow all instructions to unconditionally
     // read r0 and r1.
     c.stack_used = 2
+    state_pop(L)
     return c
 }
 
@@ -124,8 +134,8 @@ Adds `v` to the end of the constants array.
 - We are in a protected call, so failures to append values can be caught
 and handled.
  */
-chunk_push_constant :: proc(L: ^State, c: ^Chunk, count: ^u32, v: Value) -> (index: u32) {
-    append(L, &c.constants, count^, v)
+chunk_push_constant :: proc(L: ^State, c: ^Chunk, count: ^u32, v: Value, loc := #caller_location) -> (index: u32) {
+    append(L, &c.constants, count^, v, loc=loc)
     count^ += 1
     return count^ - 1
 }
@@ -133,8 +143,8 @@ chunk_push_constant :: proc(L: ^State, c: ^Chunk, count: ^u32, v: Value) -> (ind
 /*
 Appends the local variable information `local` to the chunk's locals array.
  */
-chunk_push_local :: proc(L: ^State, c: ^Chunk, count: ^u16, local: Local_Info) -> (index: u16) {
-    append(L, &c.locals, count^, local)
+chunk_push_local :: proc(L: ^State, c: ^Chunk, count: ^u16, local: Local_Info, loc := #caller_location) -> (index: u16) {
+    append(L, &c.locals, count^, local, loc=loc)
     count^ += 1
     return count^ - 1
 }

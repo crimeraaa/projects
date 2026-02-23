@@ -8,11 +8,13 @@ vars:
   FLAGS: >-
     -debug
     -sanitize=address
+    -define:LULU_DEBUG_STRESS_GC=true
 
   REPL_EXTRA_FLAGS: >-
     -out:"{{.OUT}}"
     -define:LULU_DISASSEMBLE_CHUNK=true
     -define:LULU_DISASSEMBLE_INLINE=true
+    -define:LULU_DEBUG_LOG_GC=true
 
 tasks:
   run:

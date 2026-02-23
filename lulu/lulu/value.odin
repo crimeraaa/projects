@@ -1,4 +1,4 @@
-#+private package
+#+private
 package lulu
 
 import "core:fmt"
@@ -88,18 +88,18 @@ value_type :: #force_inline proc "contextless" (v: Value) -> Value_Type {
 }
 
 @(private="file")
-__check_type :: #force_inline proc(v: Value, t: Value_Type) {
+_check_type :: #force_inline proc(v: Value, t: Value_Type) {
     fmt.assertf(value_type(v) == t, "Expected '%s' but got '%s'",
         value_type_string(t), value_type_name(v))
 }
 
 value_get_bool :: #force_inline proc(v: Value) -> (b: bool) {
-    __check_type(v, .Boolean)
+    _check_type(v, .Boolean)
     return v.boolean
 }
 
 value_get_number :: #force_inline proc(v: Value) -> (f: f64) {
-    __check_type(v, .Number)
+    _check_type(v, .Number)
     return v.number
 }
 
@@ -110,7 +110,7 @@ value_get_pointer :: #force_inline proc(v: Value) -> (p: rawptr) {
 value_get_object :: #force_inline proc(v: Value) -> (o: ^Object) {
     o = v.object
     // Ensure consistency.
-    __check_type(v, o.type)
+    _check_type(v, o.type)
     return o
 }
 
@@ -192,7 +192,7 @@ value_type_name :: #force_inline proc(v: Value) -> string {
     return value_type_string(t)
 }
 
-value_type_string :: proc(t: Value_Type, loc := #caller_location) -> string {
+value_type_string :: proc(t: Value_Type) -> string {
     switch t {
     case .Nil:              return "nil"
     case .Boolean:          return "boolean"
@@ -201,10 +201,9 @@ value_type_string :: proc(t: Value_Type, loc := #caller_location) -> string {
     case .String:           return "string"
     case .Table:            return "table"
     case .Function:         return "function"
-    case .Chunk:
-        break
+    case .Chunk:            return "chunk"
     }
-    unreachable("Invalid value to get type name of: %v", t, loc=loc)
+    unreachable("Invalid value to get type name of: %v", t)
 }
 
 value_is_nil :: #force_inline proc(v: Value) -> bool {
@@ -217,6 +216,10 @@ value_is_boolean :: #force_inline proc(v: Value) -> bool {
 
 value_is_number :: #force_inline proc(v: Value) -> bool {
     return value_type(v) == .Number
+}
+
+value_is_object :: #force_inline proc(v: Value) -> bool {
+    return value_type(v) >= .String
 }
 
 value_is_string :: #force_inline proc(v: Value) -> bool {
@@ -236,17 +239,17 @@ value_is_falsy :: #force_inline proc(v: Value) -> bool {
 }
 
 value_get_ostring :: #force_inline proc(v: Value) -> ^Ostring {
-    __check_type(v, .String)
+    _check_type(v, .String)
     return &value_get_object(v).string
 }
 
 value_get_function :: #force_inline proc(v: Value) -> ^Closure {
-    __check_type(v, .Function)
+    _check_type(v, .Function)
     return &value_get_object(v).closure
 }
 
 value_get_table :: #force_inline proc(v: Value) -> ^Table {
-    __check_type(v, .Table)
+    _check_type(v, .Table)
     return &value_get_object(v).table
 }
 

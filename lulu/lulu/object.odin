@@ -1,4 +1,4 @@
-#+private package
+#+private
 package lulu
 
 import "base:intrinsics"
@@ -14,18 +14,21 @@ Object :: struct #raw_union {
 // Only exists to be 'inherited from'. Do not create lone instances of this type.
 Object_Header :: struct #packed {
     next: ^Object,
-    type: Value_Type,
-    mark: bit_set[Object_Mark; u8],
+    type:  Value_Type,
+    flags: Object_Flags,
 }
 
 // Flags for the garbage collector.
-Object_Mark :: enum u8 {
-    // This object has not yet been processed in this particular GC run.
-    White,
+Object_Flags :: bit_set[Object_Flag; u8]
 
-    // This object has been traversed and all its children have been
-    // traversed as well.
-    Black,
+// Flags for the garbage collector.
+Object_Flag :: enum u8 {
+    // If not set, then this object is White; i.e. it has not yet been
+    // processed in this particular GC run. Until otherwise known,we assume
+    // this object and all its children are collectible.
+    //
+    // If set then this object is Gray or Black.
+    Marked,
 
     // This object is never collectible, e.g. interned keywords.
     Fixed,
@@ -54,24 +57,54 @@ members, e.g. `Ostring`. If `T` is fixed-size then it should remain zero.
 - We are in a protected call, so upon allocation failure we are able to
 recover to the first protected caller.
  */
-object_new :: proc($T: typeid, L: ^State, list: ^^Object, extra := 0) -> ^T
+object_new :: proc($T: typeid, L: ^State, list: ^^Object, extra := 0, loc := #caller_location) -> ^T
 where intrinsics.type_is_subtype_of(T, Object_Header) {
-    obj  := new(T, L, extra=extra)
-    base := cast(^Object)obj
+    // This object is freshly allocated so it has never been traversed.
+    // So we leave its flags as 0 to indicate it is color white.
+    object := new(T, L, extra=extra, loc=loc)
+    base   := cast(^Object)object
 
     // Chain the new object.
-    obj.next = list^
-    when      T == Ostring     do obj.type = Value_Type.String      \
-    else when T == Table       do obj.type = Value_Type.Table       \
-    else when T == Chunk       do obj.type = Value_Type.Chunk       \
-    else when T == Closure_Api do obj.type = Value_Type.Function    \
-    else when T == Closure_Lua do obj.type = Value_Type.Function    \
+    object.next = list^
+    when      T == Ostring     do object.type = Value_Type.String      \
+    else when T == Table       do object.type = Value_Type.Table       \
+    else when T == Chunk       do object.type = Value_Type.Chunk       \
+    else when T == Closure_Api do object.type = Value_Type.Function    \
+    else when T == Closure_Lua do object.type = Value_Type.Function    \
     else do #panic("Invalid T")
 
-    // This object is freshly allocated so it has never been traversed.
-    obj.mark = {.White}
-    list^    = base
-    return obj
+    list^ = base
+    return object
+}
+
+object_typeid :: proc(object: ^Object) -> typeid {
+    closure_typeid :: proc(closure: ^Closure) -> typeid {
+        if closure.is_lua {
+            return ^Closure_Lua
+        }
+        return ^Closure_Api
+    }
+
+    #partial switch object.type {
+    case .String:   return ^Ostring
+    case .Table:    return ^Table
+    case .Function: return closure_typeid(&object.closure)
+    case .Chunk:    return ^Chunk
+    case:
+        break
+    }
+    unreachable("Invalid object type %v", object.type)
+}
+
+object_size :: proc(object: ^Object) -> int {
+    #partial switch object.type {
+    case .String:   return ostring_size(&object.string)
+    case .Table:    return size_of(object.table)
+    case .Function: return closure_size(&object.closure)
+    case .Chunk:    return size_of(object.chunk)
+    case:
+    }
+    unreachable("Invalid object type %v", object.type)
 }
 
 /*
@@ -86,15 +119,15 @@ Free an object and without unlinking it.
 - The linked list containing `o` is not (yet) invalidated. It is the duty of
 the garbage collector to handle the unlinking for us.
  */
-object_free :: proc(L: ^State, obj: ^Object) {
+object_free :: proc(L: ^State, obj: ^Object, loc := #caller_location) {
     t := obj.type
     switch t {
-    case .String:   ostring_free(L, &obj.string)
-    case .Table:    table_free(L, &obj.table)
+    case .String:   ostring_free(L, &obj.string, loc=loc)
+    case .Table:    table_free(L, &obj.table, loc=loc)
     case .Chunk:    chunk_free(L, &obj.chunk)
     case .Function: closure_free(L, &obj.closure)
     case .Nil, .Boolean, .Number, .Light_Userdata:
-        unreachable("Invalid object to free: %v", t)
+        unreachable("Invalid object to free: %v", t, loc=loc)
     }
 
 }
@@ -107,4 +140,41 @@ object_free_all :: proc(L: ^State, list: ^Object) {
         object_free(L, node)
         node = next
     }
+}
+
+object_is_marked :: proc(object: ^$T) -> bool
+where intrinsics.type_is_subtype_of(T, Object_Header) {
+    return .Marked in object.flags
+}
+
+object_is_fixed :: proc(object: ^$T) -> bool
+where intrinsics.type_is_subtype_of(T, Object_Header) {
+    return .Fixed in object.flags
+}
+
+object_set_fixed :: proc(object: ^$T) {
+    assert(!object_is_fixed(object))
+    object.flags += {.Fixed}
+}
+
+object_is_reachable :: proc(object: ^$T) -> bool {
+    return object_is_marked(object) || object_is_fixed(object)
+}
+
+object_set_gray  :: object_set_marked
+object_set_white :: object_clear_marked
+
+object_set_marked :: proc(object: ^$T) {
+    assert(!object_is_marked(object))
+    object.flags += {.Marked}
+}
+
+object_clear_marked :: proc(object: ^$T) {
+    assert(object_is_reachable(object))
+    object.flags -= {.Marked}
+}
+
+object_clear_fixed :: proc(object: ^$T) {
+    assert(object_is_fixed(object))
+    object.flags -= {.Fixed}
 }

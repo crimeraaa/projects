@@ -7,50 +7,7 @@ import "core:strings"
 import "core:strconv"
 import "core:unicode/utf8"
 
-vm_init :: proc(L: ^State, g: ^Global_State, allocator: mem.Allocator) -> (ok: bool) {
-    L.global_state      = g
-    g.main_state        = L
-    g.backing_allocator = allocator
-
-    // Don't use `run_raw_pcall()`, because we won't be able to push an
-    // error object in case of memory errors.
-    err := run_raw_call(L, proc(L: ^State, _: rawptr) {
-        g := G(L)
-
-        // Ensure that, when we start interning strings, we already have
-        // valid indexes.
-        intern_resize(L, &g.intern, 32)
-        s := ostring_new(L, MEMORY_ERROR_MESSAGE)
-        s.mark += {.Fixed}
-        for kw_type in Token_Type.And..=Token_Type.While {
-            kw := token_type_string(kw_type)
-            s   = ostring_new(L, kw)
-            s.kw_type = kw_type
-            s.mark   += {.Fixed}
-        }
-
-        // Ensure that the globals table is of some non-zero minimum size.
-        t := table_new(L, hash_count=17, array_count=0)
-        L.globals_table = value_make(t)
-
-        // Initialize concat string builder with some reasonable default size.
-        L.builder = strings.builder_make(32, allocator=g.backing_allocator)
-
-        // Ensure the pointed-to data is non-nil.
-        L.registers = L.stack[:0]
-    }, nil)
-
-    return err == nil
-}
-
-vm_destroy :: proc(L: ^State) {
-    g := L.global_state
-    strings.builder_destroy(&L.builder)
-    intern_destroy(L, &g.intern)
-    object_free_all(L, g.objects)
-}
-
-vm_push_fstring :: proc(L: ^State, format: string, args: ..any) -> string {
+state_push_fstring :: proc(L: ^State, format: string, args: ..any) -> string {
     format  := format
     pushed  := 0
     arg_i   := 0
@@ -60,15 +17,15 @@ vm_push_fstring :: proc(L: ^State, format: string, args: ..any) -> string {
         if fmt_i == -1 {
             // Write whatever remains unformatted as-is.
             if len(format) > 0 {
-                vm_push(L, format)
+                state_push(L, format)
                 pushed += 1
             }
             break
         }
 
         // Write any bits of the string before the format specifier.
-        if len(format[:fmt_i]) > 0 {
-            vm_push(L, format[:fmt_i])
+        if unformatted := format[:fmt_i]; len(unformatted) > 0 {
+            state_push(L, unformatted)
             pushed += 1
         }
 
@@ -82,23 +39,23 @@ vm_push_fstring :: proc(L: ^State, format: string, args: ..any) -> string {
             r := arg.(rune) or_else rune(arg.(byte))
             r_buf, size := utf8.encode_rune(r)
             copy(buf[:size], r_buf[:size])
-            vm_push(L, string(buf[:size]))
+            state_push(L, string(buf[:size]))
 
         case 'd', 'i':
             i := arg.(int) or_else int(arg.(i32))
-            vm_push(L, strconv.write_int(buf[:], i64(i), base=10))
+            state_push(L, strconv.write_int(buf[:], i64(i), base=10))
 
         case 'f':
             f := arg.(f64) or_else f64(arg.(f32))
             repr := number_to_string(f, buf[:])
-            vm_push(L, repr)
+            state_push(L, repr)
 
         case 's':
-            vm_push(L, arg.(string))
+            state_push(L, arg.(string))
 
         case 'p':
             repr := pointer_to_string(arg.(rawptr), buf[:])
-            vm_push(L, repr)
+            state_push(L, repr)
 
         case:
             unreachable("Unsupported format specifier '%c'", spec)
@@ -117,26 +74,31 @@ vm_push_fstring :: proc(L: ^State, format: string, args: ..any) -> string {
     start := stop - pushed
     args  := L.registers[start:stop]
     s := vm_concat(L, &args[0], args)
-    vm_pop(L, pushed - 1)
+    state_pop(L, pushed - 1)
     return ostring_to_string(s)
 }
 
-vm_push :: proc {
-    vm_push_string,
-    vm_push_closure,
-    vm_push_value,
+state_push :: proc {
+    state_push_string,
+    state_push_ostring,
+    state_push_closure,
+    state_push_value,
 }
 
-vm_push_string :: proc(L: ^State, s: string) {
-    interned := ostring_new(L, s)
-    vm_push(L, value_make(interned))
+state_push_string :: proc(L: ^State, s: string, loc := #caller_location) {
+    interned := ostring_new(L, s, loc=loc)
+    state_push(L, value_make(interned))
 }
 
-vm_push_closure :: proc(L: ^State, cl: ^Closure) {
-    vm_push(L, value_make(cl))
+state_push_ostring :: proc(L: ^State, ostring: ^Ostring) {
+    state_push(L, value_make(ostring))
 }
 
-vm_push_value :: proc(L: ^State, v: Value) {
+state_push_closure :: proc(L: ^State, cl: ^Closure) {
+    state_push(L, value_make(cl))
+}
+
+state_push_value :: proc(L: ^State, v: Value) {
     base := vm_save_base(L)
     top  := vm_save_top(L) + 1
     assert(top <= len(L.stack), "Lulu value stack overflow")
@@ -164,7 +126,7 @@ vm_concat :: proc(L: ^State, dst: ^Value, args: []Value) -> ^Ostring {
     return s
 }
 
-vm_pop :: proc(L: ^State, count := 1) {
+state_pop :: proc(L: ^State, count := 1) {
     L.registers = L.registers[:get_top(L) - count]
 }
 
