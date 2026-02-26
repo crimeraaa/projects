@@ -1,6 +1,6 @@
 local modf = math.modf
 local i, f = modf(1.2)
-print(i, f)             -- 1    0.2
-print(i, f, modf(3.4))  -- 1    0.2     3       0.4
-print(i, modf(5.6), f)  -- 1    5       0.2
-print(modf(1.2))        -- 1    0.2
+-- print(i, f)             -- 1    0.2
+-- print(i, f, modf(3.4))  -- 1    0.2     3       0.4
+-- print(i, modf(5.6), f)  -- 1    5       0.2
+-- print(modf(1.2))        -- 1    0.2

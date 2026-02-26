@@ -65,13 +65,11 @@ debug_runtime_error :: proc(L: ^State, format := "", args: ..any) -> ! {
     frame   := L.frame
     closure := value_get_function(frame.callee^)
     if closure.is_lua {
+        assert(frame.saved_pc != -1, "Forgot to protect here!")
         chunk := closure.lua.chunk
         file  := chunk_name(chunk)
-        // If `frame.saved_pc == -1` then we forgot to protect!
-        loc  := chunk.loc[frame.saved_pc]
-        line := loc.line
-        col  := loc.col
-        state_push_fstring(L, "%s:%i:%i: %s", file, line, col, msg)
+        line  := chunk.lines[frame.saved_pc]
+        state_push_fstring(L, "%s:%i: %s", file, line, msg)
     } else {
         state_push_fstring(L, "[Odin] %s", msg)
     }
@@ -169,13 +167,12 @@ disassemble_at :: proc(chunk: ^Chunk, i: Instruction, pc: i32, pad := 0) {
         return value_get_string(chunk.constants[Bx])
     }
 
-    loc := chunk.loc[pc]
-    if pc > 0 && chunk.loc[pc - 1].line == loc.line {
+    if line := chunk.lines[pc]; pc > 0 && chunk.lines[pc - 1] == line {
         fmt.printf("[%0*i] |--- ", pad, pc)
         // fmt.printf("[%0*i] |------- ", pad, pc)
     } else {
         // left-align
-        fmt.printf("[%0*i] %- 4i ", pad, pc, loc.line)
+        fmt.printf("[%0*i] %- 4i ", pad, pc, line)
 
         // buf: [64]byte
         // loc_repr := fmt.bprintf(buf[:], "%i", loc.line)

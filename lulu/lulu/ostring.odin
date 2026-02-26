@@ -86,7 +86,8 @@ ostring_new :: proc(L: ^State, text: string, loc := #caller_location) -> ^Ostrin
 
     hash  := hash_bytes(transmute([]byte)text)
     index := mod_pow2(uint(hash), uint(table_cap))
-    for node := table[index]; node != nil; node = node.next {
+    list  := table[index]
+    for node in object_iterator(&list) {
         s := &node.string
         if hash == s.hash && text == ostring_to_string(s) {
             return s
@@ -106,9 +107,10 @@ ostring_new :: proc(L: ^State, text: string, loc := #caller_location) -> ^Ostrin
     // rather than occupied array slots. Even so we probably want to rehash
     // anyway to reduce clustering.
     if intern.count + 1 > table_cap {
-        state_push(L, ostring)
+        // GC: Barrier
+        object_set_gray(ostring)
         intern_resize(L, intern, table_cap * 2, loc=loc)
-        state_pop(L)
+        object_set_white(ostring)
     }
     intern.count += 1
     return ostring
@@ -148,21 +150,15 @@ intern_resize :: proc(L: ^State, intern: ^Intern, new_cap: int, loc := #caller_l
 
     // Rehash all strings from the old table into the new table.
     for list in old_table {
-        this_node := list
+        list := list
         // Rehash all children for this list.
-        for this_node != nil {
-            ostring := &this_node.string
-
-            // Save because it's about to be replaced.
-            next_node := ostring.next
+        for node in object_iterator(&list) {
+            ostring := &node.string
 
             // Chain this node in the NEW table, using the NEW main index.
             i := mod_pow2(uint(ostring.hash), uint(new_cap))
             ostring.next = new_table[i]
-            new_table[i] = this_node
-
-            // Next iteration.
-            this_node = next_node
+            new_table[i] = node
         }
     }
     delete(L, old_table, loc=loc)

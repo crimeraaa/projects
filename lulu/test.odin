@@ -1,7 +1,6 @@
 package lulu_repl
 
 // standard
-import "base:runtime"
 import "core:fmt"
 import "core:testing"
 
@@ -77,11 +76,8 @@ run_tests :: proc(t: ^testing.T) {
     fb_buffer := fb_buffer_make(backing[:])
     context.temp_allocator = fb_buffer_allocator(&fb_buffer)
     for test, index in TESTS {
-        loc: runtime.Source_Code_Location
-        loc.file_path = test.name
-        loc.line      = 1
-        loc.column    = 1
-        loc.procedure = #procedure
+        loc := #location()
+        loc.procedure = test.name
 
         lulu.set_top(L, 0)
         res := try_test(t, L, test)

@@ -123,20 +123,19 @@ Find the index of `ptr` in the slice `array`, if it's even in the array to begin
 with.
  */
 find_ptr_index :: proc(array: $S/[]$T, ptr: ^T) -> (index: int, ok: bool) #no_bounds_check {
-    addr  := uintptr(ptr)
-    begin := uintptr(raw_data(array))
-    end   := uintptr(&array[len(array)])
-    if begin <= addr && addr < end {
-        return int(addr - begin) / size_of(T), true
+    begin := raw_data(array)
+    end   := &array[len(array)]
+    if begin <= ptr && ptr < end {
+        return int(uintptr(ptr) - uintptr(begin)) / size_of(T), true
     }
     return 0, false
 }
 
 find_ptr_index_unsafe :: proc(array: $S/[]$T, ptr: ^T) -> (index: int) #no_bounds_check {
-    addr  := uintptr(ptr)
-    begin := uintptr(raw_data(array))
-    end   := uintptr(&array[len(array)])
+    begin := raw_data(array)
+    end   := &array[len(array)]
     // If the result would be negative you're SOL anyway
-    fmt.assertf(begin <= addr && addr < end, "Invalid ptr(%p)", ptr)
-    return int(addr - begin) / size_of(T)
+    fmt.assertf(begin <= ptr && ptr < end,
+        "ptr(%p) not in [%p,%p)", ptr, begin, end)
+    return int(uintptr(ptr) - uintptr(begin)) / size_of(T)
 }

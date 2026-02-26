@@ -90,7 +90,7 @@ table_get_entries :: proc(t: ^Table) -> []Entry {
 }
 
 _get_cap :: proc(t: ^Table) -> (cap: int) {
-    return 1 << t.log2_cap
+    return 1 << uint(t.log2_cap)
 }
 
 @(private="package")
@@ -137,7 +137,7 @@ that , in case they want to handle things like metamethods, they can check if
 @(private="package")
 table_set :: proc(L: ^State, t: ^Table, k: Value) -> (v: ^Value) {
     // 75% load factor.
-    if cap := _get_cap(t); t.count + 1 >= cap * 3 / 2 {
+    if cap := _get_cap(t); t.count + 1 >= cap * 3 >> 2 {
         cap = max(cap * 2, 8)
         _resize(L, t, cap)
     }
@@ -161,12 +161,12 @@ _resize :: proc(L: ^State, t: ^Table, new_cap: int, loc := #caller_location) {
     // We may have nil keys in the old table so we need to ignore them.
     new_count := 0
     for old_entry in old_entries {
-        k := old_entry.key
-        if value_is_nil(k) {
+        key := old_entry.key
+        if value_is_nil(key) {
             continue
         }
         // Non-nil keys must be rehashed in the new table.
-        new_entry := _find_entry(new_entries, k, k.h.hash)
+        new_entry := _find_entry(new_entries, key, key.h.hash)
         new_entry^ = old_entry
         new_count += 1
     }
@@ -257,7 +257,7 @@ _hash_value :: proc(v: Value) -> u32 {
     case .Light_Userdata, .Table, .Function:
         return hash_any(value_get_pointer(v))
 
-    case .Chunk:
+    case .Chunk, .Integer:
         break
     }
     unreachable("Invalid type '%v'", t)

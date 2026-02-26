@@ -37,4 +37,4 @@ tasks:
   test:
     desc: Run `test.odin` unconditionally.
     cmds:
-      - odin test {{.TASKFILE_DIR}}/ {{.FLAGS}}
+      - odin test {{.TASKFILE_DIR}}/ {{.FLAGS}} # {{.REPL_EXTRA_FLAGS}}

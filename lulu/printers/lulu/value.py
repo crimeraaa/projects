@@ -1,5 +1,4 @@
 import gdb # type: ignore
-from .. import base
 from typing import Callable
 
 def ensure_pointer(v: gdb.Value):
@@ -10,7 +9,7 @@ class Ostring_Printer:
     """
     ```
     struct lulu::[ostring.odin]::Ostring {
-        lulu::[object.odin]::Object_Header base;
+        struct lulu::[object.odin]::Object_Header base;
         int  len;
         u32  hash;
         byte data[0];
@@ -43,8 +42,7 @@ class Object_Printer:
             return "(null)"
 
         type_name = str(value["base"]["type"]).lower()
-        member    = "closure" if type_name == "function" else type_name
-        pointer   = value[member].address
+        pointer   = value[type_name].address
         return pointer if type_name == "string" else f"{type_name}: {pointer}"
 
     # def children(self):
@@ -60,14 +58,14 @@ class Object_Printer:
 
 #     type_name = str(node["base"]["type"]).lower()
 #     if type_name == "function":
-#         closure = node["closure"]
-#         pointer = closure["lua" if closure["base"]["is_lua"] else "api"].address
+#         function  = node[type_name]
+#         pointer   = function["lua" if function["base"]["is_lua"] else "api"].address
 #     else:
 #         pointer = node[type_name].address
 #     return pointer, pointer.dereference().type
 
 
-# In:  Object *
+# In:  union lulu::[object.odin]::Object *
 # Out: Ostring * | Table * | Chunk * | Closure * | Upvalue * | None
 def object_iterator_next(node: gdb.Value):
     if not node:
@@ -75,13 +73,7 @@ def object_iterator_next(node: gdb.Value):
 
     # Don't call the type() method; may crash
     type_name = str(node["base"]["type"]).lower()
-
-    # p.type, if p is a pointer, returns None, annoyingly enough
-    if type_name == "function":
-        pointer = node["closure"]["base"].address
-    else:
-        pointer = node[type_name].address
-    return pointer
+    return node[type_name].address
 
 def object_iterator(node: gdb.Value, field = "next"):
     i = 0
@@ -126,11 +118,12 @@ class Value_Printer:
     """
     ```
     struct lulu::[value.odin]::Value {
-        lulu::[value.odin]::Value_Type type;
+        enum lulu::[value.odin]::Value_Type type;
         union {
             bool boolean;
             f64 number;
-            lulu::[object.odin]::Object *object;
+            int integer;
+            union lulu::[object.odin]::Object *object;
             void *pointer;
         } data;
     };
@@ -140,22 +133,21 @@ class Value_Printer:
     __data: gdb.Value
 
 
-    __TOSTRING: dict[str, Callable[[gdb.Value], str]] = {
-        "nil":      lambda _: "nil",
-        "boolean":  lambda v: str(bool(v["boolean"])),
-        "number":   lambda v: str(float(v["number"])),
-        "integer":  lambda v: str(int(v["integer"])),
-        "pointer":  lambda v: "userdata: " + str(v["pointer"]),
-    }
-
     def __init__(self, val: gdb.Value):
         # In GDB, enums are already pretty-printed to their names
         self.__type = str(val["type"]).lower()
         self.__data = val["data"]
 
     def to_string(self) -> str:
-        if self.__type in self.__TOSTRING:
-            return self.__TOSTRING[self.__type](self.__data)
+        if self.__type in _VALUE_TO_STRING:
+            return _VALUE_TO_STRING[self.__type](self.__data)
         return str(self.__data["object"])
 
 
+_VALUE_TO_STRING: dict[str, Callable[[gdb.Value], str]] = {
+    "nil":      lambda _: "nil",
+    "boolean":  lambda v: str(bool(v["boolean"])),
+    "number":   lambda v: str(float(v["number"])),
+    "integer":  lambda v: str(int(v["integer"])),
+    "pointer":  lambda v: "userdata: " + str(v["pointer"]),
+}

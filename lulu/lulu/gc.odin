@@ -62,9 +62,16 @@ _mark_roots :: proc(L: ^State, g: ^Global_State, loc := #caller_location) {
     assert(g.gc_state == nil)
     g.gc_state = .Mark
     _mark_value(L, g, L.globals_table, loc=loc)
-    _mark_array(L, g, L.stack[:vm_save_top(L)], loc=loc)
+    _mark_array(L, g, L.stack[:state_save_top(L)], loc=loc)
     for frame in L.frames[:L.frame_count] {
         _mark_value(L, g, frame.callee^, loc=loc)
+    }
+
+    // No tail yet? This is possible if we have a 1-object graph (somehow).
+    if g.gray_tail == nil {
+        // Possible for the head to be nil, e.g. user explicitly set the
+        // globals table to `nil` and we are not in a protected API call.
+        g.gray_tail = g.gray_head
     }
 }
 
@@ -79,57 +86,61 @@ _mark_value :: proc(L: ^State, g: ^Global_State, value: Value, loc := #caller_lo
         return
     }
 
-    object := value_get_object(value)
+    object := value_get_object(value, loc=loc)
     _mark_object(L, g, object, loc=loc)
 }
 
 _mark_object :: proc(L: ^State, g: ^Global_State, object: ^Object, loc := #caller_location) {
+    set_gc_list :: proc(object: ^Object, next: ^Gc_List) {
+        switch object.type {
+        case .Nil, .Boolean, .Number, .Light_Userdata, .String, .Integer:
+            unreachable("%v has no gc_list", object.type)
+        case .Table:    object.table.gc_list    = next
+        case .Function: object.function.gc_list = next
+        case .Chunk:    object.chunk.gc_list    = next
+        }
+    }
+
     // Already marked?
     if object_is_reachable(object) {
         return
     }
     object_set_gray(object)
-    gc_log_alloc(object_typeid(object),
-        .Mark if g.gc_state == .Mark else .Trace,
-        object, object_size(object), loc=loc)
+    gc_log_alloc(object_typeid(object), Gc_Log_Mode(g.gc_state), object, object_size(object), loc=loc)
 
-    // Mark phase: `object` (the new node) will link to the current head of
-    // the gray list as we are going to prepend it to make it the new head.
-    //
-    // Trace phase: `object` (the new node) will link to nothing as we are
-    // going to append it, thus making it the new tail.
-    next := g.gray_head if g.gc_state == .Mark else nil
-    #partial switch object.type {
     // Strings can be marked gray but we do not add them to the gray list
     // because all strings are already visible to `Intern` anyway.
-    case .String:   return
-    case .Table:    object.table.gc_list   = next
-    case .Function: object.closure.gc_list = next
-    case .Chunk:    object.chunk.gc_list   = next
-    case:
-        unreachable("Invalid object type to mark: %v", object.type)
+    if object.type == .String {
+        return
     }
 
     #partial switch g.gc_state {
     case .Mark:
-        // First node ever? Will be useful if/when we append later.
+        // Mark phase: `object` (the new node) will link to the current head of
+        // the gray list as we are going to prepend it to make it the new head.
+        set_gc_list(object, g.gray_head)
+
+        // Since we are constantly prepending, the very first non-nil node
+        // we encounter will actually be the tail by the time we trace.
         if g.gray_tail == nil {
             g.gray_tail = g.gray_head
         }
+
         // `object` was already linked to the current head, so the head will
         // now be the node in order to prepend it.
         g.gray_head = cast(^Gc_List)object
 
     case .Trace:
-        assert(g.gray_tail != nil, loc=loc)
+        // If we reached this point, we must have a non-nil GC list.
+        assert(g.gray_tail != nil)
+
+        // Trace phase: `object` (the new node) will link to nothing as we are
+        // going to append it, thus making it the new tail.
+        set_gc_list(object, nil)
+
         // Update current tail to link to `object` (the new node)...
-        #partial switch g.gray_tail.type {
-        case .Table:    g.gray_tail.table.gc_list   = cast(^Gc_List)object
-        case .Function: g.gray_tail.closure.gc_list = cast(^Gc_List)object
-        case .Chunk:    g.gray_tail.chunk.gc_list   = cast(^Gc_List)object
-        case:
-            unreachable("%v has no gc_list", g.gray_tail.type)
-        }
+        set_gc_list(cast(^Object)g.gray_tail, cast(^Gc_List)object)
+
         // ...then set `object` (the new node) as the new tail.
         g.gray_tail = cast(^Gc_List)object
     case:
@@ -143,11 +154,13 @@ _trace_references :: proc(L: ^State, g: ^Global_State) {
 
     // While we're traversing, we may append new objects. This is fine because
     // since they're appended we have not invalidated the current iteration.
-    for g.gray_head != nil {
-        next := _blacken_object(L, g, cast(^Object)g.gray_head)
-        g.gray_head = next
+    for node := g.gray_head; node != nil; {
+        next := _blacken_object(L, g, cast(^Object)node)
+        node = next
     }
+
     // Prepare for next cycle.
+    g.gray_head = nil
     g.gray_tail = nil
 }
 
@@ -159,7 +172,7 @@ _blacken_object :: proc(L: ^State, g: ^Global_State, object: ^Object) -> (next: 
     list: ^^Gc_List
     #partial switch object.type {
     case .Table:    list = _blacken_table(L, g, &object.table)
-    case .Function: list = _blacken_closure(L, g, &object.closure)
+    case .Function: list = _blacken_closure(L, g, &object.function)
     case .Chunk:    list = _blacken_chunk(L, g, &object.chunk)
     case:
         unreachable("Cannot blacken %v", object.type)
@@ -171,11 +184,15 @@ _blacken_object :: proc(L: ^State, g: ^Global_State, object: ^Object) -> (next: 
 }
 
 _blacken_table :: proc(L: ^State, g: ^Global_State, table: ^Table) -> ^^Gc_List {
-    for entry in table_get_entries(table) {
-        // If tombstone, let it be collected.
-        if !value_is_nil(entry.key) {
-            _mark_value(L, g, entry.key)
-            _mark_value(L, g, entry.value)
+    entries := table_get_entries(table)
+    for entry in entries {
+        key   := entry.key.v
+        value := entry.value
+        // Even if key is non-nil, if the value referenced is nil then we
+        // assume that this key is unreachable, it may be collectible.
+        if !value_is_nil(value) {
+            _mark_value(L, g, key)
+            _mark_value(L, g, value)
         }
     }
     return &table.gc_list
@@ -202,10 +219,9 @@ _blacken_chunk :: proc(L: ^State, g: ^Global_State, chunk: ^Chunk) -> ^^Gc_List 
     // Interned identifiers may also be shared across multiple closures.
     for local in chunk.locals {
         // We could be in the middle of a compilation.
-        if local.name == nil {
-            break
+        if local.name != nil {
+            _mark_object(L, g, cast(^Object)local.name)
         }
-        _mark_object(L, g, cast(^Object)local.name)
     }
     _mark_array(L, g, chunk.constants)
     return &chunk.gc_list
@@ -217,8 +233,8 @@ _sweep_strings :: proc(L: ^State, g: ^Global_State, loc := #caller_location) {
         // Since strings are kept in their own collision lists, we can free
         // then directly.
         prev: ^Object
-        node := list
-        for node != nil {
+        state := list
+        for node in object_iterator(&state) {
             assert(node.type == .String)
             ostring := &node.string
             // Save now in case `ostring` gets freed.
@@ -238,7 +254,6 @@ _sweep_strings :: proc(L: ^State, g: ^Global_State, loc := #caller_location) {
                 }
                 ostring_free(L, ostring, loc=loc)
             }
-            node = next
         }
     }
 }
@@ -284,16 +299,23 @@ gc_logf :: proc(mode: Gc_Log_Mode, format: string, args: ..any, loc := #caller_l
     file  = file[strings.last_index_byte(file, os.Path_Separator) + 1:]
     file_line := fmt.bprintf(buf[:], "%s:%i", file, loc.line)
 
-    fmt.printf("%s --- %-20s | ", GC_LOG_MODE_STRINGS[mode], file_line, flush=false)
+    fmt.printf("%s %-18s | ", GC_LOG_MODE_STRINGS[mode], file_line, flush=false)
     fmt.printfln(format, ..args)
 }
 
 @(private="package", disabled=!DEBUG_LOG_GC)
 gc_log_alloc :: proc(T: typeid, mode: Gc_Log_Mode, ptr: rawptr, size: int, loc := #caller_location) {
+    // Will just clog up the logs.
     if mode == .Free && ptr == nil {
         return
     }
+
     buf: [64]byte
     type_name := fmt.bprint(buf[:], T)
-    gc_logf(mode, "%-13s | %p (%i bytes)", type_name, ptr, size, loc=loc)
+    if mode != .New && T == typeid_of(^Ostring) {
+        text := ostring_to_string(cast(^Ostring)ptr)
+        gc_logf(mode, "%-13s | %q", type_name, text, loc=loc)
+    } else {
+        gc_logf(mode, "%-13s | %p (%i bytes)", type_name, ptr, size, loc=loc)
+    }
 }

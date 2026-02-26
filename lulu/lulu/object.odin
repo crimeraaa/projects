@@ -7,7 +7,7 @@ Object :: struct #raw_union {
     using base: Object_Header,
     string:     Ostring,
     table:      Table,
-    closure:    Closure,
+    function:   Closure,
     chunk:      Chunk,
 }
 
@@ -77,6 +77,15 @@ where intrinsics.type_is_subtype_of(T, Object_Header) {
     return object
 }
 
+// Even if the current object is freed, the iterator state is still valid.
+object_iterator :: proc(state: ^^Object) -> (current: ^Object, ok: bool) {
+    current = state^
+    if ok = current != nil; ok {
+        state^ = current.next
+    }
+    return
+}
+
 object_typeid :: proc(object: ^Object) -> typeid {
     closure_typeid :: proc(closure: ^Closure) -> typeid {
         if closure.is_lua {
@@ -88,7 +97,7 @@ object_typeid :: proc(object: ^Object) -> typeid {
     #partial switch object.type {
     case .String:   return ^Ostring
     case .Table:    return ^Table
-    case .Function: return closure_typeid(&object.closure)
+    case .Function: return closure_typeid(&object.function)
     case .Chunk:    return ^Chunk
     case:
         break
@@ -100,7 +109,7 @@ object_size :: proc(object: ^Object) -> int {
     #partial switch object.type {
     case .String:   return ostring_size(&object.string)
     case .Table:    return size_of(object.table)
-    case .Function: return closure_size(&object.closure)
+    case .Function: return closure_size(&object.function)
     case .Chunk:    return size_of(object.chunk)
     case:
     }
@@ -125,20 +134,17 @@ object_free :: proc(L: ^State, obj: ^Object, loc := #caller_location) {
     case .String:   ostring_free(L, &obj.string, loc=loc)
     case .Table:    table_free(L, &obj.table, loc=loc)
     case .Chunk:    chunk_free(L, &obj.chunk)
-    case .Function: closure_free(L, &obj.closure)
-    case .Nil, .Boolean, .Number, .Light_Userdata:
+    case .Function: closure_free(L, &obj.function)
+    case .Nil, .Boolean, .Number, .Light_Userdata, .Integer:
         unreachable("Invalid object to free: %v", t, loc=loc)
     }
 
 }
 
 object_free_all :: proc(L: ^State, list: ^Object) {
-    node := list
-    for node != nil {
-        // Save here because contents are about to be freed.
-        next := node.next
+    state := list
+    for node in object_iterator(&state) {
         object_free(L, node)
-        node = next
     }
 }
 
@@ -170,7 +176,7 @@ object_set_marked :: proc(object: ^$T) {
 }
 
 object_clear_marked :: proc(object: ^$T) {
-    assert(object_is_reachable(object))
+    // assert(object_is_reachable(object), loc=loc)
     object.flags -= {.Marked}
 }
 

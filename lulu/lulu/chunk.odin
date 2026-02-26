@@ -28,11 +28,7 @@ Chunk :: struct {
     code: []Instruction,
 
     // Maps each index in `code` to its corresponding line.
-    loc: []Location,
-}
-
-Location :: struct {
-    line, col: i32,
+    lines: []i32,
 }
 
 /*
@@ -71,14 +67,16 @@ Creates a new blank chunk for use when parsing.
 within `object_new()`.
  */
 chunk_new :: proc(L: ^State, name: ^Ostring) -> ^Chunk {
+    // GC: Barrier
     // Ensure `name` cannot be collected.
-    state_push(L, name)
+    object_set_gray(name)
     c := object_new(Chunk, L, &G(L).objects)
+    object_set_white(name)
+
     c.name = name
     // Minimum stack usage is 2 to allow all instructions to unconditionally
     // read r0 and r1.
     c.stack_used = 2
-    state_pop(L)
     return c
 }
 
@@ -91,7 +89,7 @@ array for example.
  */
 chunk_fix :: proc(L: ^State, c: ^Chunk, cl: ^Compiler) {
     resize(L, &c.code,      int(cl.pc))
-    resize(L, &c.loc,       int(cl.pc))
+    resize(L, &c.lines,       int(cl.pc))
     resize(L, &c.constants, int(cl.constants_count))
     resize(L, &c.locals,    int(cl.locals_count))
 }
@@ -105,7 +103,7 @@ chunk_free :: proc(L: ^State, c: ^Chunk) {
     delete(L, c.locals)
     delete(L, c.constants)
     delete(L, c.code)
-    delete(L, c.loc)
+    delete(L, c.lines)
     free(L, c)
 }
 
@@ -118,9 +116,9 @@ Adds `i` to the end of the code array.
 - We are in a protected call, so failures to append code can be caught
 and handled.
  */
-chunk_push_code :: proc(L: ^State, c: ^Chunk, pc: ^i32, i: Instruction, line, col: i32) -> i32 {
+chunk_push_code :: proc(L: ^State, c: ^Chunk, pc: ^i32, i: Instruction, line: i32) -> i32 {
     append(L, &c.code, pc^, i)
-    append(L, &c.loc, pc^, Location{line=line, col=col})
+    append(L, &c.lines, pc^, line)
     pc^ += 1
     return pc^ - 1
 }

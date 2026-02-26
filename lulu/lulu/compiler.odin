@@ -14,6 +14,10 @@ Compiler :: struct {
     // Sister state, mainly used for context during error handling.
     parser: ^Parser,
 
+    // Maps constant values (the keys) to integers representing indexes
+    // in `chunk.constants`.
+    constants: ^Table,
+
     // Current block information for local resolution and shadowing checking.
     block: ^Block,
 
@@ -78,7 +82,12 @@ Block :: struct {
 }
 
 compiler_make :: proc(L: ^State, parser: ^Parser, chunk: ^Chunk) -> Compiler {
-    c := Compiler{L=L, parser=parser, chunk=chunk, last_target=NO_JUMP}
+    c: Compiler
+    c.L           = L
+    c.parser      = parser
+    c.constants   = parser.lexer.constants
+    c.chunk       = chunk
+    c.last_target = NO_JUMP
     return c
 }
 
@@ -113,10 +122,11 @@ compiler_declare_local :: proc(c: ^Compiler, name: ^Ostring, count: u16) {
         parser_error(c.parser, "Shadowing of local variable")
     }
 
-    state_push(c.L, name)
+    // GC: Barrier
+    object_set_gray(name)
     info  := Local_Info{name, INVALID_PC, INVALID_PC}
     index := chunk_push_local(c.L, c.chunk, &c.locals_count, info)
-    state_pop(c.L)
+    object_set_white(name)
 
     // Don't push (reserve) registers yet, because we don't want to 'see' this
     // local if we use the same name in the assigning expression.
@@ -208,22 +218,23 @@ compiler_pop_block :: proc(c: ^Compiler) {
 
 compiler_add_string :: proc(c: ^Compiler, ostring: ^Ostring) -> (index: u32) {
     L := c.L
-    state_push(L, ostring)
-    index = _add_constant(c, value_make(ostring))
-    state_pop(L)
-    return index
+    constant := value_make(ostring)
+    // Ensure that the Lexer already saved it to prevent premature collection.
+    compiler_assert(c, !value_is_nil(table_get(c.constants, constant)))
+    return _add_constant(c, constant)
 }
 
 @(private="file")
 _add_constant :: proc(c: ^Compiler, v: Value, loc := #caller_location) -> (index: u32) {
     L     := c.L
     chunk := c.chunk
-    for constant, index in chunk.constants[:c.constants_count] {
-        if value_eq(v, constant) {
-            return u32(index)
-        }
+    if iptr := table_set(L, c.constants, v); value_is_integer(iptr^) {
+        index = u32(value_get_integer(iptr^))
+    } else {
+        index = chunk_push_constant(L, chunk, &c.constants_count, v, loc=loc)
+        iptr^ = value_make(int(index))
     }
-    return chunk_push_constant(L, chunk, &c.constants_count, v, loc=loc)
+    return index
 }
 
 // === BYTECODE ============================================================ {{{
@@ -237,12 +248,10 @@ Appends `i` to the current chunk's code array.
  */
 @(private="file")
 _add_instruction :: proc(c: ^Compiler, i: Instruction) -> (pc: i32) {
-    L := c.L
-    p := c.parser
-
+    L    := c.L
+    p    := c.parser
     line := p.consumed.line
-    col  := p.consumed.col
-    return chunk_push_code(L, c.chunk, &c.pc, i, line, col)
+    return chunk_push_code(L, c.chunk, &c.pc, i, line)
 }
 
 compiler_code_ABC :: proc(cl: ^Compiler, op: Opcode, A, B, C: u16) -> (pc: i32) {
@@ -450,6 +459,7 @@ compiler_set_variable :: proc(c: ^Compiler, #no_alias variable, value: ^Expr) {
     compiler_pop_expr(c, value)
 }
 
+@(private="file")
 _get_table_op :: proc(key_is_k: bool) -> (op: Opcode) {
     if key_is_k {
         return .Set_Field
@@ -726,6 +736,7 @@ _push_expr_k :: proc(c: ^Compiler, expr: ^Expr, limit: u32) -> (rk: u32, is_k: b
 }
 
 // Helper to transform constants into K.
+@(private="file")
 _push_k :: proc(c: ^Compiler, expr: ^Expr, v: Value, limit: u32) -> (rk: u32, is_k: bool) {
     index := _add_constant(c, v)
     expr^  = expr_make_index(.Constant, index)
@@ -734,6 +745,7 @@ _push_k :: proc(c: ^Compiler, expr: ^Expr, v: Value, limit: u32) -> (rk: u32, is
 
 // Constant index fits in a K register?
 // i.e. when it is masked t fit, we do not lose any of the original bits.
+@(private="file")
 _check_k :: proc(c: ^Compiler, expr: ^Expr, index: u32, limit: u32) -> (rk: u32, is_k: bool) {
     is_k = index <= limit
     rk   = index if is_k else u32(compiler_push_expr_next(c, expr))

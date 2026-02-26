@@ -23,11 +23,15 @@ Value_Type :: enum u8 {
 
     // Collectible Types (Object, internal)
     Chunk,
+
+    // Non-collectible Types (internal)
+    Integer,
 }
 
 Value_Data :: struct #raw_union {
     boolean: bool,
     number:  f64,
+    integer: int,
     pointer: rawptr,
     object: ^Object,
 }
@@ -41,6 +45,7 @@ value_make :: proc {
     value_make_nil,
     value_make_boolean,
     value_make_number,
+    value_make_integer,
     value_make_lightuserdata,
     value_make_object,
     value_make_ostring,
@@ -50,36 +55,43 @@ value_make :: proc {
 
 value_make_nil :: #force_inline proc "contextless" () -> Value {
     v: Value
-    v.pointer = nil
     v.type    = .Nil
+    v.pointer = nil
     return v
 }
 
 value_make_boolean :: #force_inline proc "contextless" (b: bool) -> Value {
     v: Value
-    v.boolean = b
     v.type    = .Boolean
+    v.boolean = b
     return v
 }
 
 value_make_number :: #force_inline proc "contextless" (n: f64) -> Value {
     v: Value
-    v.number = n
     v.type   = .Number
+    v.number = n
+    return v
+}
+
+value_make_integer :: #force_inline proc "contextless" (i: int) -> Value {
+    v: Value
+    v.type    = .Integer
+    v.integer = i
     return v
 }
 
 value_make_lightuserdata :: #force_inline proc "contextless" (p: rawptr) -> Value {
     v: Value
-    v.pointer = p
     v.type    = .Light_Userdata
+    v.pointer = p
     return v
 }
 
 value_make_object :: proc(o: ^Object, t: Value_Type) -> Value {
     v: Value
-    v.object = o
     v.type   = t
+    v.object = o
     return v
 }
 
@@ -103,12 +115,18 @@ value_get_number :: #force_inline proc(v: Value) -> (f: f64) {
     return v.number
 }
 
+value_get_integer :: #force_inline proc(v: Value) -> (i: int) {
+    _check_type(v, .Integer)
+    return v.integer
+}
+
 value_get_pointer :: #force_inline proc(v: Value) -> (p: rawptr) {
     return v.pointer
 }
 
-value_get_object :: #force_inline proc(v: Value) -> (o: ^Object) {
+value_get_object :: #force_inline proc(v: Value, loc := #caller_location) -> (o: ^Object) {
     o = v.object
+    // assert(o != nil, loc=loc)
     // Ensure consistency.
     _check_type(v, o.type)
     return o
@@ -202,6 +220,7 @@ value_type_string :: proc(t: Value_Type) -> string {
     case .Table:            return "table"
     case .Function:         return "function"
     case .Chunk:            return "chunk"
+    case .Integer:          return "integer"
     }
     unreachable("Invalid value to get type name of: %v", t)
 }
@@ -218,8 +237,19 @@ value_is_number :: #force_inline proc(v: Value) -> bool {
     return value_type(v) == .Number
 }
 
+value_is_integer :: #force_inline proc(v: Value) -> bool {
+    return value_type(v) == .Integer
+}
+
 value_is_object :: #force_inline proc(v: Value) -> bool {
-    return value_type(v) >= .String
+    t := value_type(v)
+    switch t {
+    case .Nil, .Boolean, .Number, .Light_Userdata:  return false
+    case .String, .Table, .Function, .Chunk:        return true
+    case .Integer:
+        return false
+    }
+    unreachable("Invalid type %v", t)
 }
 
 value_is_string :: #force_inline proc(v: Value) -> bool {
@@ -245,7 +275,7 @@ value_get_ostring :: #force_inline proc(v: Value) -> ^Ostring {
 
 value_get_function :: #force_inline proc(v: Value) -> ^Closure {
     _check_type(v, .Function)
-    return &value_get_object(v).closure
+    return &value_get_object(v).function
 }
 
 value_get_table :: #force_inline proc(v: Value) -> ^Table {
@@ -271,7 +301,7 @@ value_eq :: proc(a, b: Value) -> bool {
     case .Light_Userdata, .String, .Table, .Function:
         return value_get_pointer(a) == value_get_pointer(b)
 
-    case .Chunk:
+    case .Chunk, .Integer:
         break
     }
     unreachable("Invalid value to compare: %v", t)
@@ -302,7 +332,7 @@ value_to_string :: proc(v: Value, buf: []byte) -> string {
         p := value_get_pointer(v)
         return fmt.bprintf(buf, "%s: %p", s, p)
 
-    case .Chunk:
+    case .Chunk, .Integer:
         break
     }
     unreachable("Invalid value to write: %v", t)

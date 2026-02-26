@@ -25,8 +25,10 @@ Lexer :: struct {
     // Parent state which will catch any errors we throw.
     L: ^State,
 
-    // Used for string interning for the current chunk.
-    compiler: ^Compiler,
+    // Maps all constant values (the keys) used by the current chunk to the
+    // boolean `true` or to some integer representing the index in the
+    // current chunk's constants array.
+    constants: ^Table,
 
     // Used to build string literals with escape characters.
     // Also helps in string interning.
@@ -145,14 +147,14 @@ to construct string literals with escape sequences.
 - input: The actual text data to be lexed.
  */
 @(private="package")
-lexer_make :: proc(L: ^State, compiler: ^Compiler, builder: ^strings.Builder, name: ^Ostring, input: Reader) -> Lexer {
+lexer_make :: proc(L: ^State, constants: ^Table, builder: ^strings.Builder, name: ^Ostring, input: Reader) -> Lexer {
     x: Lexer
-    x.L        = L
-    x.compiler = compiler
-    x.builder  = builder
-    x.name     = name
-    x.reader   = input
-    x.line     = 1
+    x.L         = L
+    x.constants = constants
+    x.builder   = builder
+    x.name      = name
+    x.reader    = input
+    x.line      = 1
     // Read first char so first `lexer_scan_token()` call is valid.
     read_rune(&x)
     return x
@@ -514,9 +516,17 @@ lexer_scan_token :: proc(x: ^Lexer) -> Token {
 
 lexer_new_ostring :: proc(x: ^Lexer, text: string) -> ^Ostring {
     L := x.L
-    c := x.compiler
-    ostring := ostring_new(L, text)
-    compiler_add_string(c, ostring)
+    constants := x.constants
+    ostring   := ostring_new(L, text)
+    // GC: Barrier
+    object_set_gray(ostring)
+    index := table_set(L, constants, value_make(ostring))
+    object_set_white(ostring)
+
+    // First time encountering this constant?
+    if value_is_nil(index^) {
+        index^ = value_make(true)
+    }
     return ostring
 }
 

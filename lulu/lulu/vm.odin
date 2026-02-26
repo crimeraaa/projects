@@ -99,8 +99,8 @@ state_push_closure :: proc(L: ^State, cl: ^Closure) {
 }
 
 state_push_value :: proc(L: ^State, v: Value) {
-    base := vm_save_base(L)
-    top  := vm_save_top(L) + 1
+    base := state_save_base(L)
+    top  := state_save_top(L) + 1
     assert(top <= len(L.stack), "Lulu value stack overflow")
     L.registers = L.stack[base:top]
     L.stack[top - 1] = v
@@ -110,11 +110,15 @@ vm_concat :: proc(L: ^State, dst: ^Value, args: []Value) -> ^Ostring {
     b := &L.builder
     strings.builder_reset(b)
     for &v in args {
-        if !value_is_string(v) {
+        #partial switch v.type {
+        case .String, .Number:
+            break
+        case:
             debug_type_error(L, "concatenate", &v)
         }
 
-        s := value_get_string(v)
+        buf: [VALUE_TO_STRING_BUFFER_SIZE]byte
+        s := value_to_string(v, buf[:])
         n := strings.write_string(b, s)
         if n != len(s) {
             debug_memory_error(L, "concatenate string '%s'", s)
@@ -130,17 +134,17 @@ state_pop :: proc(L: ^State, count := 1) {
     L.registers = L.registers[:get_top(L) - count]
 }
 
-vm_save_base :: proc(L: ^State) -> (index: int) #no_bounds_check {
+state_save_base :: proc(L: ^State) -> (index: int) #no_bounds_check {
     callee_base := &L.registers[0]
     return find_ptr_index_unsafe(L.stack[:], callee_base)
 }
 
-vm_save_top :: proc(L: ^State) -> (index: int) #no_bounds_check {
+state_save_top :: proc(L: ^State) -> (index: int) #no_bounds_check {
     callee_top := &L.registers[get_top(L)]
     return find_ptr_index_unsafe(L.stack[:], callee_top)
 }
 
-vm_save_stack :: proc(L: ^State, value: ^Value) -> (index: int) {
+state_save_stack :: proc(L: ^State, value: ^Value) -> (index: int) {
     return find_ptr_index_unsafe(L.stack[:], value)
 }
 
@@ -258,7 +262,6 @@ __set_table :: proc(L: ^State, pc: i32, t: ^Value, k, v: Value) {
     vm_set_table(L, t, k, v)
 }
 
-
 vm_execute :: proc(L: ^State, ret_expect: int) {
     frame := L.frame
     chunk := value_get_function(frame.callee^).lua.chunk
@@ -366,7 +369,7 @@ vm_execute :: proc(L: ^State, ret_expect: int) {
         case .Mod: __arith(L, pc, RA, number_mod, &R[i.B], &R[i.C])
         case .Pow: __arith(L, pc, RA, number_pow, &R[i.B], &R[i.C])
 
-        // Comparison (register-immedate)
+        // Comparison (register-immediate)
         case .Eq_Imm:    __compare_eq(&ip, RA^, value_make(f64(i.vs.Bx)), i.vs.k)
         case .Lt_Imm:    __compare_imm(L, &ip, pc, number_lt,  RA, i.vs.Bx, i.vs.k)
         case .Leq_Imm:   __compare_imm(L, &ip, pc, number_leq, RA, i.vs.Bx, i.vs.k)

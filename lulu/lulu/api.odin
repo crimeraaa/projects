@@ -96,8 +96,8 @@ get_top :: proc(L: ^State) -> int {
  */
 set_top :: proc(L: ^State, index: int) {
     if index >= 0 {
-        old_base := vm_save_base(L)
-        old_top  := vm_save_top(L)
+        old_base := state_save_base(L)
+        old_top  := state_save_top(L)
         new_top  := old_base + index
         values   := L.stack[old_base:new_top]
         if new_top > old_top {
@@ -232,7 +232,7 @@ to_pointer :: proc(L: ^State, index: int) -> (p: rawptr, ok: bool) #optional_ok 
     case .Light_Userdata: return value_get_pointer(v),  true
     case .Table:          return value_get_table(v),    true
     case .Function:       return value_get_function(v), true
-    case .Nil, .Boolean, .Number, .String, .Chunk:
+    case .Nil, .Boolean, .Number, .String, .Chunk, .Integer:
         break
     }
     return nil, false
@@ -567,10 +567,8 @@ location :: proc(L: ^State, level: int) {
         cl := value_get_function(frame.callee^)
         if cl.is_lua {
             file := chunk_name(cl.lua.chunk)
-            loc  := cl.lua.chunk.loc[frame.saved_pc]
-            line := int(loc.line)
-            col  := int(loc.col)
-            push_fstring(L, "%s:%i:%i: ", file, line, col)
+            line := cl.lua.chunk.lines[frame.saved_pc]
+            push_fstring(L, "%s:%i ", file, line)
         } else {
             push(L, "[Odin]: ")
         }

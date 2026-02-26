@@ -67,25 +67,25 @@ throw_error :: proc(L: ^State, code: Error) -> ! {
 Run the procedure `p` in "unrestoring protected mode".
 
 **Parameters**
-- p: The procedure to be run.
-- ud: Arbitrary user-defined data for `p`.
+- procedure: The procedure to be run.
+- user_data: Arbitrary user-defined data for `procedure`.
 
 **Returns**
 - err: The API error code, if any, that was caught.
 
 **Guarantees**
-- `p` is only ever called with the `ud` it was passed with.
+- `procedure` is only ever called with the `user_data` it was passed with.
 - The caller's stack frame is not restored. This is important to help handle
 out-of-memory errors on main state startup.
  */
-run_raw_call :: proc(L: ^State, p: proc(^State, rawptr), user_data: rawptr) -> (err: Error) {
+run_raw_call :: proc(L: ^State, procedure: proc(^State, rawptr), user_data: rawptr) -> (err: Error) {
     // Push new error handler.
     h: Error_Handler
     h.prev    = L.handler
     L.handler = &h
 
     if libc.setjmp(&L.handler.buf) == 0 {
-        p(L, user_data)
+        procedure(L, user_data)
     }
 
     // Restore old error handler.
@@ -94,27 +94,27 @@ run_raw_call :: proc(L: ^State, p: proc(^State, rawptr), user_data: rawptr) -> (
 }
 
 /*
-Runs the procedure `p` in "restoring protected mode".
+Runs the procedure `procedure` in "restoring protected mode".
 
 **Parameters**
-- p: The procedure to be run.
-- ud: Arbitrary user-defined data for `p`.
+- procedure: The procedure to be run.
+- user_data: Arbitrary user-defined data for `procedure`.
 
 **Returns**
 - err: The API error code, if any, that was caught.
 
 **Guarantees**
-- `p` is only ever called with the `ud` it was passed with.
+- `procedure` is only ever called with the `user_data` it was passed with.
 - If an error is caught, then the previous stack frame from before the
 protected call is restored, plus an error message (error "object") pushed
 on top.
  */
-run_raw_pcall :: proc(L: ^State, p: proc(^State, rawptr), user_data: rawptr) -> (err: Error) {
-    old_base  := vm_save_base(L)
-    old_top   := vm_save_top(L)
+run_raw_pcall :: proc(L: ^State, procedure: proc(^State, rawptr), user_data: rawptr) -> (err: Error) {
+    old_base  := state_save_base(L)
+    old_top   := state_save_top(L)
     old_frame := L.frame_count - 1
 
-    err = run_raw_call(L, p, user_data)
+    err = run_raw_call(L, procedure, user_data)
     switch err {
     case .Ok:
         // Don't change the stack because everything is (assumed to be) fine.
@@ -166,7 +166,7 @@ run_call_prologue :: proc(L: ^State, func: ^Value, arg_count, ret_expect: int) -
 
     // Index of `callee` in the current stack frame. Upon return, this is
     // the first index to be overwritten (if there are nonzero return values).
-    call_index := vm_save_stack(L, func)
+    call_index := state_save_stack(L, func)
 
     // Index of the very first argument for the current stack frame,
     // which is always right after `callee`.
@@ -205,7 +205,7 @@ run_call_prologue :: proc(L: ^State, func: ^Value, arg_count, ret_expect: int) -
         ret_actual = closure.api.procedure(L)
 
         // API procedure may have pushed an arbitrary amount of values.
-        new_top = vm_save_top(L)
+        new_top = state_save_top(L)
         ret_values := L.stack[new_top - ret_actual:new_top]
         run_call_return(L, ret_expect, ret_values)
         return .Odin
@@ -235,7 +235,7 @@ run_call_return :: proc(L: ^State, ret_expect: int, ret_src: []Value) {
     ret_actual := len(ret_src)
 
     // Index of the function being called in the stack.
-    call_index := vm_save_stack(L, L.frame.callee)
+    call_index := state_save_stack(L, L.frame.callee)
 
     // Index of the last actual returned value in the stack.
     ret_top := call_index + ret_actual
@@ -265,7 +265,7 @@ _pop_frame :: proc(L: ^State, ret_expect, ret_top: int) {
         // Parent caller needs to see the now-returned values because
         // they have no other way of knowing.
         if !value_get_function(prev.callee^).is_lua || ret_expect == VARIADIC {
-            old_base := vm_save_stack(L, raw_data(prev.registers))
+            old_base := state_save_stack(L, raw_data(prev.registers))
             prev.registers = L.stack[old_base:ret_top]
         }
         L.frame_count -= 1

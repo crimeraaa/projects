@@ -76,11 +76,11 @@ state_init :: proc(L: ^State, g: ^Global_State, allocator: mem.Allocator) -> (ok
 
     // Don't use `run_raw_pcall()`, because we won't be able to push an
     // error object in case of memory errors.
-    err := run_raw_call(L, proc(L: ^State, _: rawptr) {
+    err := run_raw_call(L, proc(L: ^State, user_data: rawptr) {
         // Ensure the pointed-to data is non-nil.
         L.registers = L.stack[:0]
 
-        g := G(L)
+        g := cast(^Global_State)user_data
 
         // Ensure that, when we start interning strings, we already have
         // valid indexes.
@@ -100,7 +100,7 @@ state_init :: proc(L: ^State, g: ^Global_State, allocator: mem.Allocator) -> (ok
 
         // Initialize concat string builder with some reasonable default size.
         L.builder = strings.builder_make(32, allocator=g.backing_allocator)
-    }, nil)
+    }, g)
 
     g.gc_state = .None
     return err == nil

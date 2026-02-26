@@ -15,7 +15,7 @@ base_procs := [?]lulu_aux.Library_Entry{
     // {"error",       _error},
     {"print",       _print},
     {"tostring",    _to_string},
-    // {"tonumber",    _to_number},
+    {"tonumber",    _to_number},
     // {"sequence",    _sequence},
     // {"tuple",       _tuple},
     {"type",        _type},
